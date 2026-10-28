@@ -290,3 +290,7 @@ td.date { white-space: nowrap; }
   .review-layout { display: block; }
   textarea { border: 0; min-height: 0; height: auto; }
 }
+
+/* contact import mapping table */
+select[data-col] { min-width: 170px; }
+#ciBody th, #ciBody td { padding: 8px 10px; }

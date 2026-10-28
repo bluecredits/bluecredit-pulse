@@ -194,6 +194,7 @@ declare
   nm text; title text; o jsonb; n jsonb; changed text;
 begin
   if auth.uid() is null then return null; end if;   -- bulk loads with the service key aren't logged
+  if current_setting('pulse.bulk', true) = 'on' then return null; end if;   -- import_contacts logs one summary line instead
   nm := member_name();
   if tg_op = 'DELETE' then
     o := to_jsonb(old);
@@ -423,3 +424,85 @@ end $$;
 
 grant execute on function public.dashboard_data(text), public.build_snapshot(text, date) to authenticated;
 revoke execute on function public.dashboard_data(text), public.build_snapshot(text, date) from anon, public;
+
+-- ---------------------------------------------------------------- bulk contact import
+-- Called by the "Import contacts" button (and usable from the SQL Editor). Each row is a JSON object with any of:
+-- name, organization, role, email, phone, category, status, owner, location, linkedin, tags, notes, source.
+-- A row merges into an existing contact when the email matches and the organizations agree (or one is blank),
+-- or, with no email, when name + organization match. Merging fills empty fields, adds the import label to Tags
+-- and appends new details to Notes, so nothing already there is overwritten. Writes one activity line per import.
+create or replace function public.import_contacts(p_rows jsonb, p_label text default null, p_by text default null)
+returns jsonb language plpgsql volatile security definer set search_path = public as $$
+declare
+  r jsonb; v_id bigint; v_email text; v_name text; v_org text; v_notes text; v_tags text;
+  n_new int := 0; n_merged int := 0; n_skipped int := 0;
+  who text := case when auth.uid() is null then coalesce(nullif(trim(p_by), ''), 'system') else member_name() end;
+  lbl text := nullif(trim(p_label), '');
+begin
+  if auth.uid() is not null and not is_member() then raise exception 'Only team members can import contacts.'; end if;
+  if jsonb_typeof(p_rows) <> 'array' then raise exception 'Expected a list of contacts.'; end if;
+  if jsonb_array_length(p_rows) > 5000 then raise exception 'Import at most 5,000 rows at a time.'; end if;
+  perform set_config('pulse.bulk', 'on', true);
+  for r in select value from jsonb_array_elements(p_rows) loop
+    v_email := lower(nullif(trim(r ->> 'email'), ''));
+    v_name := nullif(trim(r ->> 'name'), '');
+    v_org := nullif(trim(r ->> 'organization'), '');
+    v_notes := nullif(trim(r ->> 'notes'), '');
+    v_tags := concat_ws('; ', nullif(trim(r ->> 'tags'), ''), lbl);
+    if v_email is null and v_name is null and v_org is null then n_skipped := n_skipped + 1; continue; end if;
+    v_id := null;
+    if v_email is not null then
+      select id into v_id from contacts
+       where lower(email) = v_email and (organization is null or organization = '' or v_org is null or lower(organization) = lower(v_org))
+       order by id limit 1;
+    else
+      select id into v_id from contacts
+       where lower(coalesce(name, '')) = lower(coalesce(v_name, '')) and lower(coalesce(organization, '')) = lower(coalesce(v_org, ''))
+       order by id limit 1;
+    end if;
+    if v_id is null then
+      insert into contacts (name, organization, role, email, phone, category, status, owner, location, linkedin, tags, notes, source, updated_by)
+      values (v_name, v_org, nullif(trim(r ->> 'role'), ''), v_email, nullif(trim(r ->> 'phone'), ''),
+              coalesce(nullif(trim(r ->> 'category'), ''), 'Other'), coalesce(nullif(trim(r ->> 'status'), ''), 'To Contact'),
+              nullif(trim(r ->> 'owner'), ''), nullif(trim(r ->> 'location'), ''), nullif(trim(r ->> 'linkedin'), ''),
+              nullif(v_tags, ''), v_notes, coalesce(nullif(trim(r ->> 'source'), ''), lbl, 'Import'), who);
+      n_new := n_new + 1;
+    else
+      update contacts c set
+        name = coalesce(nullif(c.name, ''), v_name),
+        organization = coalesce(nullif(c.organization, ''), v_org),
+        role = coalesce(nullif(c.role, ''), nullif(trim(r ->> 'role'), '')),
+        email = coalesce(nullif(c.email, ''), v_email),
+        phone = coalesce(nullif(c.phone, ''), nullif(trim(r ->> 'phone'), '')),
+        location = coalesce(nullif(c.location, ''), nullif(trim(r ->> 'location'), '')),
+        linkedin = coalesce(nullif(c.linkedin, ''), nullif(trim(r ->> 'linkedin'), '')),
+        owner = coalesce(nullif(c.owner, ''), nullif(trim(r ->> 'owner'), '')),
+        tags = case when lbl is null or coalesce(c.tags, '') ilike '%' || lbl || '%' then c.tags
+                    else concat_ws('; ', nullif(c.tags, ''), lbl) end,
+        notes = case when v_notes is null or coalesce(c.notes, '') ilike '%' || v_notes || '%' then c.notes
+                     else concat_ws(E'\n', nullif(c.notes, ''), 'From ' || coalesce(lbl, 'import') || ': ' || v_notes) end,
+        updated_by = who
+      where c.id = v_id;
+      n_merged := n_merged + 1;
+    end if;
+  end loop;
+  perform set_config('pulse.bulk', 'off', true);
+  insert into activity (user_name, entity, action, summary)
+    values (who, 'contacts', 'import', format('Imported %s: %s new contact%s, %s matched existing contact%s',
+            coalesce(lbl, 'a contact list'), n_new, case when n_new = 1 then '' else 's' end,
+            n_merged, case when n_merged = 1 then '' else 's' end));
+  return jsonb_build_object('added', n_new, 'merged', n_merged, 'skipped', n_skipped);
+end $$;
+revoke execute on function public.import_contacts(jsonb, text, text) from anon, public;
+grant execute on function public.import_contacts(jsonb, text, text) to authenticated;
+
+-- ---------------------------------------------------------------- keep id counters ahead of imported rows
+-- Rows loaded with explicit ids (Table Editor CSV import) don't advance the id counters; this realigns them.
+do $$
+declare t text; m bigint;
+begin
+  foreach t in array array['opportunities', 'funding', 'contacts', 'resources', 'reviews', 'actions', 'activity'] loop
+    execute format('select max(id) from public.%I', t) into m;
+    perform setval(pg_get_serial_sequence('public.' || t, 'id'), greatest(coalesce(m, 0), 1), m is not null);
+  end loop;
+end $$;

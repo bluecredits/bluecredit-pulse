@@ -372,7 +372,8 @@ async function ListPage(entity) {
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>${esc(ent.label)}</h1></div>
       <div class="actions-row no-print">
-        <label class="btn">Import CSV<input type="file" accept=".csv" id="importCsv" hidden></label>
+        ${entity === "contacts" ? `<button class="btn" id="importContacts">Import contacts</button>`
+          : `<label class="btn">Import file<input type="file" accept=".csv,.tsv,.xlsx" id="importCsv" hidden></label>`}
         <button class="btn" id="exportCsv">Export CSV</button>
         <button class="btn primary" id="addNew">Add ${esc(ent.singular.toLowerCase())}</button></div></div>
     <div class="filters">
@@ -415,9 +416,10 @@ async function ListPage(entity) {
     try { downloadCsv(`${entity}-${today()}.csv`, ["id", ...ent.fields.map((f) => f.name), "updated_at", "updated_by"], await db.all(entity, params())); }
     catch (err) { toast(err.message); } finally { e.target.disabled = false; e.target.textContent = "Export CSV"; }
   });
-  $("#importCsv").addEventListener("change", async (e) => {
+  $("#importContacts")?.addEventListener("click", () => openContactImport(load));
+  $("#importCsv")?.addEventListener("change", async (e) => {
     const file = e.target.files[0]; if (!file) return;
-    try { const n = await importCsv(entity, await file.text()); toast(`Imported ${n} rows`); load(); }
+    try { const book = await readSheetFile(file); const n = await importRows(entity, book.sheets[0].rows); toast(`Imported ${n} rows`); load(); }
     catch (err) { toast("Import failed: " + err.message); }
     e.target.value = "";
   });
@@ -463,16 +465,253 @@ function parseCsv(text) {
   if (f !== "" || row.length) { row.push(f); rows.push(row); }
   return rows.filter((r) => r.some((x) => x.trim() !== ""));
 }
-async function importCsv(entity, text) {
-  const [head, ...rows] = parseCsv(text);
+async function importRows(entity, all) {
+  const [head, ...rows] = all.filter((r) => r.some((x) => String(x ?? "").trim() !== ""));
   if (!head) throw new Error("The file is empty.");
   const byLabel = Object.fromEntries(fieldDefs(entity).flatMap((f) => [[f.name.toLowerCase(), f.name], [f.label.toLowerCase(), f.name]]));
-  const map = head.map((h) => byLabel[h.trim().toLowerCase()]);
+  const map = head.map((h) => byLabel[String(h).trim().toLowerCase()]);
   if (!map.some(Boolean)) throw new Error("None of the column headers match this list's fields.");
-  const records = rows.map((r) => clean(entity, Object.fromEntries(map.map((k, i) => [k, r[i]]).filter(([k]) => k))))
+  const records = rows.map((r) => clean(entity, Object.fromEntries(map.map((k, i) => [k, r[i] ?? ""]).filter(([k]) => k))))
     .filter((r) => Object.values(r).some((v) => v != null));
   for (let i = 0; i < records.length; i += 500) must(await sb.from(entity).insert(records.slice(i, i + 500)));
   return records.length;
+}
+
+/* ---------------- spreadsheet reader (.xlsx, .csv, .tsv) — no external library */
+async function readSheetFile(file) {
+  const ext = file.name.toLowerCase().split(".").pop();
+  if (ext === "csv" || ext === "txt") return { sheets: [{ name: file.name, rows: parseCsv(await file.text()) }] };
+  if (ext === "tsv") return { sheets: [{ name: file.name, rows: (await file.text()).replace(/^﻿/, "").split(/\r?\n/).map((l) => l.split("\t")) }] };
+  if (ext !== "xlsx") throw new Error("Use an .xlsx, .csv or .tsv file. For an older .xls file, open it in Excel and save as .xlsx first.");
+  return readXlsx(await file.arrayBuffer());
+}
+async function unzip(buf) {
+  const dv = new DataView(buf), u8 = new Uint8Array(buf), files = {};
+  let eocd = -1;
+  for (let i = u8.length - 22; i >= Math.max(0, u8.length - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error("This doesn't look like a valid .xlsx file.");
+  let p = dv.getUint32(eocd + 16, true);
+  for (let n = 0, count = dv.getUint16(eocd + 10, true); n < count && dv.getUint32(p, true) === 0x02014b50; n++) {
+    const nameLen = dv.getUint16(p + 28, true);
+    files[new TextDecoder().decode(u8.subarray(p + 46, p + 46 + nameLen))] =
+      { method: dv.getUint16(p + 10, true), size: dv.getUint32(p + 20, true), local: dv.getUint32(p + 42, true) };
+    p += 46 + nameLen + dv.getUint16(p + 30, true) + dv.getUint16(p + 32, true);
+  }
+  return async (name) => {
+    const f = files[name]; if (!f) return null;
+    const start = f.local + 30 + dv.getUint16(f.local + 26, true) + dv.getUint16(f.local + 28, true);
+    const data = u8.subarray(start, start + f.size);
+    if (f.method === 0) return new TextDecoder().decode(data);
+    if (f.method !== 8) throw new Error("This .xlsx uses an unsupported compression. Re-save it in Excel and try again.");
+    return new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).text();
+  };
+}
+async function readXlsx(buf) {
+  const read = await unzip(buf);
+  const xml = async (path) => { const t = await read(path); return t ? new DOMParser().parseFromString(t, "application/xml") : null; };
+  const tags = (doc, name) => [...doc.getElementsByTagNameNS("*", name)];
+  const text = (el) => tags(el, "t").map((t) => t.textContent).join("");
+  const ss = await xml("xl/sharedStrings.xml");
+  const shared = ss ? tags(ss, "si").map(text) : [];
+  const wb = await xml("xl/workbook.xml"), rels = await xml("xl/_rels/workbook.xml.rels");
+  if (!wb) throw new Error("This doesn't look like a valid .xlsx file.");
+  const target = Object.fromEntries((rels ? tags(rels, "Relationship") : []).map((r) => [r.getAttribute("Id"), r.getAttribute("Target")]));
+  const sheets = [];
+  for (const [i, sh] of tags(wb, "sheet").entries()) {
+    const rid = sh.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id") || sh.getAttribute("r:id");
+    let path = target[rid] || `worksheets/sheet${i + 1}.xml`;
+    path = path.startsWith("/") ? path.slice(1) : "xl/" + path.replace(/^\.\//, "");
+    const doc = await xml(path); if (!doc) continue;
+    const rows = [];
+    for (const row of tags(doc, "row")) {
+      const out = [];
+      for (const c of tags(row, "c")) {
+        const ref = c.getAttribute("r") || "", col = ref ? [...ref.replace(/\d+/g, "")].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1 : out.length;
+        const t = c.getAttribute("t"), v = tags(c, "v")[0]?.textContent ?? "";
+        let val = t === "s" ? shared[+v] ?? "" : t === "inlineStr" ? text(c) : t === "b" ? (v === "1" ? "TRUE" : "FALSE") : v;
+        if (!t && /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i.test(val) && Number.isInteger(+val) && Math.abs(+val) < 1e15) val = String(+val);
+        out[col] = val;
+      }
+      rows.push(Array.from(out, (x) => x ?? ""));
+    }
+    sheets.push({ name: sh.getAttribute("name") || `Sheet ${i + 1}`, rows });
+  }
+  if (!sheets.length) throw new Error("No sheets found in this file.");
+  return { sheets };
+}
+
+/* ---------------- contact import: map columns, tidy values, merge against the list */
+const CI_FIELDS = [["name", "Full name"], ["first", "First name"], ["last", "Last name"], ["organization", "Organization"], ["email", "Email"],
+  ["phone", "Phone"], ["role", "Role / title"], ["city", "City"], ["state", "State"], ["zip", "ZIP code"], ["country", "Country"],
+  ["location", "Location / address"], ["linkedin", "LinkedIn"], ["notes", "Add to notes"], ["ignore", "Don't import"]];
+function guessField(header) {
+  const h = String(header).toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  if (!h) return "ignore";
+  if (/linkedin/.test(h)) return "linkedin";
+  if (/e ?mail/.test(h)) return "email";
+  if (/phone|mobile|cell|telephone|^tel\b/.test(h)) return "phone";
+  if (/^(first|given|fname)( name)?$/.test(h)) return "first";
+  if (/^(last|surname|family|lname)( name)?$/.test(h)) return "last";
+  if (/^(full name|name|contact|contact name|participant|attendee|attendee name|person|poc|point of contact|representative|registrant)$/.test(h)) return "name";
+  if (/company|organi[sz]ation|^org$|firm|business name|employer|agency|vendor|account name|legal business name|^partner$/.test(h)) return "organization";
+  if (/^(title|job title|role|position|designation)$/.test(h)) return "role";
+  if (/^(city|town)$/.test(h)) return "city";
+  if (/^(state|province|state province)$/.test(h)) return "state";
+  if (/zip|postal/.test(h)) return "zip";
+  if (/^country$/.test(h)) return "country";
+  if (/^(location|address|street|street address|mailing address)$/.test(h)) return "location";
+  return "notes";
+}
+function findHeaderRow(rows) {
+  let best = 0, bestScore = -1;
+  rows.slice(0, 15).forEach((r, i) => {
+    const filled = r.filter((x) => String(x).trim()).length;
+    const score = r.filter((x) => !["notes", "ignore"].includes(guessField(x))).length * 10 + Math.min(filled, 9);
+    if (filled >= 2 && score > bestScore) { best = i; bestScore = score; }
+  });
+  return best;
+}
+const US_STATES = { alabama: "AL", alaska: "AK", arizona: "AZ", arkansas: "AR", california: "CA", colorado: "CO", connecticut: "CT", delaware: "DE",
+  "district of columbia": "DC", florida: "FL", georgia: "GA", hawaii: "HI", idaho: "ID", illinois: "IL", indiana: "IN", iowa: "IA", kansas: "KS",
+  kentucky: "KY", louisiana: "LA", maine: "ME", maryland: "MD", massachusetts: "MA", michigan: "MI", minnesota: "MN", mississippi: "MS",
+  missouri: "MO", montana: "MT", nebraska: "NE", nevada: "NV", "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY",
+  "north carolina": "NC", "north dakota": "ND", ohio: "OH", oklahoma: "OK", oregon: "OR", pennsylvania: "PA", "rhode island": "RI",
+  "south carolina": "SC", "south dakota": "SD", tennessee: "TN", texas: "TX", utah: "UT", vermont: "VT", virginia: "VA", washington: "WA",
+  "west virginia": "WV", wisconsin: "WI", wyoming: "WY", "puerto rico": "PR" };
+const ABBR = new Set(Object.values(US_STATES));
+const tidy = (v) => String(v ?? "").replace(/\s+/g, " ").trim();
+function tidyState(v) { v = tidy(v); const k = v.toLowerCase().replace(/\./g, ""); return US_STATES[k] || (ABBR.has(k.toUpperCase()) ? k.toUpperCase() : v); }
+function tidyZip(v) { v = tidy(v); return /^\d{4}$/.test(v) ? "0" + v : /^\d{9}$/.test(v) ? v.slice(0, 5) + "-" + v.slice(5) : v; }
+function tidyPhone(v) {
+  v = tidy(v); const d = v.replace(/\D/g, "");
+  const ten = d.length === 10 ? d : d.length === 11 && d[0] === "1" ? d.slice(1) : null;
+  return ten && !/^\+(?!1)/.test(v) ? `(${ten.slice(0, 3)}) ${ten.slice(3, 6)}-${ten.slice(6)}` : v;
+}
+function tidyName(v) { v = tidy(v); return v === v.toUpperCase() && /[A-Z]{2}/.test(v) ? v.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase()) : v; }
+function prettyHeader(h) {
+  h = tidy(h); if (h !== h.toUpperCase()) return h;
+  return h.toLowerCase().replace(/^\w/, (c) => c.toUpperCase()).replace(/\b(naics|uei|cage|sam|duns|zip|usa|llc|poc)\b/gi, (w) => w.toUpperCase());
+}
+function toContacts(head, rows, map, opts) {
+  const EM = /[\w.+'-]+@[\w-]+(?:\.[\w-]+)+/g;
+  return rows.map((r) => {
+    const by = {};
+    map.forEach((f, i) => { const v = tidy(r[i]); if (v && f !== "ignore") (by[f] ||= []).push(f === "notes" ? `${prettyHeader(head[i])}: ${v}` : v); });
+    const emails = (by.email || []).join(" ").match(EM) || [];
+    const name = tidy([by.name?.join(" "), by.name ? "" : [by.first?.join(" "), by.last?.join(" ")].filter(Boolean).join(" ")].filter(Boolean).join(" "));
+    const place = [by.city?.[0], [by.state ? tidyState(by.state[0]) : "", by.zip ? tidyZip(by.zip[0]) : ""].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+    const country = by.country?.[0] && !/^(us|usa|united states( of america)?)$/i.test(by.country[0]) ? by.country[0] : "";
+    const notes = [...(by.notes || [])];
+    if (emails.length > 1) notes.push("Other emails: " + emails.slice(1).join(", "));
+    const email = (emails[0] || "").toLowerCase();
+    let category = opts.category;
+    if (opts.autoGov && /\.(gov|mil)$/i.test(email)) category = "Government";
+    else if (opts.autoGov && /\.edu$/i.test(email)) category = "Academic";
+    return { name: tidyName(name), organization: tidy(by.organization?.join(" / ")), email, phone: (by.phone || []).map(tidyPhone).join(" / "),
+      role: tidy(by.role?.join(" / ")), location: [by.location?.join(", "), place, country].filter(Boolean).join(" · "), linkedin: by.linkedin?.[0] || "",
+      notes: notes.join("; "), category, status: opts.status, owner: opts.owner, source: opts.label };
+  }).filter((c) => c.name || c.organization || c.email);
+}
+// people who appear more than once in the same file (same email) become one row: first value wins, notes are combined
+function combineDuplicates(list) {
+  const out = [], byEmail = new Map();
+  for (const c of list) {
+    const prev = c.email && byEmail.get(c.email);
+    if (!prev) { out.push({ ...c }); if (c.email) byEmail.set(c.email, out[out.length - 1]); continue; }
+    for (const k of Object.keys(c)) if (!prev[k] && c[k]) prev[k] = c[k];
+    if (c.notes && !prev.notes.includes(c.notes)) prev.notes = [prev.notes, c.notes].filter(Boolean).join("; ");
+    if (c.organization && prev.organization.toLowerCase() !== c.organization.toLowerCase() && !prev.notes.includes(c.organization))
+      prev.notes = [prev.notes, "Also listed as: " + c.organization].filter(Boolean).join("; ");
+    prev._dups = (prev._dups || 0) + 1;
+  }
+  return out;
+}
+function labelFromFile(fname) {
+  const base = fname.replace(/\.[^.]+$/, "").replace(/[_]+/g, " ").replace(/\s+/g, " ").trim();
+  let s = base.replace(/\s*\d+\s*-\s*\d+$/, "").replace(/(?<=[a-z])\d+$/i, "");
+  for (let prev = ""; prev !== s; ) { prev = s; s = s.replace(/\s+(registrations?|registrants?|attendees?|attendance|sign ?ups?|signups?|list|export|final|copy|contacts?)$/i, "").trim(); }
+  s = s || base;
+  if (base === base.toUpperCase()) s = s.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase())
+    .replace(/\b(Hnc|Usace|Epa|Deq|Gsa|Sba|Dod|Doe|Usda|Noaa|Sbic|Awwa|Wef|Asce|Apex|Naics|Osdbu|Faa|Dot|Fema|Nasa|Dla)\b/g, (w) => w.toUpperCase());
+  return s;
+}
+
+function openContactImport(onDone) {
+  const ent = S.schema.entities.contacts;
+  const opt = (name) => ent.fields.find((f) => f.name === name).options;
+  $("#drawerTitle").textContent = "Import contacts";
+  $("#drawerBody").innerHTML = `
+    <p class="muted" style="margin-top:0">Upload a sign-up sheet, attendee list or any spreadsheet of people. Columns are matched automatically, and anyone already in your list is updated instead of duplicated.</p>
+    <label class="btn primary" style="justify-self:start">Choose a file (.xlsx or .csv)<input type="file" id="ciFile" accept=".xlsx,.csv,.tsv" hidden></label>
+    <div id="ciBody"></div>`;
+  openDrawer();
+  $("#ciFile").addEventListener("change", async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    $("#ciBody").innerHTML = `<p class="muted">Reading ${esc(file.name)}…</p>`;
+    let book;
+    try { book = await readSheetFile(file); } catch (err) { $("#ciBody").innerHTML = `<p class="error">${esc(err.message)}</p>`; return; }
+    const state = { book, file, sheet: book.sheets.findIndex((s) => s.rows.length > 1), opts: { category: "Partner", autoGov: true, status: "To Contact", owner: "", label: labelFromFile(file.name) } };
+    if (state.sheet < 0) state.sheet = 0;
+    renderMapping(state, onDone);
+  });
+}
+function renderMapping(st, onDone) {
+  const sheet = st.book.sheets[st.sheet];
+  const hr = findHeaderRow(sheet.rows);
+  const head = sheet.rows[hr] || [], body = sheet.rows.slice(hr + 1).filter((r) => r.some((x) => tidy(x)));
+  st.head = head; st.body = body;
+  st.map ||= {}; const key = st.sheet;
+  st.map[key] ||= head.map(guessField);
+  const map = st.map[key];
+  const sample = (i) => tidy(body.find((r) => tidy(r[i]))?.[i] || "");
+  const ent = S.schema.entities.contacts, opts = (n) => ent.fields.find((f) => f.name === n).options;
+  const raw = toContacts(head, body, map, st.opts), contacts = combineDuplicates(raw);
+  const withEmail = contacts.filter((c) => c.email).length, dupes = raw.length - contacts.length;
+  $("#ciBody").innerHTML = `
+    ${st.book.sheets.length > 1 ? `<label style="margin-top:14px">Sheet<select id="ciSheet">${st.book.sheets.map((s, i) => `<option value="${i}" ${i === st.sheet ? "selected" : ""}>${esc(s.name)} (${Math.max(0, s.rows.length - 1).toLocaleString()} rows)</option>`).join("")}</select></label>` : ""}
+    <section class="history"><h3>${contacts.length.toLocaleString()} people found <span class="muted" style="font-weight:500">· ${withEmail.toLocaleString()} with an email${dupes ? ` · ${dupes} listed twice, combined` : ""}</span></h3>
+      <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Column in your file</th><th>Example</th><th>Goes into</th></tr></thead><tbody>
+      ${head.map((h, i) => `<tr style="cursor:default"><td style="font-weight:600">${esc(tidy(h) || `Column ${i + 1}`)}</td><td class="wrap"><span class="clip muted">${esc(sample(i))}</span></td>
+        <td><select data-col="${i}" aria-label="Field for ${esc(tidy(h))}">${CI_FIELDS.map(([v, l]) => `<option value="${v}" ${map[i] === v ? "selected" : ""}>${l}</option>`).join("")}</select></td></tr>`).join("")}
+      </tbody></table></div></section>
+    <section class="history"><h3>Apply to everyone in this file</h3>
+      <div class="form" style="margin-top:8px">
+        <label class="full">Tag (shows where they came from)<input id="ciLabel" value="${esc(st.opts.label)}"></label>
+        <label>Category<select id="ciCat">${opts("category").map((o) => `<option ${o === st.opts.category ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></label>
+        <label>Status<select id="ciStatus">${opts("status").map((o) => `<option ${o === st.opts.status ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></label>
+        <label>Owner<select id="ciOwner"><option value=""></option>${S.owners.map((o) => `<option ${o === st.opts.owner ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></label>
+        <label style="display:flex;gap:8px;align-items:center;font-weight:500"><input type="checkbox" id="ciAuto" style="width:auto" ${st.opts.autoGov ? "checked" : ""}>.gov / .mil emails → Government, .edu → Academic</label>
+      </div></section>
+    <section class="history"><h3>Preview</h3>
+      <div class="table-wrap" style="margin-top:8px"><table><thead><tr><th>Name</th><th>Organization</th><th>Email</th><th>Phone</th><th>Location</th></tr></thead><tbody>
+      ${contacts.slice(0, 5).map((c) => `<tr style="cursor:default"><td>${esc(c.name)}</td><td>${esc(c.organization)}</td><td>${esc(c.email)}</td><td class="date">${esc(c.phone)}</td><td>${esc(c.location)}</td></tr>`).join("")}
+      </tbody></table></div>
+      ${contacts[0]?.notes ? `<p class="muted" style="font-size:12.5px;margin:6px 0 0">Notes for the first person: ${esc(contacts[0].notes)}</p>` : ""}</section>
+    <div class="form-foot"><button class="btn primary" id="ciGo" ${contacts.length ? "" : "disabled"}>Import ${contacts.length.toLocaleString()} ${contacts.length === 1 ? "person" : "people"}</button>
+      <button class="btn" data-close>Cancel</button><span class="spacer"></span></div>
+    <p id="ciResult" class="notice"></p>`;
+  const reopts = () => { st.opts = { category: $("#ciCat").value, autoGov: $("#ciAuto").checked, status: $("#ciStatus").value, owner: $("#ciOwner").value, label: $("#ciLabel").value.trim() }; };
+  $("#ciSheet")?.addEventListener("change", (e) => { reopts(); st.sheet = +e.target.value; renderMapping(st, onDone); });
+  $$("[data-col]").forEach((s) => s.addEventListener("change", () => { map[+s.dataset.col] = s.value; reopts(); renderMapping(st, onDone); }));
+  ["ciCat", "ciStatus", "ciOwner", "ciAuto"].forEach((id) => $("#" + id).addEventListener("change", () => { reopts(); renderMapping(st, onDone); }));
+  $("#ciLabel").addEventListener("change", reopts);
+  $("#ciGo").addEventListener("click", async (e) => {
+    reopts();
+    const rows = combineDuplicates(toContacts(st.head, st.body, map, st.opts)).map(({ _dups, ...c }) => c);
+    e.target.disabled = true;
+    const tot = { added: 0, merged: 0, skipped: 0 };
+    try {
+      for (let i = 0; i < rows.length; i += 500) {
+        e.target.textContent = `Importing ${Math.min(i + 500, rows.length).toLocaleString()} of ${rows.length.toLocaleString()}…`;
+        const r = await db.rpc("import_contacts", { p_rows: rows.slice(i, i + 500), p_label: st.opts.label || null });
+        tot.added += r.added; tot.merged += r.merged; tot.skipped += r.skipped;
+      }
+      e.target.textContent = "Imported";
+      $("#ciResult").textContent = `Done: ${tot.added.toLocaleString()} new contact${tot.added === 1 ? "" : "s"} added, ${tot.merged.toLocaleString()} already in your list (new details added to them). Tagged “${st.opts.label}”.`;
+      toast(`Imported ${tot.added + tot.merged} people`);
+      onDone && onDone();
+    } catch (err) { e.target.disabled = false; e.target.textContent = "Try again"; $("#ciResult").className = "error"; $("#ciResult").textContent = "Import stopped: " + err.message; }
+  });
 }
 
 /* ================================================================ record drawer */

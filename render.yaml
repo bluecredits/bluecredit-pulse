@@ -1,0 +1,25 @@
+# Render Blueprint: New > Blueprint > pick this repo. Render builds the Dockerfile and
+# redeploys on every push to main. The disk keeps the database between deploys.
+services:
+  - type: web
+    name: bluecredit-pulse
+    runtime: docker
+    plan: starter          # persistent disks need a paid instance
+    branch: main
+    autoDeploy: true
+    healthCheckPath: /healthz
+    disk:
+      name: pulse-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: APP_NAME
+        value: BlueCredit Pulse
+      - key: DATABASE_PATH
+        value: /data/pulse.db
+      - key: HTTPS_ONLY
+        value: "1"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: APP_USERS        # set in the dashboard: barasa:pw1,sohaib:pw2,robert:pw3,beckee:pw4
+        sync: false

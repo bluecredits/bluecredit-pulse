@@ -1,0 +1,13 @@
+# Business data stays out of git — contacts and pipeline live in the database.
+data/
+*.db
+*.db-wal
+*.db-shm
+*.xlsx
+*.csv
+*.docx
+.env
+__pycache__/
+*.pyc
+.venv/
+.DS_Store

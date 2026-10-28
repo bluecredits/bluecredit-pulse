@@ -104,7 +104,7 @@ const db = {
 let authMode = "signin";
 function showAuth(mode, notice = "") {
   authMode = mode;
-  $("#shell").hidden = true; $("#setup").hidden = true; $("#login").hidden = false;
+  $("#shell").hidden = true; $("#topbar").hidden = true; $("#setup").hidden = true; $("#login").hidden = false;
   $("#authTabs").hidden = !["signin", "join"].includes(mode);
   $$("#authTabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.mode === mode)));
   $$(".auth-form").forEach((f) => (f.hidden = f.dataset.mode !== mode));
@@ -179,10 +179,17 @@ async function afterSignIn() {
   if (!prof.active) { await sb.auth.signOut(); showAuth("signin"); authErr(new Error("This account is turned off. Ask an admin to turn it back on.")); return; }
   S.profile = prof;
   await loadTeam();
-  $("#login").hidden = true; $("#shell").hidden = false;
-  $("#whoami").textContent = prof.display_name;
+  $("#login").hidden = true; $("#shell").hidden = false; $("#topbar").hidden = false;
+  setWho(prof.display_name);
   route();
 }
+
+function setWho(name) {
+  $("#whoami").textContent = name;
+  $("#avatar").textContent = name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+}
+$("#menuBtn").addEventListener("click", () => document.body.classList.toggle("nav-open"));
+$("#scrim").addEventListener("click", () => document.body.classList.remove("nav-open"));
 
 async function loadTeam() {
   S.team = must(await sb.from("profiles").select("*").order("display_name"));
@@ -229,6 +236,7 @@ function route() {
   if (!S.profile) return;
   const [name = "dashboard", id] = location.hash.replace(/^#\/?/, "").split("/");
   $$("#nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === name));
+  document.body.classList.remove("nav-open");
   closeDrawer();
   const main = $("#main");
   main.innerHTML = `<p class="muted">Loading…</p>`;
@@ -247,12 +255,12 @@ async function Dashboard() {
       <p class="muted">${new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</p></div>
       <div class="actions-row"><a class="btn primary" href="#/reviews">Start today's review</a></div></div>
     <div class="kpis">
-      <a class="kpi" href="#/opportunities"><b>${k.active_opps}</b><span>Active opportunities</span></a>
-      <a class="kpi" href="#/funding"><b>${k.active_funding}</b><span>Active funding applications</span></a>
-      <a class="kpi" href="#/opportunities" data-preset="stage=Submitted"><b>${k.submitted}</b><span>Awaiting decision</span></a>
-      <a class="kpi" href="#/opportunities" data-preset="stage=Won"><b>${k.won}</b><span>Won</span></a>
-      <a class="kpi ${k.overdue_actions ? "alert" : ""}" href="#/actions"><b>${k.open_actions}</b><span>Open actions${k.overdue_actions ? ` · ${k.overdue_actions} overdue` : ""}</span></a>
-      <a class="kpi ${k.followups_due ? "alert" : ""}" href="#/contacts" data-preset="__followups"><b>${k.followups_due}</b><span>Follow-ups due</span></a>
+      ${kpiCard("#/opportunities", "", "Active opportunities", k.active_opps, "Identified → submitted", "briefcase")}
+      ${kpiCard("#/funding", "", "Active funding", k.active_funding, "Applications in progress", "banknotes")}
+      ${kpiCard("#/opportunities", "stage=Submitted", "Awaiting decision", k.submitted, "Submitted, no outcome yet", "send")}
+      ${kpiCard("#/opportunities", "stage=Won", "Won", k.won, "Opportunities and funding", "trophy")}
+      ${kpiCard("#/actions", "", "Open actions", k.open_actions, k.overdue_actions ? `${k.overdue_actions} overdue` : "None overdue", k.overdue_actions ? "alert" : "check", k.overdue_actions > 0)}
+      ${kpiCard("#/contacts", "__followups", "Follow-ups due", k.followups_due, "Contacts with a next step due", "users", k.followups_due > 0)}
     </div>
     <section class="panel"><h2>Next 14 days <small>${d.due_soon.length} deadline${d.due_soon.length === 1 ? "" : "s"}</small></h2>${gauge(d.due_soon, 14)}
       ${d.due_soon.length ? `<ul class="list">${d.due_soon.map(dueLi).join("")}</ul>` : `<p class="muted">No deadlines in the next two weeks. Qualify something from the forecasts.</p>`}</section>
@@ -273,6 +281,11 @@ async function Dashboard() {
     </div>`;
   wireCommon($("#main"), Dashboard);
 }
+function kpiCard(href, preset, label, value, sub, icon, alert = false) {
+  return `<a class="kpi ${alert ? "alert" : ""}" href="${href}" ${preset ? `data-preset="${esc(preset)}"` : ""}>
+    <div><span>${esc(label)}</span><b>${Number(value).toLocaleString()}</b><small>${esc(sub)}</small></div>
+    <div class="bubble"><svg class="ic"><use href="#i-${icon}"/></svg></div></a>`;
+}
 function dueLi(r) {
   return `<li><span><a href="#" data-open="${r.entity}:${r.id}">${esc(r.name)}</a><br><span class="meta">${r.entity === "funding" ? "Funding" : "Opportunity"}${r.org ? " · " + esc(r.org) : ""}${r.owner ? " · " + esc(r.owner) : ""}</span></span>
     <span class="meta">${dueCell(r.deadline)}<br>${pill(r.status)}</span></li>`;
@@ -281,7 +294,7 @@ function gauge(items, span) {
   if (!items.length) return "";
   const ticks = span <= 14 ? [0, 3, 7, span] : span <= 30 ? [0, 7, 14, span] : [0, Math.round(span / 4), Math.round(span / 2), Math.round(span * 3 / 4), span];
   const wk = Math.min(100, (7 / span) * 100), urgent = Math.min(100, (1 / span) * 100);
-  const track = `background:linear-gradient(90deg,var(--rust) 0 ${urgent}%,var(--ochre) ${urgent}% ${wk}%,var(--teal) ${wk}% 100%)`;
+  const track = `background:linear-gradient(90deg,var(--red) 0 ${urgent}%,var(--amber) ${urgent}% ${wk}%,var(--blue-5) ${wk}% 100%)`;
   const by = {};
   items.forEach((r) => (by[r.deadline] = by[r.deadline] || []).push(r));
   const dots = Object.entries(by).map(([d, rs]) => {
@@ -705,7 +718,7 @@ async function Team() {
   }));
   $("#saveName").addEventListener("click", async () => {
     const name = $("#myName").value.trim(); if (!name) return;
-    try { must(await sb.from("profiles").update({ display_name: name }).eq("id", S.user.id)); S.profile.display_name = name; $("#whoami").textContent = name; toast("Saved"); await loadTeam(); }
+    try { must(await sb.from("profiles").update({ display_name: name }).eq("id", S.user.id)); S.profile.display_name = name; setWho(name); toast("Saved"); await loadTeam(); }
     catch (e) { toast(e.message); }
   });
 }

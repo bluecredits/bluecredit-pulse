@@ -101,12 +101,12 @@ def csv_rows(path):
 class Loader:
     def __init__(self, conn):
         self.db = conn
-        self.emails = {}
-        self.name_org = set()
+        self.emails = {}      # email -> [(contact id, organization)]
+        self.name_org = {}    # (name, organization) -> contact id
         for r in conn.execute("SELECT id, email, name, organization FROM contacts"):
             for e in split_emails(r["email"]):
-                self.emails[e] = r["id"]
-            self.name_org.add((s(r["name"]).lower(), s(r["organization"]).lower()))
+                self.emails.setdefault(e, []).append((r["id"], s(r["organization"]).lower()))
+            self.name_org.setdefault((s(r["name"]).lower(), s(r["organization"]).lower()), r["id"])
 
     def add(self, entity, data, meta=None, src=""):
         allowed = set(field_names(entity))
@@ -122,32 +122,67 @@ class Loader:
         return cur.lastrowid
 
     def contact(self, data, meta=None, src=""):
+        """Add a contact without losing anything.
+
+        Same email + same (or unknown) organization  -> merge into the existing record.
+        No email + same name and organization        -> merge into the existing record.
+        Anything else                                -> a new record (e.g. one SBIC IR person per fund).
+        Merging fills empty fields and appends any differing details to Notes, so no source value is dropped.
+        """
+        data = {k: s(v) for k, v in data.items() if s(v)}
         data["source"] = data.get("source") or src
         emails = split_emails(data.get("email"))
-        for e in emails:
-            if e in self.emails:  # fill blanks on the existing record, note the extra source
-                rid = self.emails[e]
-                row = dict(self.db.execute("SELECT * FROM contacts WHERE id=?", (rid,)).fetchone())
-                upd = {k: v for k, v in data.items() if v and not row.get(k) and k in field_names("contacts")}
-                tags = [t for t in s(row.get("tags")).split("; ") if t]
-                if src and src not in tags and src != row.get("source"):
-                    upd["tags"] = "; ".join(tags + [src])
-                if upd:
-                    self.db.execute(f'UPDATE contacts SET {",".join(chr(34)+k+chr(34)+"=?" for k in upd)} WHERE id=?',
-                                    (*upd.values(), rid))
-                stats["contacts merged (same email)"] = stats.get("contacts merged (same email)", 0) + 1
-                return rid
-        if not emails:
-            key = (s(data.get("name")).lower(), s(data.get("organization")).lower())
-            if key == ("", ""):
-                return None
-            if key in self.name_org:
-                return None
-            self.name_org.add(key)
+        if len(emails) > 1 and not data.get("name"):      # several people in one cell -> one contact each
+            ids = [self.contact({**data, "email": e}, meta, src) for e in emails]
+            return ids[0]
+        if len(emails) > 1:                               # one named person, several addresses
+            data["notes"] = "\n".join(x for x in [data.get("notes", ""), "Other emails: " + ", ".join(emails[1:])] if x)
+        if emails:
+            data["email"] = emails[0]
+        name, org = data.get("name", "").lower(), data.get("organization", "").lower()
+        if not emails and not name and not org:
+            stats["contact rows with no name, org or email (skipped)"] = stats.get("contact rows with no name, org or email (skipped)", 0) + 1
+            return None
+        target = None
+        if emails:
+            for rid, rorg in self.emails.get(emails[0], []):
+                if not rorg or not org or rorg == org:
+                    target = rid
+                    break
+        else:
+            target = self.name_org.get((name, org))
+        if target:
+            self.merge(target, data, src)
+            return target
         rid = self.add("contacts", data, meta, src)
-        for e in emails:
-            self.emails[e] = rid
+        if emails:
+            self.emails.setdefault(emails[0], []).append((rid, org))
+        self.name_org.setdefault((name, org), rid)
         return rid
+
+    def merge(self, rid, data, src):
+        row = dict(self.db.execute("SELECT * FROM contacts WHERE id=?", (rid,)).fetchone())
+        allowed = set(field_names("contacts"))
+        upd, extra = {}, []
+        for k, v in data.items():
+            if k not in allowed or k in ("source", "tags"):
+                continue
+            cur = s(row.get(k))
+            if not cur:
+                upd[k] = v
+            elif v.lower() not in cur.lower() and k != "category":
+                extra.append(v if k == "notes" else f"{k.replace('_', ' ').capitalize()}: {v}")
+        tags = [t for t in s(row.get("tags")).split("; ") if t]
+        for t in [x for x in s(data.get("tags")).split("; ") if x] + ([src] if src and src != row.get("source") else []):
+            if t not in tags:
+                tags.append(t)
+        if tags:
+            upd["tags"] = "; ".join(tags)
+        if extra:
+            upd["notes"] = "\n".join(x for x in [s(upd.get("notes", row.get("notes"))), f"Also from {src}:"] + extra if x)
+        if upd:
+            self.db.execute(f'UPDATE contacts SET {",".join(chr(34)+k+chr(34)+"=?" for k in upd)} WHERE id=?', (*upd.values(), rid))
+        stats[f"contacts merged into an existing record ← {src}"] = stats.get(f"contacts merged into an existing record ← {src}", 0) + 1
 
 
 def split_emails(v):
@@ -322,6 +357,11 @@ def bidboard(L, path):
                                 "notes": s(r.get("Below-SAT Action"))}, src="Fed Agency Bid Board")
     for r in sheet_rows(path, "District & Regional Officers", header_row=3):
         if s(r.get("Agency")):
+            L.contact({"organization": f"{s(r.get('Agency'))} {s(r.get('District / Office'))}".strip(),
+                       "role": "Small business office", "phone": s(r.get("Phone")), "category": "Government",
+                       "location": s(r.get("Geography Covered")), "linkedin": "",
+                       "notes": "\n".join(x for x in [s(r.get("Division / Region")), s(r.get("Small Business Portal URL")),
+                                                      s(r.get("Notes"))] if x)}, src="Fed Agency Bid Board: district offices")
             L.add("resources", {"name": f"{s(r.get('Agency'))} {s(r.get('District / Office'))}".strip(),
                                 "category": "District Office", "agency": s(r.get("Agency")),
                                 "url": s(r.get("Small Business Portal URL")), "contact": s(r.get("Phone")),
@@ -436,24 +476,38 @@ def watercontacts(L, path):
                            "location": s(d.get("Primary Service Area")), "tags": typ, "notes": s(d.get("Website"))},
                           src="Water contacts: agencies")
     if "experts" in names:
-        for _, r in rows("experts"):
+        # this sheet has no header row: the first row is a real person
+        for r in wb["experts"].iter_rows(values_only=True):
+            if not r or not any(c not in (None, "") for c in r):
+                continue
             r = list(r) + [None] * 9
             name = " ".join(x for x in [s(r[0]), s(r[1])] if x and len(x) > 1)
-            if s(r[2]).startswith("http"):  # LinkedIn-style layout
-                L.contact({"name": name, "linkedin": s(r[2]), "organization": s(r[4]), "role": s(r[5]),
-                           "category": "Expert"}, src="Water contacts: experts")
+            if s(r[2]).startswith("http"):  # LinkedIn-style layout: name, name, profile, email, org, role
+                L.contact({"name": name, "linkedin": s(r[2]), "email": s(r[3]), "organization": s(r[4]), "role": s(r[5]),
+                           "phone": " / ".join(x for x in [s(r[6]), s(r[7]), s(r[8])] if x), "category": "Expert"},
+                          src="Water contacts: experts")
             else:
                 L.contact({"name": name, "organization": s(r[2]), "role": s(r[3]), "tags": s(r[4]),
                            "location": s(r[5]) if s(r[5]) != "N/A" else "", "email": s(r[6]),
                            "phone": " / ".join(x for x in [s(r[7]), s(r[8])] if x), "category": "Expert"},
                           src="Water contacts: experts")
     if "dotsubcontractingdir" in names:
+        # an entry spans several rows: the company row, then rows with only the rest of the address/details
+        entries = []
         for h, r in rows("dotsubcontractingdir"):
-            r = list(r) + [None] * 5
-            m = re.match(r"(.*?)\s*(\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}.*)?$", s(r[4]))
-            L.contact({"organization": s(r[0]), "name": (m.group(1) if m else s(r[4])).title(),
-                       "phone": (m.group(2) or "") if m else "", "location": s(r[1]), "category": "Prime Contractor",
-                       "tags": "DOT subcontracting directory", "notes": f"NAICS {s(r[2])}: {s(r[3])}"},
+            r = [s(x) for x in list(r) + [None] * 5][:5]
+            if r[0] or not entries:
+                entries.append([[x] if x else [] for x in r])
+            else:
+                for i, x in enumerate(r):
+                    if x:
+                        entries[-1][i].append(x)
+        for e in entries:
+            org, addr, naics, lines, official = (" ".join(x) if i in (0, 1) else "; ".join(x) for i, x in enumerate(e))
+            m = re.match(r"(.*?)\s*(\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}.*)?$", official)
+            L.contact({"organization": org, "name": (m.group(1) if m else official).title(),
+                       "phone": (m.group(2) or "") if m else "", "location": addr, "category": "Prime Contractor",
+                       "tags": "DOT subcontracting directory", "notes": f"NAICS {naics}: {lines}"},
                       src="Water contacts: DOT subcontracting")
     if "gsacontracts" in names:
         for h, r in rows("gsacontracts"):

@@ -10,6 +10,6 @@
  */
 window.PULSE_CONFIG = {
   appName: "BlueCredit Pulse",
-  supabaseUrl: "",
-  supabaseAnonKey: "",
+  supabaseUrl: "https://dtnohwaxnnwqplmdtdeq.supabase.co",
+  supabaseAnonKey: "sb_publishable_LSwFfqry2e6FfcEE_msnHw_dLzj910i",
 };

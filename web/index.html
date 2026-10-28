@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>BlueCredit Pulse</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Literata:opsz,wght@7..72,500;7..72,600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3C11 11 7 15.5 7 20a9 9 0 0 0 18 0c0-4.5-4-9-9-17z' fill='%231F6F86'/%3E%3C/svg%3E">
+</head>
+<body>
+<div id="login" class="login" hidden>
+  <div class="login-card">
+    <svg class="drop" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3C11 11 7 15.5 7 20a9 9 0 0 0 18 0c0-4.5-4-9-9-17z"/></svg>
+    <h1 class="app-name">BlueCredit Pulse</h1>
+    <div class="auth-tabs" role="tablist" id="authTabs">
+      <button role="tab" data-mode="signin" aria-selected="true">Sign in</button>
+      <button role="tab" data-mode="join" aria-selected="false">Join with company code</button>
+    </div>
+
+    <form id="signinForm" class="auth-form" data-mode="signin">
+      <label>Email<input name="email" type="email" autocomplete="email" required></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="btn primary" type="submit">Sign in</button>
+      <button class="link" type="button" id="forgotBtn">Forgot password?</button>
+    </form>
+
+    <form id="joinForm" class="auth-form" data-mode="join" hidden>
+      <p class="muted">Ask your admin for the company code. You only need it once.</p>
+      <label>Company code<input name="code" autocomplete="off" placeholder="BLUE-XXXX-XXXX" required></label>
+      <label>Your name<input name="name" autocomplete="name" placeholder="Barasa Wangusi" required></label>
+      <label>Work email<input name="email" type="email" autocomplete="email" required></label>
+      <label>Choose a password<input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+      <button class="btn primary" type="submit">Join the team</button>
+    </form>
+
+    <form id="finishForm" class="auth-form" data-mode="finish" hidden>
+      <p class="muted">You're signed in, but not on the team yet. Enter the company code to finish joining.</p>
+      <label>Company code<input name="code" autocomplete="off" required></label>
+      <label>Your name<input name="name" autocomplete="name" required></label>
+      <button class="btn primary" type="submit">Finish joining</button>
+      <button class="link" type="button" data-signout>Use a different account</button>
+    </form>
+
+    <form id="resetForm" class="auth-form" data-mode="reset" hidden>
+      <p class="muted">Choose a new password.</p>
+      <label>New password<input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+      <button class="btn primary" type="submit">Save new password</button>
+    </form>
+
+    <p class="error" id="authError" role="alert"></p>
+    <p class="notice" id="authNotice" role="status"></p>
+  </div>
+</div>
+
+<div id="setup" class="login" hidden>
+  <div class="login-card">
+    <h1>Almost there</h1>
+    <p>This site isn't connected to its database yet. An admin needs to add the Supabase project URL and anon key to <code>web/config.js</code> in the GitHub repo.</p>
+    <p class="muted">See the README for the 5-minute setup.</p>
+  </div>
+</div>
+
+<div id="shell" class="shell" hidden>
+  <aside class="side">
+    <a class="brand" href="#/dashboard">
+      <svg class="drop" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3C11 11 7 15.5 7 20a9 9 0 0 0 18 0c0-4.5-4-9-9-17z"/></svg>
+      <span class="app-name">BlueCredit Pulse</span>
+    </a>
+    <nav id="nav">
+      <a href="#/dashboard" data-r="dashboard">Today</a>
+      <a href="#/reviews" data-r="reviews">Reviews</a>
+      <span class="nav-gap"></span>
+      <a href="#/opportunities" data-r="opportunities">Opportunities</a>
+      <a href="#/funding" data-r="funding">Funding</a>
+      <a href="#/contacts" data-r="contacts">Contacts</a>
+      <a href="#/actions" data-r="actions">Action items</a>
+      <a href="#/resources" data-r="resources">Resources</a>
+      <span class="nav-gap"></span>
+      <a href="#/activity" data-r="activity">Activity log</a>
+      <a href="#/team" data-r="team">Team</a>
+    </nav>
+    <div class="side-foot">
+      <span id="whoami"></span>
+      <button class="link" data-signout>Sign out</button>
+    </div>
+  </aside>
+  <main id="main" tabindex="-1"></main>
+</div>
+
+<div id="drawer" class="drawer" aria-hidden="true">
+  <div class="drawer-scrim" data-close></div>
+  <section class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
+    <header class="drawer-head">
+      <h2 id="drawerTitle"></h2>
+      <button class="icon-btn" data-close aria-label="Close">✕</button>
+    </header>
+    <div id="drawerBody" class="drawer-body"></div>
+  </section>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="./config.js"></script>
+<script src="./schema.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>

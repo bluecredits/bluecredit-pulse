@@ -16,9 +16,9 @@ from datetime import date, datetime
 
 import openpyxl
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from app import db as dbmod  # noqa: E402
-from app.schema import field_names  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import pulse_db as dbmod  # noqa: E402
+from pulse_schema import field_names  # noqa: E402
 
 USER = "import"
 stats = {}

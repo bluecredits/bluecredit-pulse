@@ -4,7 +4,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
-from .schema import ENTITIES, field_types
+from pulse_schema import ENTITIES, field_types
 
 DB_PATH = os.environ.get("DATABASE_PATH", os.path.join(os.path.dirname(__file__), "..", "data", "pulse.db"))
 

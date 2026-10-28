@@ -1,22 +1,28 @@
 # BlueCredit Pulse
 
-Internal pipeline and business-review tool for BlueCredit Inc. It replaces the BD Tracker
-workbook, the contact spreadsheets and the Daily Business Review Word doc with one shared app.
+Internal pipeline and business-review tool for BlueCredit Inc. One shared place for opportunities,
+funding, contacts, action items and the daily / weekly / monthly / quarterly business reviews.
+
+- **Site:** GitHub Pages, served from the `web/` folder (plain HTML/CSS/JS, no build step)
+- **Data and logins:** Supabase (Postgres + Auth). Nothing confidential is stored in this repo.
+- **Access:** sign up with the **company code**, then sign in with email and password.
+  Without the code an account sees nothing. The database enforces this, not just the page.
 
 ## What's in it
 
-| Page | What it holds | Came from |
-|---|---|---|
-| **Today** | Deadlines in the next 14 days, your open actions, pipeline by stage, review rhythm | — |
-| **Reviews** | Daily, weekly, monthly, quarterly reviews. Each opens with a live snapshot, then notes and action items | Daily Business Review .docx |
-| **Opportunities** | Consulting bids, federal forecasts, EPA forecast, water credit projects | BD Tracker (Consulting, Water Credit Projects), EPA Opportunities, forecast export |
-| **Funding** | Applications pipeline plus the funding catalog (status *Catalog*) | BD Tracker (Funding Applications), funding_db |
-| **Contacts** | Government POCs, corporates, investors, primes, partners, NGOs, experts, mailing list — de-duplicated by email | All contact sheets, SBIC list, DEQ, simplified acquisitions, industrial sites |
-| **Action items** | Who does what by when, linked to a review and/or a record | — |
-| **Resources** | Bid boards, forecast portals, below-SAT strategy, district offices, feasibility programs | FedAgency BidBoard, BD Tracker (Feasibility) |
-| **Activity log** | Every add, edit, status change and delete | — |
+| Page | What it holds |
+|---|---|
+| **Today** | Deadlines in the next 14 days, your open actions, pipeline by stage, review rhythm |
+| **Reviews** | Daily, weekly, monthly, quarterly. Each opens with a live snapshot, then notes and action items |
+| **Opportunities** | Consulting bids, federal and EPA forecasts, water credit projects |
+| **Funding** | Applications pipeline plus the funding catalog (status *Catalog*) |
+| **Contacts** | Government POCs, corporates, investors, primes, partners, NGOs, experts, mailing list |
+| **Action items** | Who does what by when, linked to a review and/or a record |
+| **Resources** | Bid boards, forecast portals, below-SAT strategy, district offices, feasibility programs |
+| **Activity log** | Every add, edit, status change and delete, with who did it |
+| **Team** | Members, roles, the company code (admins only) |
 
-### How reviews work
+### Reviews
 
 | Cadence | Looks back | Looks ahead | Adds |
 |---|---|---|---|
@@ -25,57 +31,61 @@ workbook, the contact spreadsheets and the Daily Business Review Word doc with o
 | Monthly | 31 days | 60 days | Win rate, value won, results by owner |
 | Quarterly | 92 days | 120 days | Same, over the quarter |
 
-Every snapshot shows: open actions carried over from the last review of the same cadence,
-overdue actions, upcoming deadlines, what moved (submitted / won / lost / new records),
-contact follow-ups due, and active items whose deadline passed without an outcome.
-"Refresh snapshot" re-runs it. Notes autosave. "Print" gives a clean copy to share.
+Every snapshot shows open actions carried over from the last review of the same type, overdue
+actions, upcoming deadlines, what moved (submitted / won / lost / new), contact follow-ups due, and
+active items whose deadline passed without an outcome. Notes autosave. **Print** gives a clean copy.
 
-Status changes are what drive the monthly/quarterly numbers, so move items to *Submitted*,
-*Won* or *Lost* in the app as they happen.
+Wins, losses and win rate come from status changes made in the app, so move items to
+*Submitted*, *Won* or *Lost* as it happens.
 
-## Run locally
+## One-time setup (about 10 minutes)
 
+### 1. Create the database
+1. Create a free project at [supabase.com](https://supabase.com) (region: US East).
+2. **SQL Editor → New query**, paste all of [`supabase/schema.sql`](supabase/schema.sql), click **Run**.
+3. Optional but recommended for an internal team: **Authentication → Sign In / Providers → Email** →
+   turn off **Confirm email**, so people can sign in right after joining.
+4. **Authentication → URL Configuration**: set **Site URL** to
+   `https://bluecredits.github.io/bluecredit-pulse/` (needed for confirmation and password-reset links).
+
+### 2. Connect the site
+In **Project Settings → API** copy the **Project URL** and the **anon / publishable** key into
+[`web/config.js`](web/config.js) and push. Those two values are designed to be public. Row-level
+security is what protects the data. **Never** put the `service_role` / secret key in this repo.
+
+### 3. Turn on GitHub Pages
+Repo **Settings → Pages → Source: GitHub Actions**. Every push that touches `web/` redeploys.
+The site appears at `https://bluecredits.github.io/bluecredit-pulse/`.
+
+### 4. Load the existing data
 ```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python scripts/import_spreadsheets.py /path/to/spreadsheets --reset   # one-time load
-APP_USERS="barasa:pw,sohaib:pw" SECRET_KEY=dev uvicorn app.main:app --reload
-# open http://localhost:8000
+pip install -r scripts/requirements.txt
+python scripts/load_supabase.py --db-url "<Supabase: Connect → Session pooler → URI>" \
+    --spreadsheets /path/to/the/spreadsheets
 ```
+The spreadsheets stay on your computer; only the database receives them. Use `--replace` to
+wipe and reload. Keep the connection string private: it contains the database password.
 
-Without `APP_USERS` the app falls back to `admin` / `admin` for local testing only.
-
-## Deploy from git
-
-The repo has a `Dockerfile` (works on Render, Railway, Fly.io, or any VPS) and a
-`render.yaml` blueprint.
-
-**Render (simplest):**
-1. Push this repo to a **private** GitHub repo.
-2. Render → New → Blueprint → pick the repo. It builds the Dockerfile and attaches a 1 GB disk at `/data` for the database.
-3. In the service's Environment tab set `APP_USERS` = `barasa:…,sohaib:…,robert:…,beckee:…`.
-4. Load the data once (pick one):
-   - Render Shell: upload the spreadsheets to `/data/import`, then `python scripts/import_spreadsheets.py /data/import`
-   - Or run the importer locally and upload `data/pulse.db` to `/data/pulse.db`
-   - Or set `IMPORT_DIR` to a folder with the files; the app imports on first boot when the database is empty
-
-Every push to `main` redeploys; the database on the disk is untouched. GitHub Actions runs
-`scripts/smoke_test.py` on every push.
-
-> GitHub Pages can't host this — it only serves static files, and the team needs a shared database.
-
-## Backups
-
-The whole dataset is one SQLite file (`DATABASE_PATH`). Copy it on a schedule, and every
-list page has **Export CSV**.
+### 5. Get the team in
+1. You join first. Open the site, choose **Join with company code**, and enter the code. The first
+   person to join becomes **admin**. To see the starting code, run
+   `select value from settings;` in the Supabase SQL Editor.
+2. On the **Team** page, copy the code and send it to teammates. They join the same way, as members.
+3. **Change code** stops new sign-ups with the old code. **Turn off** removes someone immediately.
 
 ## Customizing
 
-- Fields, option lists, owners, review windows and agendas all live in `app/schema.py`.
-  Add a field there and it appears in the forms, tables, search and CSV export; the column is
-  added to the database on next start.
-- `APP_NAME` changes the display name.
-- **Import CSV** on any list page bulk-adds rows; headers can be field names or labels.
+- Fields, option lists, owners, review windows and agendas: [`web/schema.js`](web/schema.js).
+  A new field also needs a column. Add it in `supabase/schema.sql` and run
+  `alter table public.<table> add column <name> text;` in the SQL Editor.
+- App name: `appName` in `web/config.js`.
+- **Import CSV** on any list page bulk-adds rows. Headers can be field names or labels.
+  **Export CSV** downloads exactly what the current filter shows.
+
+## Backups
+
+Supabase takes daily backups on paid plans. On the free plan, use **Export CSV** on each page,
+or `pg_dump` with the connection string.
 
 ## Data notes
 

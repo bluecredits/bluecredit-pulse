@@ -398,7 +398,7 @@ input:disabled, select:disabled, textarea:disabled { background: rgba(249, 250, 
 .hub-hero h1 { font-size: 30px; }
 .hub-hero p { margin: 6px 0 0; }
 .hub-h { font: 600 13px var(--font-ui); color: var(--muted); margin: 34px 0 12px; letter-spacing: .02em; }
-.hub-apps { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+.hub-apps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .hub-app { display: grid; grid-template-columns: auto 1fr; gap: 18px; padding: 24px; text-decoration: none; color: inherit;
   background: var(--surface); backdrop-filter: blur(12px); border: 1px solid rgba(229, 231, 235, .5); border-radius: 20px;
   box-shadow: var(--shadow-md); transition: box-shadow .3s, transform .3s, border-color .3s; }

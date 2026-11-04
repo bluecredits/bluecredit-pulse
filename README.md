@@ -1,14 +1,48 @@
 # BlueCredit Pulse
 
-Internal pipeline and business-review tool for BlueCredit Inc. One shared place for opportunities,
-funding, contacts, action items and the daily / weekly / monthly / quarterly business reviews.
+BlueCredit's internal workspace. One sign-in opens a landing page with the team's apps:
 
-- **Site:** GitHub Pages, served from the `web/` folder (plain HTML/CSS/JS, no build step)
-- **Data and logins:** Supabase (Postgres + Auth). Nothing confidential is stored in this repo.
-- **Access:** sign up with the **company code**, then sign in with email and password.
-  Without the code an account sees nothing. The database enforces this, not just the page.
+| Address | App | What it's for |
+|---|---|---|
+| `/` | **Landing page** | Sign in or join with the company code; launches every app; links to the other BlueCredit sites |
+| `/review/` | **Business Review** | Opportunities, funding, contacts, action items, and daily / weekly / monthly / quarterly reviews |
+| `/tickets/` | **Tickets** | My requests, My approvals, My assets: equipment, purchases, time off, travel, access and IT help |
 
-## What's in it
+- **Site:** https://bluecredits.github.io/bluecredit-pulse/ (GitHub Pages, from the `web/` folder; no build step)
+- **Data and logins:** one Supabase project shared by all the apps. Nothing confidential is stored in this repo.
+- **Access:** join with the **company code** on the landing page, then sign in with email and password.
+  Without the code an account sees nothing; the database enforces this, not just the page.
+
+### Code layout
+
+```
+web/index.html, hub.js     landing page: sign-in, join, password reset, app launcher
+web/core.js                shared by every app: Supabase client, sign-in check, helpers, file readers
+web/icons.js, style.css    shared icon set and styles (matches the Marketplace look)
+web/config.js              Supabase URL + publishable key
+web/review/                Business Review app
+web/tickets/               Tickets app
+supabase/schema.sql        the whole database: tables, security rules, functions (safe to re-run)
+```
+
+To add another app: make `web/<app>/index.html` that loads `../core.js` and calls `requireMember()`,
+then add a tile to `APPS` in `web/hub.js`.
+
+## Tickets
+
+- **Request types:** IT support, New equipment, Purchase or expense, Time off, Travel, Access or account,
+  Asset problem, Return an asset, Other. Equipment, purchases, time off, travel and access need approval.
+- **Approvals:** the requester picks an approver (default: an admin). Nobody approves their own request,
+  except an admin when there is no other admin yet. Rejecting needs a reason, which the requester sees.
+- **Fulfilment:** admins (or whoever a request is assigned to) start and finish approved and open requests.
+  Finishing a *Return an asset* request checks the asset back into the register; an *Asset problem* marks it
+  In repair while it's being fixed.
+- **Privacy:** a request is visible only to the requester, the approver, the assignee and admins. Requests are
+  not written to the team-wide activity log; each has its own timeline of comments and status changes.
+- **Assets:** everyone sees what's assigned to them; admins manage the register (add, assign, import a
+  spreadsheet, export CSV).
+
+## Business Review
 
 | Page | What it holds |
 |---|---|

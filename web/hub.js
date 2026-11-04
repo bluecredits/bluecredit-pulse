@@ -1,17 +1,11 @@
 /* BlueCredit Pulse — landing page: signs people in (or lets them join with the company code)
-   and lists the apps. Shared helpers come from core.js. */
+   and lists the team's business productivity apps. Shared helpers come from core.js. */
 "use strict";
 window.onAuthLost = () => showAuth("signin");
 
 const APPS = [
   { key: "review", name: "Business Review", icon: "chart", href: "./review/", blurb: "Pipeline, funding, contacts, and daily to quarterly business reviews." },
   { key: "tickets", name: "Tickets", icon: "ticket", href: "./tickets/", blurb: "Ask for equipment, purchases, time off or IT help; approve requests; see your assets." },
-];
-const SITES = [
-  { name: "Marketplace", icon: "storefront", url: "https://marketplace.bluecredits.org", blurb: "Volumetric water credit marketplace and the Water Hub." },
-  { name: "Water Atlas", icon: "map", url: "https://atlas.bluecredits.org", blurb: "BlueCredit's water map." },
-  { name: "Data Center Water Leaks", icon: "droplet", url: "https://datacenterwaterleaks.com", blurb: "Public data center water-use transparency platform." },
-  { name: "Company website", icon: "globe", url: "https://www.bluecredits.org", blurb: "bluecredits.org" },
 ];
 
 // ?next=review#/contacts → back to where someone was when they had to sign in
@@ -33,10 +27,6 @@ async function Launcher() {
     <div class="hub-apps">${APPS.map((a) => `<a class="hub-app" href="${a.href}" data-app="${a.key}">
         <div class="hub-ic">${icon(a.icon)}</div><div class="hub-body"><h3>${esc(a.name)}</h3><p>${esc(a.blurb)}</p>
         <div class="hub-stats" id="stats-${a.key}"><span class="muted">Loading…</span></div></div></a>`).join("")}</div>
-    <h2 class="hub-h">BlueCredit sites</h2>
-    <div class="hub-sites">${SITES.map((s) => s.url && !s.planned
-      ? `<a class="hub-site" href="${s.url}" target="_blank" rel="noopener">${icon(s.icon)}<div><b>${esc(s.name)} ${icon("arrow-out", "ic xs")}</b><span>${esc(s.blurb)}</span><small>${esc(s.url.replace(/^https?:\/\/(www\.)?/, ""))}</small></div></a>`
-      : `<div class="hub-site planned">${icon(s.icon)}<div><b>${esc(s.name)} <em>Planned</em></b><span>${esc(s.blurb)}</span></div></div>`).join("")}</div>
     ${admin ? `<p class="hub-admin"><a href="./review/#/team">Team and company code</a> · People join from this page with the company code.</p>` : ""}`;
   loadStats();
 }

@@ -4,7 +4,7 @@ BlueCredit's internal workspace. One sign-in opens a landing page with the team'
 
 | Address | App | What it's for |
 |---|---|---|
-| `/` | **Landing page** | Sign in or join with the company code; launches every app; links to the other BlueCredit sites |
+| `/` | **Landing page** | Sign in or join with the company code; launches every app |
 | `/review/` | **Business Review** | Opportunities, funding, contacts, action items, and daily / weekly / monthly / quarterly reviews |
 | `/tickets/` | **Tickets** | My requests, My approvals, My assets: equipment, purchases, time off, travel, access and IT help |
 

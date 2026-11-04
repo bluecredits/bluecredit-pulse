@@ -10,11 +10,6 @@ const APPS = [
 const SITES = [
   { name: "Marketplace", icon: "storefront", url: "https://marketplace.bluecredits.org", blurb: "Volumetric water credit marketplace and the Water Hub." },
   { name: "Water Atlas", icon: "map", url: "https://atlas.bluecredits.org", blurb: "BlueCredit's water map." },
-  { name: "Hydro", icon: "waves", url: "https://hydro.bluecredits.org", blurb: "Water-resources modeling." },
-  { name: "Plume", icon: "beaker", url: "https://plume.bluecredits.org", blurb: "Pollution-spread modeling for air, rivers, lakes and groundwater." },
-  { name: "Cloud", icon: "cloud", url: "https://cloud.bluecredits.org", blurb: "Shared project storage for the modeling apps." },
-  { name: "Project", icon: "clipboard", url: "https://project.bluecredits.org", blurb: "Project management for funded water projects.", planned: true },
-  { name: "Flow", icon: "droplet", blurb: "Hydraulic modeling, the successor to Hydro.", planned: true },
   { name: "Data Center Water Leaks", icon: "droplet", url: "https://datacenterwaterleaks.com", blurb: "Public data center water-use transparency platform." },
   { name: "Company website", icon: "globe", url: "https://www.bluecredits.org", blurb: "bluecredits.org" },
 ];
@@ -38,7 +33,7 @@ async function Launcher() {
     <div class="hub-apps">${APPS.map((a) => `<a class="hub-app" href="${a.href}" data-app="${a.key}">
         <div class="hub-ic">${icon(a.icon)}</div><div class="hub-body"><h3>${esc(a.name)}</h3><p>${esc(a.blurb)}</p>
         <div class="hub-stats" id="stats-${a.key}"><span class="muted">Loading…</span></div></div></a>`).join("")}</div>
-    <h2 class="hub-h">BlueCredit apps</h2>
+    <h2 class="hub-h">BlueCredit sites</h2>
     <div class="hub-sites">${SITES.map((s) => s.url && !s.planned
       ? `<a class="hub-site" href="${s.url}" target="_blank" rel="noopener">${icon(s.icon)}<div><b>${esc(s.name)} ${icon("arrow-out", "ic xs")}</b><span>${esc(s.blurb)}</span><small>${esc(s.url.replace(/^https?:\/\/(www\.)?/, ""))}</small></div></a>`
       : `<div class="hub-site planned">${icon(s.icon)}<div><b>${esc(s.name)} <em>Planned</em></b><span>${esc(s.blurb)}</span></div></div>`).join("")}</div>

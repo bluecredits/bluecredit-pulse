@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check JavaScript parses
-        run: for f in web/*.js; do node --check "$f"; done
+        run: for f in web/*.js web/*/*.js; do node --check "$f"; done
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

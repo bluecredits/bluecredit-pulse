@@ -38,15 +38,13 @@
       <a href="#/reviews" data-r="reviews"><svg class="ic"><use href="#i-calendar"/></svg><span>Reviews</span></a>
       <div class="nav-label">Records</div>
       <a href="#/opportunities" data-r="opportunities"><svg class="ic"><use href="#i-briefcase"/></svg><span>Opportunities</span></a>
-      <a href="#/funding" data-r="funding"><svg class="ic"><use href="#i-banknotes"/></svg><span>Funding</span></a>
-      <a href="#/contacts" data-r="contacts"><svg class="ic"><use href="#i-users"/></svg><span>Contacts</span></a>
       <a href="#/actions" data-r="actions"><svg class="ic"><use href="#i-check"/></svg><span>Action items</span></a>
       <a href="#/resources" data-r="resources"><svg class="ic"><use href="#i-book"/></svg><span>Resources</span></a>
       <div class="nav-label">Admin</div>
       <a href="#/activity" data-r="activity"><svg class="ic"><use href="#i-clock"/></svg><span>Activity log</span></a>
       <a href="#/team" data-r="team"><svg class="ic"><use href="#i-team"/></svg><span>Team</span></a>
     </nav>
-    <div class="side-foot"><a class="foot-link" href="../tickets/"><svg class="ic"><use href="#i-ticket"/></svg><span>Tickets</span></a><button data-signout><svg class="ic"><use href="#i-logout"/></svg><span>Sign out</span></button></div>
+    <div class="side-foot"><button data-signout><svg class="ic"><use href="#i-logout"/></svg><span>Sign out</span></button></div>
   </aside>
   <div class="scrim" id="scrim"></div>
   <main id="main" tabindex="-1"></main>
@@ -66,7 +64,8 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="../config.js"></script>
 <script src="../core.js"></script>
-<script src="./schema.js"></script>
-<script src="./app.js"></script>
+<script>window.PULSE_APP = { home: "dashboard" };</script>
+<script src="../schema.js"></script>
+<script src="../records.js"></script>
 </body>
 </html>

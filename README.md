@@ -5,7 +5,9 @@ BlueCredit's internal workspace. One sign-in opens a landing page with the team'
 | Address | App | What it's for |
 |---|---|---|
 | `/` | **Landing page** | Sign in or join with the company code; launches every app |
-| `/review/` | **Business Review** | Opportunities, funding, contacts, action items, and daily / weekly / monthly / quarterly reviews |
+| `/review/` | **Business Review** | Opportunities, action items, and daily / weekly / monthly / quarterly reviews |
+| `/contacts/` | **Contacts** | Government POCs, primes, partners, investors, experts, mailing list; import and follow-ups |
+| `/funding/` | **Funding** | Grant and loan applications in progress, plus the funding catalog |
 | `/tickets/` | **Tickets** | My requests, My approvals, My assets: equipment, purchases, time off, travel, access and IT help |
 
 - **Site:** https://bluecredits.github.io/bluecredit-pulse/ (GitHub Pages, from the `web/` folder; no build step)
@@ -20,10 +22,17 @@ web/index.html, hub.js     landing page: sign-in, join, password reset, app laun
 web/core.js                shared by every app: Supabase client, sign-in check, helpers, file readers
 web/icons.js, style.css    shared icon set and styles (matches the Marketplace look)
 web/config.js              Supabase URL + publishable key
+web/records.js, schema.js  records engine shared by Business Review, Contacts and Funding (fields, lists, reviews)
 web/review/                Business Review app
+web/contacts/              Contacts app
+web/funding/               Funding app
 web/tickets/               Tickets app
 supabase/schema.sql        the whole database: tables, security rules, functions (safe to re-run)
 ```
+
+Business Review, Contacts and Funding share one records engine. Each app's `index.html` has its own
+sidebar and sets `window.PULSE_APP = { home: ... }`; a link to a page that belongs to another app
+(for example a Funding card on the Today page) opens that app.
 
 To add another app: make `web/<app>/index.html` that loads `../core.js` and calls `requireMember()`,
 then add a tile to `APPS` in `web/hub.js`.
@@ -42,6 +51,15 @@ then add a tile to `APPS` in `web/hub.js`.
 - **Assets:** everyone sees what's assigned to them; admins manage the register (add, assign, import a
   spreadsheet, export CSV).
 
+## Contacts and Funding
+
+- **Contacts:** views for working contacts, follow-ups due and everyone. **Import contacts** reads a
+  spreadsheet or CSV, matches its columns, combines duplicates and uploads in one step.
+- **Funding:** views for active applications, all applications, catalog programs with open deadlines
+  and the whole catalog. Move a catalog program to *Identified* to put it in the pipeline.
+- Both still feed the business reviews: funding deadlines, wins and contact follow-ups show up in
+  every review snapshot.
+
 ## Business Review
 
 | Page | What it holds |
@@ -49,8 +67,6 @@ then add a tile to `APPS` in `web/hub.js`.
 | **Today** | Deadlines in the next 14 days, your open actions, pipeline by stage, review rhythm |
 | **Reviews** | Daily, weekly, monthly, quarterly. Each opens with a live snapshot, then notes and action items |
 | **Opportunities** | Consulting bids, federal and EPA forecasts, water credit projects |
-| **Funding** | Applications pipeline plus the funding catalog (status *Catalog*) |
-| **Contacts** | Government POCs, corporates, investors, primes, partners, NGOs, experts, mailing list |
 | **Action items** | Who does what by when, linked to a review and/or a record |
 | **Resources** | Bid boards, forecast portals, below-SAT strategy, district offices, feasibility programs |
 | **Activity log** | Every add, edit, status change and delete, with who did it |

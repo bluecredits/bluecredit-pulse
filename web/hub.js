@@ -4,7 +4,9 @@
 window.onAuthLost = () => showAuth("signin");
 
 const APPS = [
-  { key: "review", name: "Business Review", icon: "chart", href: "./review/", blurb: "Pipeline, funding, contacts, and daily to quarterly business reviews." },
+  { key: "review", name: "Business Review", icon: "chart", href: "./review/", blurb: "Opportunities, action items, and daily to quarterly business reviews." },
+  { key: "contacts", name: "Contacts", icon: "users", href: "./contacts/", blurb: "Government POCs, primes, partners, investors and the mailing list; import and follow up." },
+  { key: "funding", name: "Funding", icon: "banknotes", href: "./funding/", blurb: "Grant and loan applications in progress, plus the catalog of funding programs." },
   { key: "tickets", name: "Tickets", icon: "ticket", href: "./tickets/", blurb: "Ask for equipment, purchases, time off or IT help; approve requests; see your assets." },
 ];
 
@@ -32,12 +34,21 @@ async function Launcher() {
 }
 function icon(name, cls = "ic") { return `<svg class="${cls}"><use href="#i-${name}"/></svg>`; }
 async function loadStats() {
-  const stat = (n, label, href, alert) => `<span class="hub-stat ${alert && n ? "alert" : ""}" ${href ? `data-href="${href}"` : ""}><b>${Number(n).toLocaleString()}</b> ${label}</span>`;
+  const stat = (n, label, href, alert, preset) => `<span class="hub-stat ${alert && n ? "alert" : ""}" ${href ? `data-href="${href}"` : ""} ${preset ? `data-preset="${preset}"` : ""}><b>${Number(n).toLocaleString()}</b> ${label}</span>`;
   db.rpc("dashboard_data", { p_owner: firstName() }).then((d) => {
     const k = d.kpis;
-    $("#stats-review").innerHTML = [stat(d.due_soon.length, "deadlines in 14 days", "./review/#/dashboard", false),
+    $("#stats-review").innerHTML = [stat(d.due_soon.length, `deadline${d.due_soon.length === 1 ? "" : "s"} in 14 days`, "./review/#/dashboard", false),
       stat(k.open_actions, "open actions", "./review/#/actions", k.overdue_actions), stat(k.active_opps, "active opportunities", "./review/#/opportunities")].join("");
-  }).catch(() => ($("#stats-review").innerHTML = ""));
+    const fundDue = d.due_soon.filter((r) => r.entity === "funding").length;
+    $("#stats-funding").innerHTML = [stat(k.active_funding, "active applications", "./funding/#/funding", false, "status=Identified|Pursuing|Submitted"),
+      stat(fundDue, `funding deadline${fundDue === 1 ? "" : "s"} in 14 days`, "./funding/#/funding", true)].join("");
+    $("#stats-contacts").innerHTML = stat(k.followups_due, "follow-ups due", "./contacts/#/contacts", true, "__followups") + ($("#stats-contacts").dataset.total || "");
+  }).catch(() => ["review", "funding", "contacts"].forEach((k) => ($("#stats-" + k).innerHTML = "")));
+  sb.from("contacts").select("id", { count: "exact" }).limit(1).then(({ count }) => {
+    if (count == null) return;
+    const el = $("#stats-contacts"), t = stat(count, "contacts", "");
+    if (/follow-ups/.test(el.textContent)) el.insertAdjacentHTML("beforeend", t); else el.dataset.total = t;
+  });
   db.rpc("desk_counts", {}).then((c) => {
     $("#stats-tickets").innerHTML = [stat(c.approvals, "waiting for your approval", "./tickets/#/approvals", true),
       stat(c.my_open, "of your requests open", "./tickets/#/requests"), c.to_work ? stat(c.to_work, "to work on", "./tickets/#/requests") : "",
@@ -46,7 +57,10 @@ async function loadStats() {
 }
 document.addEventListener("click", (e) => {
   const s = e.target.closest("[data-href]");
-  if (s) { e.preventDefault(); location.href = s.dataset.href; }
+  if (!s) return;
+  e.preventDefault();
+  if (s.dataset.preset) sessionStorage.setItem("preset:" + s.dataset.href.split("#/")[1], s.dataset.preset);
+  location.href = s.dataset.href;
 });
 
 /* ================================================================ auth */

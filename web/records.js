@@ -1,5 +1,6 @@
-/* BlueCredit Pulse · Business Review — pipeline, funding, contacts and business reviews.
-   Shared helpers, sign-in and data access come from ../core.js. No build step. */
+/* BlueCredit Pulse — records engine shared by the Business Review, Contacts and Funding apps.
+   Each app's index.html sets window.PULSE_APP (its home page) and its own sidebar; pages that belong
+   to another app open there. Shared helpers and sign-in come from core.js. No build step. */
 "use strict";
 S.schema = window.PULSE_SCHEMA;
 
@@ -101,17 +102,34 @@ async function boot() {
 /* ================================================================ status styling */
 
 /* ================================================================ router */
-const routes = { dashboard: Dashboard, reviews: Reviews, activity: Activity, team: Team, ...(window.DESK_ROUTES || {}) };
+const routes = { dashboard: Dashboard, reviews: Reviews, activity: Activity, team: Team };
+// which app owns each page; anything not listed lives in Business Review
+const OWNER = { contacts: "contacts", funding: "funding" };
+const HERE = location.pathname.replace(/\/index\.html$/, "/").replace(/\/$/, "").split("/").pop();
+const HOME = (window.PULSE_APP && window.PULSE_APP.home) || "dashboard";
+let navPick = null;  // the sidebar link clicked last (several can point at one page with different views)
 window.addEventListener("hashchange", route);
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("#nav a[data-preset]");
+  if (!a) return;
+  sessionStorage.setItem("preset:" + a.dataset.r, a.dataset.preset);
+  navPick = a;
+  if (location.hash === a.getAttribute("href")) { e.preventDefault(); route(); }
+});
 function route() {
   if (!S.profile) return;
-  const [name = "dashboard", id] = location.hash.replace(/^#\/?/, "").split("/");
-  $$("#nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === name));
+  const [part, id] = location.hash.replace(/^#\/?/, "").split("/");
+  const name = part || HOME;
+  const app = OWNER[name] || "review";
+  if (app !== HERE) { location.href = `../${app}/#/${name}${id ? "/" + id : ""}`; return; }
+  const links = $$("#nav a[data-r]");
+  const on = navPick?.dataset.r === name ? navPick : links.find((a) => a.dataset.r === name);
+  links.forEach((a) => a.classList.toggle("on", a === on));
   document.body.classList.remove("nav-open");
   closeDrawer();
   const main = $("#main");
   main.innerHTML = `<p class="muted">Loading…</p>`;
-  const fn = routes[name] || (S.schema.entities[name] ? () => ListPage(name) : Dashboard);
+  const fn = routes[name] || (S.schema.entities[name] ? () => ListPage(name) : routes[HOME] || (() => ListPage(HOME)));
   Promise.resolve(fn(id)).catch((e) => (main.innerHTML = `<div class="empty">Couldn't load this page: ${esc(e.message)}</div>`));
   main.focus({ preventScroll: true });
 }
@@ -232,11 +250,13 @@ async function ListPage(entity) {
   const ent = S.schema.entities[entity];
   const st = LIST_STATE[entity] ||= { q: "", preset: PRESETS[entity][0][1], extra: {}, sort: "", offset: 0 };
   const pre = sessionStorage.getItem("preset:" + entity);
-  if (pre) {
+  if (pre !== null) {
     sessionStorage.removeItem("preset:" + entity); st.offset = 0; st.q = "";
     if (PRESETS[entity].some(([, v]) => v === pre)) { st.preset = pre; st.extra = {}; }
     else { st.preset = ""; st.extra = presetParams(pre); }
   }
+  const views = $$(`#nav a[data-r="${entity}"][data-preset]`);  // sidebar links that are views of this list
+  if (views.length) views.forEach((v) => v.classList.toggle("on", v.dataset.preset === st.preset));
   const facets = ent.fields.filter((f) => f.type === "select" && f.name !== ent.status_field).slice(0, 2);
   if (ent.status_field) facets.unshift(ent.fields.find((f) => f.name === ent.status_field));
 

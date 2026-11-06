@@ -9,7 +9,7 @@ the company's code, contractors and consultants with a separate contractor code.
 | `/review/` | **Business Review** | Opportunities, action items, and daily / weekly / monthly / quarterly reviews |
 | `/contacts/` | **Contacts** | Government POCs, primes, partners, investors, experts, mailing list; import and follow-ups |
 | `/funding/` | **Funding** | Grant and loan applications in progress, plus the funding catalog |
-| `/federal/` | **Federal** | Saved SAM.gov searches (NAICS, agency, size, set-aside, notice type, keywords) checked on a schedule; add matches to Opportunities |
+| `/opportunities/` | **Opportunities** | Contracts (SAM.gov) and Grants (Grants.gov) tabs from saved searches checked on a schedule (default once a day); add a contract to the pipeline or a grant to Funding |
 | `/timecards/` | **Timecards** | Weekly timesheets by project, approvals, hours and amounts by project |
 | `/onboarding/` | **Onboarding** | Contractors, consultants and new hires: checklist, invite, offboarding |
 | `/projects/` | **Projects** | Portfolio, schedule, task board, team, budget vs. actual, documents, risks, status reports, close-out |
@@ -56,20 +56,22 @@ sidebar and sets `window.PULSE_APP = { home: ... }`; a link to a page that belon
 To add another app: make `web/<app>/index.html` that loads `../core.js` and calls `requireMember()`,
 then add a tile to `APPS` in `web/hub.js`.
 
-## Federal opportunities (SAM.gov)
+## Opportunities: federal contracts (SAM.gov) and grants (Grants.gov)
 
 - **How it runs:** a database timer (pg_cron, every 5 minutes) asks SAM.gov's Get Opportunities API for today's notices on each
-  workspace's schedule (every 15 minutes to once a day) through pg_net, stores them, and matches every active search locally.
+  workspace's schedule (default once a day; down to every 15 minutes) through pg_net, stores them, and matches every active search locally.
   The number of searches doesn't change how many API requests are used. Once a day it also re-reads yesterday's notices.
 - **API key:** each workspace's admin pastes their own SAM.gov public API key in Federal → Settings. It's stored in Supabase Vault
   (encrypted) and never sent to the browser. Keys expire every 90 days; the app shows SAM.gov's error when it needs a new one.
   A personal key allows 10 requests a day without a role on the entity's SAM registration, 1,000 with one.
-- **Matches:** New / Saved / Dismissed / Added. **Add to Opportunities** creates a Business Review opportunity (stage Identified)
-  with agency, solicitation number, due date, NAICS, set-aside, place and the SAM.gov link.
+- **Grants:** when a workspace has an active grants search, each check also reads all open and forecasted grants from Grants.gov's
+  search2 API (no key). Grants searches filter by assistance listing (ALN prefixes), agency, status and keywords.
+- **Matches:** Contracts and Grants tabs, each New / Saved / Dismissed / Added. **Add to pipeline** creates a Business Review
+  opportunity (stage Identified); **Add to Funding** creates a Funding record (type Grant, status Identified).
 - **Setup:** in Supabase turn on the `pg_net` and `pg_cron` extensions (Vault is on by default), then run `supabase/schema.sql`;
   it creates the `pulse-federal` timer. Settings shows whether each piece is on.
 - **Not connected:** FedConnect has no public API (its contracts over $25K also post to SAM.gov); eVA's open data is yearly spend
-  history only and its bid board has no API; Grants.gov has a free API and could be added as a second source.
+  history only and its bid board has no API. `/federal/` redirects to `/opportunities/`.
 
 ## Agreements
 

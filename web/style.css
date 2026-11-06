@@ -696,3 +696,9 @@ textarea.mono { font: 12.5px/1.5 ui-monospace, Menlo, monospace; }
 .menu .ic { width: 18px; height: 18px; color: var(--muted); }
 .menu a:hover .ic, .menu button:hover .ic { color: var(--blue); }
 @media (max-width: 760px) { .topbar button.user span { display: none; } .menu { right: -6px; } }
+.src-tabs { margin: 0 0 14px; display: inline-flex; }
+.src-tabs a { text-decoration: none; }
+.src-tabs .count { display: inline-block; min-width: 18px; padding: 0 6px; border-radius: 999px; background: var(--blue); color: #fff; font-size: 11px; line-height: 18px; text-align: center; margin-left: 4px; }
+.tabs a { font: 600 13px var(--font-ui); color: var(--muted); padding: 7px 14px; border-radius: 999px; }
+.tabs a[aria-selected="true"] { background: #fff; color: var(--blue); box-shadow: var(--shadow-sm); }
+.tabs a:hover { color: var(--blue); }

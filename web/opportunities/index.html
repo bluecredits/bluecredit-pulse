@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Opportunities · Pulse</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../style.css?v=20261106j">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3C11 11 7 15.5 7 20a9 9 0 0 0 18 0c0-4.5-4-9-9-17z' fill='%233B82F6'/%3E%3C/svg%3E">
+</head>
+<body>
+<script src="../icons.js?v=20261106j"></script>
+<div id="setup" class="login" hidden>
+  <div class="login-card">
+    <h1>Almost there</h1>
+    <p>This site isn't connected to its database yet. An admin needs to add the Supabase project URL and anon key to <code>web/config.js</code> in the GitHub repo.</p>
+    <p class="muted">See the README for the 5-minute setup.</p>
+  </div>
+</div>
+
+<header class="topbar" id="topbar" hidden>
+  <button class="menu-btn" id="menuBtn" aria-label="Open menu"><svg class="ic"><use href="#i-menu"/></svg></button>
+  <a class="bc-lockup" href="../" aria-label="BlueCredit Pulse"><img src="../logo.png" alt="BlueCredit"><span class="s">Pulse</span></a>
+  <span class="ws-chip"><span class="ws-logo" data-ws-logo></span><span class="ws-name" data-ws-name></span></span>
+  <span class="crumb">Opportunities</span>
+  <span class="spacer"></span>
+  <a class="apps-btn" href="../" title="All apps" aria-label="All apps"><svg class="ic"><use href="#i-grid"/></svg><span>All apps</span></a>
+  <div class="user-menu"><button class="user" id="userBtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="userMenu"><span id="whoami"></span><div class="avatar" id="avatar"></div><svg class="ic chev"><use href="#i-chevron-right"/></svg></button>
+    <div class="menu" id="userMenu" role="menu" hidden></div></div>
+</header>
+<div id="shell" class="shell" hidden>
+  <aside class="side">
+    <div class="side-head"><span>Opportunities</span></div>
+    <nav id="nav">
+      <div class="nav-label">Find</div>
+      <a href="#/contracts" data-r="contracts"><svg class="ic"><use href="#i-gov"/></svg><span>Contracts</span></a>
+      <a href="#/grants" data-r="grants"><svg class="ic"><use href="#i-banknotes"/></svg><span>Grants</span></a>
+      <div class="nav-label">Set up</div>
+      <a href="#/searches" data-r="searches"><svg class="ic"><use href="#i-search"/></svg><span>Searches</span></a>
+      <a href="#/settings" data-r="settings"><svg class="ic"><use href="#i-cog"/></svg><span>Settings</span></a>
+    </nav>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+  <main id="main" tabindex="-1"></main>
+</div>
+
+<div id="drawer" class="drawer" aria-hidden="true">
+  <div class="drawer-scrim" data-close></div>
+  <section class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
+    <header class="drawer-head">
+      <h2 id="drawerTitle"></h2>
+      <button class="icon-btn" data-close aria-label="Close">✕</button>
+    </header>
+    <div id="drawerBody" class="drawer-body"></div>
+  </section>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="../config.js?v=20261106j"></script>
+<script src="../core.js?v=20261106j"></script>
+<script src="../packs.js?v=20261106j"></script>
+<script src="./opportunities.js?v=20261106j"></script>
+</body>
+</html>

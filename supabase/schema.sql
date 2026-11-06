@@ -1957,8 +1957,8 @@ language sql stable security invoker set search_path = public as $$
     from project_tasks t join projects p on p.id = t.project_id where t.assignee_id = auth.uid() and t.status <> 'Done' $$;
 grant execute on function public.my_tasks() to authenticated;
 
--- ================================================================ Federal opportunities (SAM.gov)
--- Pulse pulls new notices from the SAM.gov Get Opportunities API on a timer (pg_cron + pg_net, inside the database)
+-- ================================================================ Opportunities: federal contracts (SAM.gov) and grants (Grants.gov)
+-- Pulse pulls new notices from the SAM.gov Get Opportunities API and open grants from the Grants.gov search2 API on a timer (pg_cron + pg_net, inside the database)
 -- and matches every saved search against them locally, so the number of searches doesn't use up the API allowance.
 -- Each workspace brings its own SAM.gov API key, kept encrypted in Supabase Vault; nobody can read it back.
 do $$ begin create extension if not exists pg_net with schema extensions; exception when others then raise notice 'pg_net not available here (%). Federal fetching stays off until it is enabled.', sqlerrm; end $$;
@@ -1967,7 +1967,7 @@ do $$ begin create extension if not exists pg_cron with schema pg_catalog; excep
 create table if not exists public.fed_config (
   workspace_id uuid primary key default public.ws_default() references public.workspaces (id) on delete cascade,
   enabled boolean not null default true,
-  every_min int not null default 60 check (every_min in (15, 30, 60, 120, 240, 720, 1440)),
+  every_min int not null default 1440 check (every_min in (15, 30, 60, 120, 240, 720, 1440)),
   daily_budget int not null default 900 check (daily_budget between 1 and 10000),
   key_secret_id uuid, key_hint text,
   next_fetch_at timestamptz, last_fetch_at timestamptz, yesterday_done date,
@@ -2017,6 +2017,18 @@ create table if not exists public.fed_matches (
   foreign key (workspace_id, notice_id) references public.fed_notices (workspace_id, notice_id) on delete cascade
 );
 create index if not exists ix_fed_matches_notice on public.fed_matches (workspace_id, notice_id);
+-- grants (Grants.gov) share the same tables; source says where a row came from
+alter table public.fed_config alter column every_min set default 1440;
+alter table public.fed_config add column if not exists grants_fetch_at timestamptz;
+alter table public.fed_config add column if not exists grants_error text;
+alter table public.fed_calls add column if not exists source text not null default 'SAM.gov';
+alter table public.fed_notices add column if not exists aln text[] not null default '{}';
+alter table public.fed_notices add column if not exists funding_id bigint references public.funding (id) on delete set null;
+alter table public.fed_searches add column if not exists source text not null default 'SAM.gov';
+alter table public.fed_searches add column if not exists aln text[] not null default '{}';
+do $$ begin
+  alter table public.fed_searches add constraint fed_searches_source check (source in ('SAM.gov', 'Grants.gov'));
+exception when duplicate_object then null; end $$;
 
 alter table public.fed_config enable row level security;
 alter table public.fed_calls enable row level security;
@@ -2033,7 +2045,8 @@ drop policy if exists staff_write on public.fed_searches;
 create policy staff_write on public.fed_searches for all to authenticated using (workspace_id = staff_ws()) with check (workspace_id = staff_ws());
 revoke all on public.fed_config, public.fed_calls, public.fed_notices, public.fed_searches, public.fed_matches from anon, authenticated;
 grant select on public.fed_calls, public.fed_notices, public.fed_matches to authenticated;
-grant select (workspace_id, enabled, every_min, daily_budget, key_hint, next_fetch_at, last_fetch_at, last_status, last_error, updated_at, updated_by) on public.fed_config to authenticated;
+grant select (workspace_id, enabled, every_min, daily_budget, key_hint, next_fetch_at, last_fetch_at, last_status, last_error, grants_fetch_at, grants_error, updated_at, updated_by) on public.fed_config to authenticated;
+
 grant select, insert, update, delete on public.fed_searches to authenticated;
 drop trigger if exists stamp on public.fed_searches;
 create trigger stamp before insert or update on public.fed_searches for each row execute function public.stamp_row();
@@ -2041,15 +2054,20 @@ create trigger stamp before insert or update on public.fed_searches for each row
 -- does a notice fit a search?
 create or replace function public.fed_fits(n public.fed_notices, s public.fed_searches) returns boolean
 language sql stable set search_path = public as $$
-  select (cardinality(s.naics) = 0 or exists (select 1 from unnest(s.naics) q, unnest(n.naics_all) c where c like trim(q) || '%'))
-     and (cardinality(s.agencies) = 0 or exists (select 1 from unnest(s.agencies) a where n.path_name ilike '%' || trim(a) || '%'))
-     and (s.size = 'any' or (s.size = 'small' and coalesce(n.set_aside_code, '') not in ('', 'NONE'))
-          or (s.size = 'unrestricted' and coalesce(n.set_aside_code, '') in ('', 'NONE')))
-     and (cardinality(s.set_asides) = 0 or n.set_aside_code = any (s.set_asides))
-     and (cardinality(s.notice_types) = 0 or n.notice_type = any (s.notice_types) or n.base_type = any (s.notice_types))
+  select n.source = s.source
+     and (cardinality(s.agencies) = 0 or exists (select 1 from unnest(s.agencies) a where concat_ws(' ', n.path_name, n.agency, n.subtier) ilike '%' || trim(a) || '%'))
      and (cardinality(s.keywords) = 0 or exists (select 1 from unnest(s.keywords) k where concat_ws(' ', n.title, n.sol_number) ilike '%' || trim(k) || '%'))
      and not exists (select 1 from unnest(s.exclude) k where trim(k) <> '' and n.title ilike '%' || trim(k) || '%')
-     and (not s.open_only or n.response_deadline is null or n.response_deadline >= now()) $$;
+     and (cardinality(s.notice_types) = 0 or n.notice_type = any (s.notice_types) or n.base_type = any (s.notice_types))
+     and (not s.open_only or n.response_deadline is null or n.response_deadline >= now())
+     and case when n.source = 'Grants.gov' then
+           (cardinality(s.aln) = 0 or exists (select 1 from unnest(s.aln) q, unnest(n.aln) c where c like trim(q) || '%'))
+         else
+           (cardinality(s.naics) = 0 or exists (select 1 from unnest(s.naics) q, unnest(n.naics_all) c where c like trim(q) || '%'))
+           and (s.size = 'any' or (s.size = 'small' and coalesce(n.set_aside_code, '') not in ('', 'NONE'))
+                or (s.size = 'unrestricted' and coalesce(n.set_aside_code, '') in ('', 'NONE')))
+           and (cardinality(s.set_asides) = 0 or n.set_aside_code = any (s.set_asides))
+         end $$;
 
 -- add matches for one search (or every active search) in a workspace; returns how many new matches
 create or replace function public.fed_rematch(p_ws uuid, p_search bigint default null, p_since timestamptz default null) returns int
@@ -2107,7 +2125,7 @@ begin
 end $$;
 
 create or replace function public.fed_used_today(p_ws uuid) returns int language sql stable set search_path = public as $$
-  select count(*)::int from fed_calls where workspace_id = p_ws and request_id is not null
+  select count(*)::int from fed_calls where workspace_id = p_ws and request_id is not null and source = 'SAM.gov'
      and (created_at at time zone 'America/New_York')::date = (now() at time zone 'America/New_York')::date $$;
 
 -- ask SAM.gov for one page (async through pg_net); returns false when out of budget or not set up
@@ -2134,9 +2152,50 @@ exception when undefined_function or invalid_schema_name or undefined_table then
 end $$;
 
 -- the timer: collect finished responses, store them, match, ask for the next page or the next scheduled fetch
+-- store one page of Grants.gov search2 results (open and forecasted grants)
+create or replace function public.fed_store_grants(p_ws uuid, p_body jsonb) returns int
+language plpgsql volatile security definer set search_path = public as $$
+declare v int;
+begin
+  insert into fed_notices as f (workspace_id, notice_id, source, title, sol_number, path_name, agency, subtier, notice_type, base_type, posted_date,
+      response_deadline, aln, ui_link, active)
+  select p_ws, 'G' || (o ->> 'id'), 'Grants.gov', o ->> 'title', o ->> 'number', concat_ws(' ', o ->> 'agencyName', o ->> 'agencyCode'),
+      coalesce(nullif(o ->> 'agencyName', ''), o ->> 'agencyCode'), o ->> 'agencyCode', initcap(o ->> 'oppStatus'), o ->> 'docType',
+      fed_date(o ->> 'openDate'), (fed_date(o ->> 'closeDate') + time '23:59') at time zone 'America/New_York',
+      coalesce((select array_agg(x) from jsonb_array_elements_text(case when jsonb_typeof(o -> 'alnist') = 'array' then o -> 'alnist' else '[]' end) x where x <> ''), '{}'),
+      'https://www.grants.gov/search-results-detail/' || (o ->> 'id'), true
+    from jsonb_array_elements(case when jsonb_typeof(p_body #> '{data,oppHits}') = 'array' then p_body #> '{data,oppHits}' else '[]' end) o
+   where coalesce(o ->> 'id', '') <> ''
+  on conflict (workspace_id, notice_id) do update set title = excluded.title, sol_number = excluded.sol_number, path_name = excluded.path_name,
+      agency = excluded.agency, subtier = excluded.subtier, notice_type = excluded.notice_type, base_type = excluded.base_type,
+      posted_date = excluded.posted_date, response_deadline = excluded.response_deadline, aln = excluded.aln, ui_link = excluded.ui_link, updated_at = now()
+    where (f.title, f.response_deadline, f.notice_type, f.aln) is distinct from (excluded.title, excluded.response_deadline, excluded.notice_type, excluded.aln);
+  get diagnostics v = row_count;
+  return v;
+end $$;
+create or replace function public.fed_date(p text) returns date language plpgsql immutable as $$
+begin return to_date(nullif(trim(p), ''), 'MM/DD/YYYY'); exception when others then return null; end $$;
+
+-- ask Grants.gov for one page of open and forecasted grants (no key needed)
+create or replace function public.fed_request_grants(p_ws uuid, p_start int) returns boolean
+language plpgsql volatile security definer set search_path = public as $$
+declare rid bigint;
+begin
+  execute 'select net.http_post(url := $1, body := $2, headers := $3, timeout_milliseconds := 60000)' into rid
+    using 'https://api.grants.gov/v1/api/search2', jsonb_build_object('oppStatuses', 'forecasted|posted', 'rows', 1000, 'startRecordNum', p_start),
+          '{"Content-Type": "application/json"}'::jsonb;
+  insert into fed_calls (workspace_id, request_id, page_offset, source) values (p_ws, rid, p_start, 'Grants.gov');
+  return true;
+exception when undefined_function or invalid_schema_name or undefined_table then
+  update fed_config set grants_error = 'The database extension for fetching (pg_net) is not turned on. See Settings.' where workspace_id = p_ws;
+  return false;
+end $$;
+
+-- the timer: collect finished responses, store them, match, ask for the next page or the next scheduled fetch
 create or replace function public.fed_tick_ws(p_ws uuid, p_force boolean default false) returns void
 language plpgsql volatile security definer set search_path = public as $$
-declare c fed_config; cl fed_calls; r record; body jsonb; n int; started timestamptz := clock_timestamp(); today date := (now() at time zone 'America/New_York')::date;
+declare c fed_config; cl fed_calls; r record; body jsonb; n int; got int; hits int; started timestamptz := clock_timestamp();
+  today date := (now() at time zone 'America/New_York')::date; stamp text := to_char(now() at time zone 'America/New_York', 'Mon DD, HH12:MI AM');
 begin
   select * into c from fed_config where workspace_id = p_ws for update skip locked;
   if not found then return; end if;
@@ -2145,15 +2204,32 @@ begin
       execute 'select status_code, content, timed_out, error_msg from net._http_response where id = $1' into r using cl.request_id;
     exception when others then r := null; end;
     if r is null then
-      if cl.created_at < now() - interval '15 minutes' then update fed_calls set status = 'error', error = 'No response from SAM.gov', done_at = now() where id = cl.id; end if;
+      if cl.created_at < now() - interval '15 minutes' then update fed_calls set status = 'error', error = 'No response from ' || cl.source, done_at = now() where id = cl.id; end if;
       continue;
     end if;
-    if coalesce(r.status_code, 0) = 200 then
-      begin body := r.content::jsonb; exception when others then body := null; end;
-      if body is null then
-        update fed_calls set status = 'error', http_status = 200, error = 'Unreadable response', done_at = now() where id = cl.id;
-        continue;
+    body := null;
+    if coalesce(r.status_code, 0) = 200 then begin body := r.content::jsonb; exception when others then body := null; end; end if;
+    if body is null then
+      update fed_calls set status = 'error', http_status = r.status_code, error = coalesce(r.error_msg, left(r.content, 300), 'Unreadable response'), done_at = now() where id = cl.id;
+      if cl.source = 'Grants.gov' then
+        update fed_config set grants_error = format('Grants.gov error %s: %s', coalesce(r.status_code::text, ''), left(coalesce(r.error_msg, r.content, ''), 200)) where workspace_id = p_ws;
+      else
+        update fed_config set last_error = case
+            when r.status_code = 429 then 'SAM.gov says the daily request limit for this API key is used up. Fetching resumes tomorrow; consider a slower schedule.'
+            when r.status_code in (401, 403) then 'SAM.gov rejected the API key. Check it is current (keys expire every 90 days) and save it again.'
+            when r.timed_out then 'SAM.gov did not answer in time; it will be retried.'
+            else format('SAM.gov error %s: %s', r.status_code, left(coalesce(r.error_msg, r.content, ''), 200)) end
+          where workspace_id = p_ws;
       end if;
+      continue;
+    end if;
+    if cl.source = 'Grants.gov' then
+      n := fed_store_grants(p_ws, body);
+      got := jsonb_array_length(coalesce(body #> '{data,oppHits}', '[]')); hits := (body #>> '{data,hitCount}')::int;
+      update fed_calls set status = 'done', http_status = 200, records = got, total = hits, done_at = now() where id = cl.id;
+      if got > 0 and coalesce(hits, 0) > cl.page_offset + got then perform fed_request_grants(p_ws, cl.page_offset + got); end if;
+      update fed_config set grants_fetch_at = now(), grants_error = null where workspace_id = p_ws;
+    else
       n := fed_store(p_ws, body);
       update fed_calls set status = 'done', http_status = 200, records = jsonb_array_length(coalesce(body -> 'opportunitiesData', '[]')), total = (body ->> 'totalRecords')::int, done_at = now() where id = cl.id;
       if coalesce((body ->> 'totalRecords')::int, 0) > cl.page_offset + 1000 then
@@ -2161,25 +2237,21 @@ begin
       elsif cl.posted_from < today then
         update fed_config set yesterday_done = today where workspace_id = p_ws;
       end if;
-      update fed_config set last_fetch_at = now(), last_error = null,
-        last_status = format('Checked SAM.gov %s', to_char(now() at time zone 'America/New_York', 'Mon DD, HH12:MI AM')) where workspace_id = p_ws;
-    else
-      update fed_calls set status = 'error', http_status = r.status_code, error = coalesce(r.error_msg, left(r.content, 300)), done_at = now() where id = cl.id;
-      update fed_config set last_error = case
-          when r.status_code = 429 then 'SAM.gov says the daily request limit for this API key is used up. Fetching resumes tomorrow; consider a slower schedule.'
-          when r.status_code in (401, 403) then 'SAM.gov rejected the API key. Check it is current (keys expire every 90 days) and save it again.'
-          when r.timed_out then 'SAM.gov did not answer in time; it will be retried.'
-          else format('SAM.gov error %s: %s', r.status_code, left(coalesce(r.error_msg, r.content, ''), 200)) end
-        where workspace_id = p_ws;
+      update fed_config set last_fetch_at = now(), last_error = null, last_status = 'Checked SAM.gov ' || stamp where workspace_id = p_ws;
     end if;
   end loop;
   perform fed_rematch(p_ws, null, started - interval '1 minute');
-  -- next scheduled fetch: today's notices (plus yesterday's once a day, for late postings)
+  -- next scheduled fetch: SAM.gov today's notices (plus yesterday's once a day, for late postings); Grants.gov all open grants
   select * into c from fed_config where workspace_id = p_ws;
   if (c.enabled and (c.next_fetch_at is null or c.next_fetch_at <= now()) or p_force)
      and not exists (select 1 from fed_calls where workspace_id = p_ws and status = 'pending') then
     update fed_config set next_fetch_at = now() + make_interval(mins => c.every_min) where workspace_id = p_ws;
-    perform fed_request(p_ws, case when c.yesterday_done is distinct from today then today - 1 else today end, today, 0);
+    if c.key_secret_id is not null then
+      perform fed_request(p_ws, case when c.yesterday_done is distinct from today then today - 1 else today end, today, 0);
+    end if;
+    if exists (select 1 from fed_searches where workspace_id = p_ws and source = 'Grants.gov' and active) then
+      perform fed_request_grants(p_ws, 0);
+    end if;
   end if;
   -- housekeeping
   delete from fed_notices f where f.workspace_id = p_ws and f.status = 'New' and f.first_seen < now() - interval '21 days'
@@ -2212,8 +2284,10 @@ begin
     'daily_budget', coalesce(c.daily_budget, 900), 'has_key', c.key_secret_id is not null, 'key_hint', c.key_hint,
     'last_fetch_at', c.last_fetch_at, 'next_fetch_at', c.next_fetch_at, 'last_status', c.last_status, 'last_error', c.last_error,
     'used_today', fed_used_today(w), 'pending', (select count(*) from fed_calls where workspace_id = w and status = 'pending'),
-    'notices', (select count(*) from fed_notices where workspace_id = w),
-    'has_net', has_net, 'has_cron', has_cron, 'has_vault', has_vault, 'timer', job, 'admin', is_admin());
+    'notices', (select count(*) from fed_notices where workspace_id = w and source = 'SAM.gov'),
+    'has_net', has_net, 'has_cron', has_cron, 'has_vault', has_vault, 'timer', job, 'admin', is_admin(),
+    'grants_fetch_at', c.grants_fetch_at, 'grants_error', c.grants_error,
+    'grants', (select count(*) from fed_notices where workspace_id = w and source = 'Grants.gov'));
 end $$;
 
 create or replace function public.fed_save_config(p jsonb) returns jsonb
@@ -2280,7 +2354,7 @@ declare w uuid := staff_ws(); s fed_searches;
 begin
   if w is null then raise exception 'Only team members can use Federal opportunities.'; end if;
   s := jsonb_populate_record(null::fed_searches, p || jsonb_build_object('workspace_id', w, 'active', true));
-  s.size := coalesce(s.size, 'any'); s.open_only := coalesce(s.open_only, true);
+  s.size := coalesce(s.size, 'any'); s.open_only := coalesce(s.open_only, true); s.source := coalesce(s.source, 'SAM.gov'); s.aln := coalesce(s.aln, '{}');
   s.naics := coalesce(s.naics, '{}'); s.agencies := coalesce(s.agencies, '{}'); s.set_asides := coalesce(s.set_asides, '{}');
   s.notice_types := coalesce(s.notice_types, '{}'); s.keywords := coalesce(s.keywords, '{}'); s.exclude := coalesce(s.exclude, '{}');
   return (select jsonb_build_object('count', count(*), 'sample', coalesce((select jsonb_agg(x) from (select n.title, n.agency, n.posted_date from fed_notices n
@@ -2293,6 +2367,13 @@ language plpgsql volatile security definer set search_path = public as $$
 declare w uuid := staff_ws();
 begin
   if w is null or not exists (select 1 from fed_searches where id = p_id and workspace_id = w) then raise exception 'Search not found.'; end if;
+  insert into fed_config (workspace_id) values (w) on conflict do nothing;
+  -- first grants search: fetch Grants.gov now instead of waiting for the next scheduled check
+  if exists (select 1 from fed_searches where id = p_id and source = 'Grants.gov' and active)
+     and not exists (select 1 from fed_notices where workspace_id = w and source = 'Grants.gov')
+     and not exists (select 1 from fed_calls where workspace_id = w and source = 'Grants.gov' and created_at > now() - interval '10 minutes') then
+    perform fed_request_grants(w, 0);
+  end if;
   delete from fed_matches m using fed_searches s, fed_notices n
    where m.search_id = p_id and s.id = p_id and n.workspace_id = w and n.notice_id = m.notice_id and not fed_fits(n, s);
   return fed_rematch(w, p_id);
@@ -2327,14 +2408,15 @@ begin
 end $$;
 
 -- matched notices for the inbox, newest first or soonest due
-create or replace function public.fed_list(p_status text default 'New', p_search bigint default null, p_sort text default 'posted', p_limit int default 400) returns jsonb
+drop function if exists public.fed_list(text, bigint, text, int);
+create or replace function public.fed_list(p_source text default 'SAM.gov', p_status text default 'New', p_search bigint default null, p_sort text default 'posted', p_limit int default 400) returns jsonb
 language sql stable security definer set search_path = public as $$
   select coalesce(jsonb_agg(to_jsonb(x) order by case when p_sort = 'due' then x.response_deadline end nulls last, x.posted_date desc nulls last, x.first_seen desc), '[]')
   from (select n.notice_id, n.title, n.sol_number, n.agency, n.subtier, n.office, n.notice_type, n.posted_date, n.response_deadline, n.naics, n.set_aside,
-               n.set_aside_code, n.state, n.city, n.ui_link, n.award_amount, n.awardee, n.status, n.opportunity_id, n.first_seen,
+               n.set_aside_code, n.state, n.city, n.ui_link, n.award_amount, n.awardee, n.status, n.opportunity_id, n.funding_id, n.first_seen, n.source, n.aln,
                (select array_agg(m.search_id) from fed_matches m where m.workspace_id = n.workspace_id and m.notice_id = n.notice_id) searches
           from fed_notices n
-         where n.workspace_id = staff_ws() and (p_status = 'All' or n.status = p_status)
+         where n.workspace_id = staff_ws() and n.source = coalesce(p_source, 'SAM.gov') and (p_status = 'All' or n.status = p_status)
            and exists (select 1 from fed_matches m where m.workspace_id = n.workspace_id and m.notice_id = n.notice_id and (p_search is null or m.search_id = p_search))
          order by case when p_sort = 'due' then n.response_deadline end nulls last, n.posted_date desc nulls last, n.first_seen desc
          limit least(greatest(coalesce(p_limit, 400), 1), 1000)) x $$;
@@ -2343,10 +2425,33 @@ create or replace function public.fed_counts() returns jsonb
 language sql stable security definer set search_path = public as $$
   select jsonb_build_object('new', (select count(distinct n.notice_id) from fed_notices n join fed_matches m on m.workspace_id = n.workspace_id and m.notice_id = n.notice_id
                                      where n.workspace_id = staff_ws() and n.status = 'New'),
+    'by_source', coalesce((select jsonb_object_agg(source, c) from (select n.source, count(distinct n.notice_id) c from fed_notices n join fed_matches m on m.workspace_id = n.workspace_id and m.notice_id = n.notice_id
+                                     where n.workspace_id = staff_ws() and n.status = 'New' group by n.source) z), '{}'),
     'by_search', coalesce((select jsonb_object_agg(search_id, c) from (select m.search_id, count(*) c from fed_matches m join fed_notices n on n.workspace_id = m.workspace_id and n.notice_id = m.notice_id
                                      where m.workspace_id = staff_ws() and n.status = 'New' group by m.search_id) z), '{}')) $$;
-revoke execute on function public.fed_list(text, bigint, text, int), public.fed_counts() from public, anon;
-grant execute on function public.fed_list(text, bigint, text, int), public.fed_counts() to authenticated;
+revoke execute on function public.fed_list(text, text, bigint, text, int), public.fed_counts() from public, anon;
+grant execute on function public.fed_list(text, text, bigint, text, int), public.fed_counts() to authenticated;
+
+-- a grant goes to the Funding app (status Identified)
+create or replace function public.fed_add_to_funding(p_notice text) returns bigint
+language plpgsql volatile security definer set search_path = public as $$
+declare w uuid := staff_ws(); n fed_notices; fid bigint;
+begin
+  if w is null then raise exception 'Only team members can add funding.'; end if;
+  select * into n from fed_notices where workspace_id = w and notice_id = p_notice for update;
+  if not found then raise exception 'Grant not found.'; end if;
+  if n.funding_id is not null and exists (select 1 from funding where id = n.funding_id) then return n.funding_id; end if;
+  insert into funding (workspace_id, name, organization, type, status, deadline, url, source, notes, updated_by)
+  values (w, n.title, n.agency, 'Grant', 'Identified', (n.response_deadline at time zone 'America/New_York')::date, n.ui_link, 'Grants.gov',
+    concat_ws(E'\n', 'Opportunity number: ' || n.sol_number, 'Status: ' || n.notice_type, 'Posted: ' || n.posted_date,
+      case when cardinality(n.aln) > 0 then 'Assistance listing: ' || array_to_string(n.aln, ', ') end), member_name())
+  returning id into fid;
+  update fed_notices set status = 'Added', funding_id = fid, status_by = member_name() where workspace_id = w and notice_id = p_notice;
+  return fid;
+end $$;
+revoke execute on function public.fed_add_to_funding(text), public.fed_store_grants(uuid, jsonb), public.fed_request_grants(uuid, int), public.fed_date(text) from public, anon;
+revoke execute on function public.fed_store_grants(uuid, jsonb), public.fed_request_grants(uuid, int) from authenticated;
+grant execute on function public.fed_add_to_funding(text) to authenticated;
 
 revoke execute on function public.fed_fits(public.fed_notices, public.fed_searches), public.fed_rematch(uuid, bigint, timestamptz), public.fed_store(uuid, jsonb),
   public.fed_used_today(uuid), public.fed_request(uuid, date, date, int), public.fed_tick_ws(uuid, boolean), public.fed_tick(),

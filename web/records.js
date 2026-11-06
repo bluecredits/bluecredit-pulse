@@ -608,18 +608,30 @@ async function Reviews(id) {
 
 async function reviewActions(id) { return must(await sb.from("actions").select("*").eq("review_id", id).order("status").order("due_date", { nullsFirst: false })); }
 
-// New leads from the Opportunities app (SAM.gov, Grants.gov, MyBidMatch) that nobody has reviewed yet
-function leadsSec(s, sec) {
-  if (!s.leads) return "";
+// ---- review snapshot: a summary strip, then the review in the order it is run ----
+// Lists show the first few rows; the rest open with "Show N more" (and always print).
+function snapList(items, limit = 5) {
+  if (!items.length) return "";
+  const rest = items.slice(limit);
+  return `<ul class="list snap-list">${items.slice(0, limit).join("")}${rest.map((li) => li.replace("<li", "<li hidden data-more")).join("")}</ul>` +
+    (rest.length ? `<button type="button" class="link-btn snap-more no-print" data-more-btn>Show ${rest.length} more</button>` : "");
+}
+function snapSec({ id, title, n, hint, body, clear, tone = "" }) {
+  if (!n) return `<p class="snap-clear" id="snap-${id}"><span aria-hidden="true">✓</span> ${clear}</p>`;
+  return `<section class="snap-sec ${tone}" id="snap-${id}"><h3>${title} <span class="c">${n}</span></h3>${hint ? `<p class="snap-hint">${hint}</p>` : ""}${body}</section>`;
+}
+// New leads from the Opportunities app (SAM.gov, Grants.gov, MyBidMatch) that nobody has sorted yet
+function leadsBody(s) {
+  if (!s.leads) return { total: 0, body: "" };
   const SRCS = [["SAM.gov", "Contracts · SAM.gov", "contracts"], ["BidMatch", "Contracts · APEX BidMatch", "contracts/bids"], ["Grants.gov", "Grants · Grants.gov", "grants"]];
-  const total = SRCS.reduce((a, [k]) => a + (s.leads[k]?.new || 0) + (s.leads[k]?.saved || 0), 0);
-  const body = SRCS.map(([k, label, tab]) => { const L = s.leads[k]; if (!L) return "";
-    return `<div class="lead-src"><h4>${label} <span class="meta">${L.new} new${L.saved ? ` · ${L.saved} saved` : ""}${L.due_soon ? ` · ${L.due_soon} due in this window` : ""}</span>
-        <a class="no-print" href="../opportunities/#/${tab}">Review all</a></h4>
-      <ul class="list">${L.items.map((x) => `<li><span><a href="${esc(x.url || "../opportunities/#/" + tab)}" target="_blank" rel="noopener">${esc(x.title)}</a><br><span class="meta">${esc([x.level, x.agency, x.naics && "NAICS " + x.naics, x.status === "Saved" ? "saved" : ""].filter(Boolean).join(" · "))}</span></span>
-        <span class="meta">${x.due ? dueCell(String(x.due).slice(0, 10)) : "no due date"}</span></li>`).join("")}</ul>
-      ${L.new + L.saved > L.items.length ? `<p class="meta"><a href="../opportunities/#/${tab}">and ${L.new + L.saved - L.items.length} more</a></p>` : ""}</div>`; }).join("");
-  return sec("New opportunities to review", total, total ? body : `<p class="muted">No new contract, grant or bid matches in this period.</p>`);
+  let total = 0;
+  const body = SRCS.map(([k, label, tab]) => { const L = s.leads[k]; if (!L || !(L.new + L.saved)) return "";
+    total += L.new + L.saved;
+    const rows = L.items.map((x) => `<li><span><a href="${esc(x.url || "../opportunities/#/" + tab)}" target="_blank" rel="noopener">${esc(x.title)}</a><br><span class="meta">${esc([x.level, x.agency, x.naics && "NAICS " + x.naics, x.status === "Saved" ? "saved" : ""].filter(Boolean).join(" · "))}</span></span>
+        <span class="meta">${x.due ? dueCell(String(x.due).slice(0, 10)) : "no due date"}</span></li>`);
+    return `<div class="lead-src"><h4><span>${label}</span><span class="meta">${L.new} new${L.saved ? ` · ${L.saved} saved` : ""}${L.due_soon ? ` · <b class="due-soon">${L.due_soon} due soon</b>` : ""}</span>
+        <a class="no-print" href="../opportunities/#/${tab}">Sort all ${L.new + L.saved} →</a></h4>${snapList(rows, 3)}</div>`; }).join("");
+  return { total, body };
 }
 async function ReviewDetail(id) {
   const r = must(await sb.from("reviews").select("*").eq("id", id).single());
@@ -627,9 +639,9 @@ async function ReviewDetail(id) {
   const s = r.snapshot;
   const sec = (title, n, body) => `<section class="snap-sec"><h3>${title}${n != null ? ` <span class="c">${n}</span>` : ""}</h3>${body}</section>`;
   const recLi = (entity, x, name, sub, right) => `<li><span><a href="#" data-open="${entity}:${x.id}">${esc(name)}</a>${sub ? `<br><span class="meta">${sub}</span>` : ""}</span><span class="meta">${right}</span></li>`;
-  const ul = (items, empty) => items.length ? `<ul class="list">${items.join("")}</ul>` : `<p class="muted">${empty}</p>`;
+  const step = (n, title, sub, html) => html.trim() ? `<div class="snap-group"><h3 class="snap-step"><span class="num">${n}</span>${title}<small>${sub}</small></h3>${html}</div>` : "";
 
-  let snapHtml = `<p class="muted">This review was imported from the old Word document, so it has no pipeline snapshot. Use “Refresh snapshot” to pull one as of ${short(r.review_date)}.</p>`;
+  let snapHtml = `<p class="muted">This review was imported from the old Word document, so it has no snapshot. Use “Refresh snapshot” to pull one as of ${short(r.review_date)}.</p>`;
   if (s) {
     const dl = [...s.opp_deadlines.map((x) => ({ ...x, entity: "opportunities", name: x.title, org: x.agency, status: x.stage })),
                 ...s.funding_deadlines.map((x) => ({ ...x, entity: "funding", org: x.organization }))].sort((a, b) => a.deadline.localeCompare(b.deadline));
@@ -637,30 +649,60 @@ async function ReviewDetail(id) {
     const R = s.results;
     const sum = (k) => R ? (+R.opportunities[k] || 0) + (+R.funding[k] || 0) : 0;
     const moves = [...s.moves.submitted, ...s.moves.won, ...s.moves.lost];
-    snapHtml = `
-      <p class="muted" style="margin-top:0">Snapshot as of ${short(s.as_of)} · looking back to ${short(s.since)}, ahead to ${short(s.until)}.</p>
-      ${R ? `<div class="stat-row">
-        <div><b>${sum("Submitted")}</b><span>Submitted this period</span></div>
+    const created = Object.entries(s.created).filter(([, n]) => n);
+    const leads = leadsBody(s);
+    // carry-over and overdue are often the same action: show each once
+    const carryIds = new Set(s.carry_over.map((a) => a.id));
+    const acts = [...s.carry_over, ...s.actions_overdue.filter((a) => !carryIds.has(a.id))]
+      .sort((a, b) => (a.due_date || "9999").localeCompare(b.due_date || "9999"));
+    const overdue = acts.filter((a) => a.due_date && daysUntil(a.due_date) < 0).length;
+    const soon = dl.filter((x) => daysUntil(x.deadline) <= 7).length;
+    const stale = s.stale_count || 0;
+    const tiles = [
+      ["leads", "New leads to sort", leads.total, leads.total ? "info" : ""],
+      ["deadlines", `Deadlines, next ${span} days`, dl.length, soon ? "warn" : dl.length ? "info" : "", soon ? `${soon} within 7 days` : ""],
+      ["actions", "Open actions", acts.length, overdue ? "alert" : acts.length ? "info" : "", overdue ? `${overdue} overdue` : ""],
+      ["stale", "Past deadline, no outcome", stale, stale ? "warn" : ""],
+      ["followups", "Follow-ups due", s.followups_due.length, s.followups_due.length ? "info" : ""],
+    ];
+    const decide = snapSec({ id: "leads", title: "New leads", n: leads.total, hint: "Add each to the pipeline or dismiss it in Opportunities.", body: leads.body,
+        clear: s.leads ? "No new contract, grant or bid matches." : "Opportunities app not set up yet." })
+      + snapSec({ id: "deadlines", title: `Deadlines in the next ${span} days`, n: dl.length, tone: soon ? "warn" : "",
+        hint: "Go / no-go on each. Anything inside 7 days needs an owner and a plan today.", body: gauge(dl, span) + snapList(dl.map(dueLi)),
+        clear: `No deadlines in the next ${span} days.` });
+    const close = snapSec({ id: "actions", title: "Open actions", n: acts.length, tone: overdue ? "alert" : "",
+        hint: s.previous_review ? `Carried over from <a href="#/reviews/${s.previous_review.id}">${esc(s.previous_review.title)}</a> plus anything overdue. Close them or give them a new date.` : "Overdue action items. Close them or give them a new date.",
+        body: snapList(acts.map((a) => `<li><span><a href="#" data-open="actions:${a.id}">${esc(a.text)}</a>${carryIds.has(a.id) ? `<br><span class="meta">from last review</span>` : ""}</span>
+          <span class="meta">${esc(a.owner || "Unassigned")}${a.due_date ? " · " + dueCell(a.due_date) : ""}</span></li>`)),
+        clear: s.previous_review ? "No open or overdue actions." : `No overdue actions. This is the first ${esc(s.cadence)} review.` })
+      + snapSec({ id: "stale", title: "Past deadline, no outcome", n: stale, tone: "warn",
+        hint: "The deadline passed but nobody recorded what happened. Set each to Submitted, Lost, Missed or Not qualified.",
+        body: snapList(s.stale.slice(0, 12).map((x) => recLi(x.entity, x, x.name, esc(x.owner || "Unassigned"), short(x.deadline))), 5)
+          + (stale > 12 ? `<p class="meta no-print"><a href="#/opportunities" data-preset="__stale">Open all ${stale} in Opportunities →</a></p>` : ""),
+        clear: "Every past deadline has an outcome." })
+      + snapSec({ id: "followups", title: "Follow-ups due", n: s.followups_due.length, hint: "Reach out, or move the follow-up date.",
+        body: snapList(s.followups_due.slice(0, 15).map((c) => recLi("contacts", c, c.name || c.organization, esc([c.organization, c.next_step].filter(Boolean).join(" · ")), dueCell(c.next_step_date)))),
+        clear: "No contact follow-ups due." });
+    const moved = moves.length + created.reduce((a, [, n]) => a + n, 0);
+    const look = (R ? `<div class="stat-row">
+        <div><b>${sum("Submitted")}</b><span>Submitted</span></div>
         <div><b>${sum("Won")}</b><span>Won</span></div>
         <div><b>${sum("Lost") + sum("Missed")}</b><span>Lost or missed</span></div>
         <div><b>${R.win_rate == null ? "—" : R.win_rate + "%"}</b><span>Win rate</span></div>
-        <div><b>${money(R.value_won) || "$0"}</b><span>Contract value won</span></div></div>` : ""}
-      ${leadsSec(s, sec)}
-      ${sec("Carry-over from last review", s.carry_over.length, s.previous_review ? ul(s.carry_over.map((a) => `<li><span>${esc(a.text)}</span><span class="meta">${esc(a.owner || "")}</span></li>`),
-          `Everything from <a href="#/reviews/${s.previous_review.id}">${esc(s.previous_review.title)}</a> is closed.`) : `<p class="muted">This is the first ${s.cadence} review.</p>`)}
-      ${sec("Overdue actions", s.actions_overdue.length, ul(s.actions_overdue.map((a) => `<li><span>${esc(a.text)}</span><span class="meta">${esc(a.owner || "")} · ${dueCell(a.due_date)}</span></li>`), "None overdue."))}
-      ${sec(`Deadlines in the next ${span} days`, dl.length, gauge(dl, span) + ul(dl.map(dueLi), "No deadlines in this window."))}
-      ${sec("What moved", moves.length + Object.values(s.created).reduce((a, b) => a + b, 0),
-        ul(moves.map((a) => `<li><span><a href="#" data-open="${a.entity}:${a.entity_id}">${esc(a.summary)}</a></span><span class="meta">${esc(a.user_name)} · ${short(a.ts)}</span></li>`)
-          .concat(Object.entries(s.created).filter(([, n]) => n).map(([e, n]) => `<li><span>${n} new ${esc(n === 1 ? S.schema.entities[e].singular.toLowerCase() : S.schema.entities[e].label.toLowerCase())} added</span><span class="meta"></span></li>`)),
-          "No submissions, wins, losses or new records in this period."))}
-      ${sec("Follow-ups due", s.followups_due.length, ul(s.followups_due.slice(0, 15).map((c) => recLi("contacts", c, c.name || c.organization, esc([c.organization, c.next_step].filter(Boolean).join(" · ")), dueCell(c.next_step_date))), "No contact follow-ups due."))}
-      ${s.stale_count ? sec("Past deadline with no outcome — update or close", s.stale_count, ul(s.stale.slice(0, 12).map((x) => recLi(x.entity, x, x.name, esc(x.owner || "Unassigned"), short(x.deadline)))
-          .concat(s.stale_count > 12 ? [`<li><a href="#/opportunities" data-preset="__stale">See them all</a></li>`] : []), "")) : ""}
-      ${s.opp_pipeline ? `<div class="grid2" style="gap:18px">${sec("Opportunity pipeline", null, bars(s.opp_pipeline, "opportunities", "stage"))}
-        ${sec("Funding pipeline", null, bars(s.funding_pipeline, "funding", "status"))}</div>` : ""}
-      ${s.by_owner ? sec("By owner", null, `<div class="table-wrap"><table><thead><tr><th>Owner</th><th>Active opps</th><th>Active funding</th><th>Submitted</th><th>Won</th></tr></thead><tbody>
-        ${s.by_owner.map((o) => `<tr style="cursor:default"><td>${esc(o.owner)}</td><td>${o.active_opps}</td><td>${o.active_funding}</td><td>${o.submitted}</td><td>${o.won}</td></tr>`).join("")}</tbody></table></div>`) : ""}`;
+        <div><b>${money(R.value_won) || "$0"}</b><span>Value won</span></div></div>` : "")
+      + snapSec({ id: "moved", title: "What moved", n: moved, body: snapList(moves.map((a) => `<li><span><a href="#" data-open="${a.entity}:${a.entity_id}">${esc(a.summary)}</a></span><span class="meta">${esc(a.user_name)} · ${short(a.ts)}</span></li>`)
+          .concat(created.map(([e, n]) => `<li><span>${n} new ${esc(n === 1 ? S.schema.entities[e].singular.toLowerCase() : S.schema.entities[e].label.toLowerCase())} added</span><span class="meta"></span></li>`))),
+        clear: "No submissions, wins, losses or new records." })
+      + (s.opp_pipeline ? `<div class="grid2" style="gap:18px">${sec("Opportunity pipeline", null, bars(s.opp_pipeline, "opportunities", "stage"))}
+        ${sec("Funding pipeline", null, bars(s.funding_pipeline, "funding", "status"))}</div>` : "")
+      + (s.by_owner ? sec("By owner", null, `<div class="table-wrap"><table><thead><tr><th>Owner</th><th>Active opps</th><th>Active funding</th><th>Submitted</th><th>Won</th></tr></thead><tbody>
+        ${s.by_owner.map((o) => `<tr style="cursor:default"><td>${esc(o.owner)}</td><td>${o.active_opps}</td><td>${o.active_funding}</td><td>${o.submitted}</td><td>${o.won}</td></tr>`).join("")}</tbody></table></div>`) : "");
+    snapHtml = `
+      <p class="muted snap-range">As of ${short(s.as_of)} · looking back to ${short(s.since)} and ahead to ${short(s.until)}</p>
+      <div class="snap-tiles">${tiles.map(([k, label, n, tone, sub]) => `<a href="#" class="snap-tile ${tone}" data-jump="snap-${k}"><b>${n}</b><span>${label}</span>${sub ? `<small>${sub}</small>` : ""}</a>`).join("")}</div>
+      ${step(1, "Decide", "new leads and upcoming deadlines", decide)}
+      ${step(2, "Clean up", "actions, missing outcomes and follow-ups", close)}
+      ${step(3, "Look back", `since ${short(s.since)}`, look)}`;
   }
   const ownerOpts = S.owners.map((o) => `<option ${o === firstName() ? "selected" : ""}>${esc(o)}</option>`).join("");
   $("#main").innerHTML = `
@@ -671,7 +713,7 @@ async function ReviewDetail(id) {
     <div class="review-layout">
       <div>
         <section class="panel"><h2>Agenda</h2><ol class="agenda">${(S.schema.agendas[r.cadence] || []).map((a) => `<li>${esc(a)}</li>`).join("")}</ol></section>
-        <section class="panel"><h2>Pipeline snapshot</h2>${snapHtml}</section>
+        <section class="panel snapshot"><h2>Snapshot</h2>${snapHtml}</section>
       </div>
       <div class="review-side">
         <section class="panel"><h2>Notes <span class="save-state" id="saveState"></span></h2>
@@ -686,6 +728,12 @@ async function ReviewDetail(id) {
             <button class="btn small primary" id="naAdd">Add</button></div></section>
       </div>
     </div>`;
+  if (!$("#main")._snapWired) ($("#main")._snapWired = true) && $("#main").addEventListener("click", (e) => {
+    const j = e.target.closest("[data-jump]");
+    if (j) { e.preventDefault(); document.getElementById(j.dataset.jump)?.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
+    const m = e.target.closest("[data-more-btn]");
+    if (m && m.previousElementSibling) { m.previousElementSibling.querySelectorAll("[data-more]").forEach((li) => (li.hidden = false)); m.remove(); }
+  });
   let tmr;
   const fields = () => ({ notes: $("#rvNotes").value, attendees: $("#rvAtt").value, review_date: $("#rvDate").value || r.review_date, title: $("#rvTitle").textContent.trim() || r.title });
   const save = () => { $("#saveState").textContent = "Saving…"; clearTimeout(tmr);

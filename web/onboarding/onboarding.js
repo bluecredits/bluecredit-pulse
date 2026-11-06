@@ -108,6 +108,7 @@ async function openPerson(id) {
   const canEdit = isAdmin() || o.owner_id === S.user.id, mine = o.user_id === S.user.id;
   const projects = isStaff() && o.user_id ? must(await sb.from("project_people").select("project_id").eq("user_id", o.user_id)) : [];
   const allProj = isStaff() ? must(await sb.from("projects").select("id, name, status").order("name")) : [];
+  const agrs = isStaff() || mine ? await sb.from("agreements").select("id, number, title, status, template_name").eq("onboarding_id", o.id).order("created_at").then((r) => r.data || []).catch(() => []) : [];
   const [d, t] = progress(o);
   const show = (o.checklist || []).filter((i) => !i.off || o.status.startsWith("Offboard"));
   const item = (i) => `<li class="ck ${i.done ? "done" : ""}"><label class="check"><input type="checkbox" data-item="${esc(i.id)}" ${i.done ? "checked" : ""}
@@ -126,6 +127,10 @@ async function openPerson(id) {
     ${o.status.startsWith("Offboard") ? `<h3 class="ck-h">Offboarding</h3><ul class="checklist">${show.filter((i) => i.off).map(item).join("")}</ul>` : ""}
     ${canEdit ? `<div class="add-action" style="grid-template-columns:1fr auto auto;margin:8px 0 16px"><input id="ckText" placeholder="Add a checklist item" aria-label="New item">
       <select id="ckWho" aria-label="Who does it"><option value="us">We do it</option><option value="them">They do it</option></select><button class="btn small" id="ckAdd">Add</button></div>` : ""}
+    <h3 class="ck-h">Agreements</h3>
+    <ul class="checklist">${agrs.map((g) => `<li class="ck"><a href="../agreements/#/view/${g.id}">AGR-${String(g.number).padStart(4, "0")} · ${esc(g.title)}</a><span class="meta">${esc(g.status)}</span></li>`).join("") || `<li class="muted small" style="padding:4px 10px">None yet.</li>`}</ul>
+    ${isStaff() ? `<div class="actions-row" style="margin:4px 0 12px">${[["consulting", "Consulting agreement"], ["confidentiality", "Confidentiality agreement"], ["teaming", "Teaming agreement"]].map(([k, l]) =>
+      `<a class="btn small" href="../agreements/#/new?template=${k}&onboarding=${o.id}">${icon("plus")}${l}</a>`).join("")}</div>` : ""}
     ${isStaff() && o.user_id ? `<h3 class="ck-h">Timecards projects</h3><div class="chips">${allProj.filter((p) => p.status !== "Closed").map((p) =>
         `<label class="chip-check"><input type="checkbox" data-proj="${p.id}" ${projects.some((x) => x.project_id === p.id) ? "checked" : ""} ${isAdmin() ? "" : "disabled"}> ${esc(p.name)}</label>`).join("") || `<span class="muted">No projects yet. Add them in <a href="../timecards/#/projects">Timecards</a>.</span>`}</div>` : ""}
     ${canEdit ? `<div class="actions-row" style="margin-top:18px">

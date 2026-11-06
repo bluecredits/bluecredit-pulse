@@ -256,7 +256,7 @@ async function Settings() {
         <label class="check" style="align-self:end"><input type="checkbox" name="enabled" ${st.enabled ? "checked" : ""} ${isAdmin() ? "" : "disabled"}> Automatic checks on</label>
         ${isAdmin() ? `<div class="actions-row" style="grid-column:1/-1"><button class="btn primary">Save schedule</button><button type="button" class="btn" id="runNow">${icon("return")}Check now</button></div>` : ""}
       </form>
-      <p class="muted small">Each SAM.gov check reads today's notices (about 1–4 requests); once a day it also re-reads yesterday's to catch late postings. Once a day uses about 2–8 SAM.gov requests; hourly about 40–100; every 15 minutes 150–400. The daily limit counts SAM.gov requests only.
+      <p class="muted small">Each SAM.gov check reads today's notices in pages of 200 (about 5–15 requests); once a day it also re-reads yesterday's to catch late postings. Once a day uses about 10–25 SAM.gov requests; hourly 150–300; every 15 minutes more than most keys allow. The daily limit counts SAM.gov requests only.
         Used today: <b>${st.used_today}</b> of ${st.daily_budget}. ${st.last_status ? esc(st.last_status) + "." : ""} ${st.next_fetch_at && st.enabled ? `Next check ${new Date(st.next_fetch_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}.` : ""}</p>
       ${st.last_error ? `<div class="notice-bar">${icon("alert")}<div>${esc(st.last_error)}</div></div>` : ""}
     </section>
@@ -265,7 +265,7 @@ async function Settings() {
       ${st.has_net && st.timer && st.has_vault ? "" : `<p class="muted small">In Supabase: Database → Extensions, turn on <b>pg_net</b> and <b>pg_cron</b> (Vault is on by default), then run the latest <code>supabase/schema.sql</code> once more to create the timer.</p>`}
     </section>
     <section class="panel" style="padding:0"><h2 style="padding:16px 18px 0">Recent requests</h2><div class="table-wrap"><table><thead><tr><th>When</th><th>Source</th><th>Posted dates</th><th>Page</th><th>Result</th></tr></thead><tbody>
-      ${calls.map((c) => `<tr style="cursor:default"><td>${ago(c.created_at)}</td><td>${esc(c.source)}</td><td>${c.source === "BidMatch" ? esc({ sub: "List of days", doc: "Day's list", article: "Bid details" }[(c.ref || "").split(":")[0]] || "") : c.posted_from ? short(c.posted_from) + (c.posted_to !== c.posted_from ? "–" + short(c.posted_to) : "") : "All open"}</td><td>${c.source === "BidMatch" ? (c.page_offset || "") : Math.floor(c.page_offset / 1000) + 1}</td>
+      ${calls.map((c) => `<tr style="cursor:default"><td>${ago(c.created_at)}</td><td>${esc(c.source)}</td><td>${c.source === "BidMatch" ? esc({ sub: "List of days", doc: "Day's list", article: "Bid details" }[(c.ref || "").split(":")[0]] || "") : c.posted_from ? short(c.posted_from) + (c.posted_to !== c.posted_from ? "–" + short(c.posted_to) : "") : "All open"}</td><td>${c.source === "BidMatch" ? (c.page_offset || "") : Math.floor(c.page_offset / (c.source === "SAM.gov" ? 200 : 1000)) + 1}</td>
         <td>${c.status === "done" ? `${c.records} of ${c.total}` : c.status === "pending" ? "Waiting…" : `<span class="red">${esc(c.http_status ? "Error " + c.http_status : "Error")}</span> <span class="muted small">${esc((c.error || "").slice(0, 120))}</span>`}</td></tr>`).join("")
         || `<tr><td colspan="5" class="empty">No requests yet.</td></tr>`}</tbody></table></div></section>
     <section class="panel"><h2>Other sources</h2><p class="muted">Contracts posted on FedConnect over $25,000 also appear on SAM.gov, so they come through here.

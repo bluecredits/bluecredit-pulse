@@ -2155,9 +2155,9 @@ begin
   end if;
   execute 'select decrypted_secret from vault.decrypted_secrets where id = $1' into k using c.key_secret_id;
   if k is null then update fed_config set last_error = 'The saved API key could not be read. Save it again in Settings.' where workspace_id = p_ws; return false; end if;
-  execute 'select net.http_get(url := $1, params := $2, timeout_milliseconds := 60000)' into rid
+  execute 'select net.http_get(url := $1, params := $2, timeout_milliseconds := 180000)' into rid
     using 'https://api.sam.gov/opportunities/v2/search',
-          jsonb_build_object('api_key', k, 'postedFrom', to_char(p_from, 'MM/DD/YYYY'), 'postedTo', to_char(p_to, 'MM/DD/YYYY'), 'limit', '1000', 'offset', p_offset::text);
+          jsonb_build_object('api_key', k, 'postedFrom', to_char(p_from, 'MM/DD/YYYY'), 'postedTo', to_char(p_to, 'MM/DD/YYYY'), 'limit', '200', 'offset', p_offset::text);
   insert into fed_calls (workspace_id, request_id, page_offset, posted_from, posted_to) values (p_ws, rid, p_offset, p_from, p_to);
   return true;
 exception when undefined_function or invalid_schema_name or undefined_table then
@@ -2294,7 +2294,7 @@ create or replace function public.fed_request_grants(p_ws uuid, p_start int) ret
 language plpgsql volatile security definer set search_path = public as $$
 declare rid bigint;
 begin
-  execute 'select net.http_post(url := $1, body := $2, headers := $3, timeout_milliseconds := 60000)' into rid
+  execute 'select net.http_post(url := $1, body := $2, headers := $3, timeout_milliseconds := 180000)' into rid
     using 'https://api.grants.gov/v1/api/search2', jsonb_build_object('oppStatuses', 'forecasted|posted', 'rows', 1000, 'startRecordNum', p_start),
           '{"Content-Type": "application/json"}'::jsonb;
   insert into fed_calls (workspace_id, request_id, page_offset, source) values (p_ws, rid, p_start, 'Grants.gov');
@@ -2348,9 +2348,16 @@ begin
         update fed_config set last_error = case
             when r.status_code = 429 then 'SAM.gov says the daily request limit for this API key is used up. Fetching resumes tomorrow; consider a slower schedule.'
             when r.status_code in (401, 403) then 'SAM.gov rejected the API key. Check it is current (keys expire every 90 days) and save it again.'
-            when r.timed_out then 'SAM.gov did not answer in time; it will be retried.'
+            when r.timed_out then 'SAM.gov was slow to answer; Pulse retries smaller pages automatically.'
             else format('SAM.gov error %s: %s', r.status_code, left(coalesce(r.error_msg, r.content, ''), 200)) end
           where workspace_id = p_ws;
+        -- a slow page gets one retry
+        if coalesce(r.timed_out, false) or coalesce(r.error_msg, '') ilike '%timeout%' then
+          if (select count(*) from fed_calls x where x.workspace_id = p_ws and x.source = 'SAM.gov' and x.posted_from is not distinct from cl.posted_from
+                and x.page_offset = cl.page_offset and x.created_at > now() - interval '1 hour') < 2 then
+            perform fed_request(p_ws, cl.posted_from, cl.posted_to, cl.page_offset);
+          end if;
+        end if;
       end if;
       continue;
     end if;
@@ -2363,8 +2370,8 @@ begin
     else
       n := fed_store(p_ws, body);
       update fed_calls set status = 'done', http_status = 200, records = jsonb_array_length(coalesce(body -> 'opportunitiesData', '[]')), total = (body ->> 'totalRecords')::int, done_at = now() where id = cl.id;
-      if coalesce((body ->> 'totalRecords')::int, 0) > cl.page_offset + 1000 then
-        perform fed_request(p_ws, cl.posted_from, cl.posted_to, cl.page_offset + 1000);
+      if coalesce((body ->> 'totalRecords')::int, 0) > cl.page_offset + 200 then
+        perform fed_request(p_ws, cl.posted_from, cl.posted_to, cl.page_offset + 200);
       elsif cl.posted_from < today then
         update fed_config set yesterday_done = today where workspace_id = p_ws;
       end if;

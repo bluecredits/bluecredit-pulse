@@ -645,3 +645,5 @@ textarea.mono { font: 12.5px/1.5 ui-monospace, Menlo, monospace; }
 @media (max-width: 640px) { .hub-group .hub-apps:not(.compact), .hub-apps.compact { grid-template-columns: 1fr; } }
 .hub-app[data-app="projects"] .hub-ic, .hub-app[data-app="agreements"] .hub-ic, .hub-app[data-app="onboarding"] .hub-ic { background: linear-gradient(135deg, #6366f1, #4338ca); box-shadow: 0 8px 20px rgba(79, 70, 229, .22); }
 .hub-app[data-app="timecards"] .hub-ic, .hub-app[data-app="scheduler"] .hub-ic { background: linear-gradient(135deg, var(--teal-5), #0f766e); }
+.hub-app.sm .hub-stat:nth-child(n+3) { display: none; }
+.hub-app.sm .ext-ic { width: 12px; height: 12px; color: var(--muted); }

@@ -75,9 +75,9 @@ document.addEventListener("click", async (e) => {
 function linkTiles() {
   const links = (S.workspace?.config?.links || []).filter((l) => /^https:\/\//i.test(l.url || ""));
   if (!links.length) return "";
-  return `<h2 class="hub-h">Connected tools</h2><div class="hub-apps hub-links">${links.map((l) => `
-    <a class="hub-app" href="${esc(l.url)}" target="_blank" rel="noopener"><div class="hub-ic ${l.kind === "ai" ? "ai" : "ext"}">${icon(l.kind === "ai" ? "sparkles" : l.kind === "talent" ? "team" : "link")}</div>
-      <div class="hub-body"><h3>${esc(l.label || "Link")} <svg class="ic ext-ic"><use href="#i-external"/></svg></h3><p>${esc(l.note || new URL(l.url).hostname)}</p></div></a>`).join("")}</div>`;
+  return `<section class="hub-group"><h2 class="hub-h">Connected tools <span>Links your admin added</span></h2><div class="hub-apps compact hub-links">${links.map((l) => `
+    <a class="hub-app sm" href="${esc(l.url)}" target="_blank" rel="noopener" title="${esc(l.note || "")}"><div class="hub-ic ${l.kind === "ai" ? "ai" : "ext"}">${icon(l.kind === "ai" ? "sparkles" : l.kind === "talent" ? "team" : "link")}</div>
+      <div class="hub-body"><h3>${esc(l.label || "Link")} <svg class="ic ext-ic"><use href="#i-external"/></svg></h3><div class="hub-stats"><span class="hub-stat">${esc(l.note || new URL(l.url).hostname)}</span></div></div></a>`).join("")}</div></section>`;
 }
 const myApps = () => APPS.filter((a) => (!a.staff || S.profile?.role !== "contractor") && CFG.apps?.[a.key] !== false);
 function icon(name, cls = "ic") { return `<svg class="${cls}"><use href="#i-${name}"/></svg>`; }

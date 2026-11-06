@@ -60,9 +60,9 @@ async function Matches() {
   if (FD.q) { const t = FD.q.toLowerCase(); rows = rows.filter((r) => [r.title, r.sol_number, r.agency, r.subtier, r.office, r.naics, (r.aln || []).join(" "), r.summary].join(" ").toLowerCase().includes(t)); }
   const sname = Object.fromEntries(searches.map((s) => [s.id, s.name]));
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>${grants ? "Grants" : "Contracts"}</h1><p class="muted">${bm ? "Bids from your MyBidMatch daily lists: federal, state, local and education." : (grants ? "Open and forecasted Grants.gov grants" : "Federal notices from SAM.gov") + " that match your searches."} ${bm ? bmLine(st) : statusLine(st, grants)}</p></div>
+    <div class="page-head"><div><h1>${grants ? "Grants" : "Contracts"}</h1><p class="muted">${bm ? "Bids from your APEX Accelerator MyBidMatch lists: federal, state, local and education." : (grants ? "Open and forecasted Grants.gov grants" : "Federal notices from SAM.gov") + " that match your searches."} ${bm ? bmLine(st) : statusLine(st, grants)}</p></div>
       <div class="actions-row"><button class="btn" id="runNow">${icon("return")}Check now</button>${bm ? `<a class="btn" href="#/settings">${icon("cog")}MyBidMatch link</a>` : `<a class="btn primary" href="#/searches/new?${grants ? "grants" : "contracts"}">${icon("plus")}New search</a>`}</div></div>
-    ${grants ? "" : `<div class="tabs src-tabs">${[["SAM.gov", "#/contracts", "Federal"], ["BidMatch", "#/contracts/bids", "Bids"]].map(([k, href, l]) => `<a href="${href}" aria-selected="${k === FD.source}">${l}${counts.by_source?.[k] ? ` <span class="count">${counts.by_source[k]}</span>` : ""}</a>`).join("")}</div>`}
+    ${grants ? "" : `<div class="tabs src-tabs">${[["SAM.gov", "#/contracts", "SAM.gov"], ["BidMatch", "#/contracts/bids", "APEX BidMatch"]].map(([k, href, l]) => `<a href="${href}" aria-selected="${k === FD.source}">${l}${counts.by_source?.[k] ? ` <span class="count">${counts.by_source[k]}</span>` : ""}</a>`).join("")}</div>`}
     ${bm ? bmBanner(st) : banner(st, searches, grants)}
     ${bm ? `<div class="fed-levels">${["", ...LEVELS].map((l) => `<button class="chip ${FD.level === l ? "on" : ""}" data-lv="${l}">${l || "All"}${l ? ` <span>${levelCounts[l] || 0}</span>` : ""}</button>`).join("")}</div>` : ""}
     <div class="filters">

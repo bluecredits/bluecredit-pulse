@@ -99,10 +99,46 @@ function setWho(name) {
   $$("#whoami").forEach((e) => (e.textContent = name));
   $$("#avatar").forEach((e) => (e.textContent = name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase()));
 }
+// Every app, for the landing page and the apps launcher in the top bar. href is relative to the landing page.
+const PULSE_APPS = [
+  { key: "review", group: "win", staff: true, name: "Business Review", icon: "chart", href: "./review/", blurb: "Opportunities, action items and daily to quarterly reviews." },
+  { key: "contacts", group: "win", staff: true, name: "Contacts", icon: "users", href: "./contacts/", blurb: "Customers, investors, partners; import and follow up." },
+  { key: "funding", group: "win", staff: true, name: "Funding", icon: "banknotes", href: "./funding/", blurb: "Grant and loan applications, plus the funding catalog." },
+  { key: "opportunities", group: "win", staff: true, name: "Opportunities", icon: "gov", href: "./opportunities/", blurb: "Federal contracts, grants and state and local bids, checked daily." },
+  { key: "projects", group: "deliver", name: "Projects", icon: "briefcase", href: "./projects/", blurb: "Schedule, tasks, team, budget vs. actual, reports, close-out." },
+  { key: "agreements", group: "deliver", name: "Agreements", icon: "clipboard", href: "./agreements/", blurb: "Contracts, teaming and NDAs: fill in, e-sign, close out." },
+  { key: "onboarding", group: "deliver", name: "Onboarding", icon: "user-plus", href: "./onboarding/", blurb: "Contractors, consultants and new hires: checklists in and out." },
+  { key: "timecards", group: "daily", name: "Timecards", icon: "timer", href: "./timecards/", blurb: "Log hours by project each week; approve timesheets." },
+  { key: "scheduler", group: "daily", name: "Scheduler", icon: "calendar", href: "./scheduler/", blurb: "Team free/busy from Google or Outlook; find a time, invite." },
+  { key: "tickets", group: "daily", name: "Tickets", icon: "ticket", href: "./tickets/", blurb: "Equipment, purchases, time off, IT help and approvals." },
+  { key: "chief", group: "daily", name: "Chief of Staff", icon: "sparkles", href: "./chief/", blurb: "Your AI chief of staff: morning brief, answers, reminders." },
+];
 function showShell() {
   $("#shell").hidden = false; $("#topbar").hidden = false;
   if (S.profile) setWho(S.profile.display_name);
-  buildUserMenu();
+  buildUserMenu(); buildAppsMenu(); addFooter();
+}
+// Apps launcher (grid button, top right) on every page
+const launcherApps = () => PULSE_APPS.filter((a) => (!a.staff || S.profile?.role !== "contractor") && CFG.apps?.[a.key] !== false);
+function buildAppsMenu() {
+  const host = $("#appsMenu"); if (!host || !S.profile) return;
+  const here = location.pathname.replace(/\/index\.html$/, "/");
+  host.innerHTML = `<div class="apps-grid">${launcherApps().map((a) => { const href = HUB + a.href.replace(/^\.\//, ""), on = here.endsWith(a.href.replace(/^\./, ""));
+      const name = a.key === "chief" ? S.workspace?.config?.chief_name || a.name : a.name;
+      return `<a role="menuitem" href="${href}" class="app-tile ${on ? "on" : ""}" data-app="${a.key}"><span class="hub-ic ${a.key === "chief" ? "ai" : ""}"><svg class="ic"><use href="#i-${a.icon}"/></svg></span><span>${esc(name)}</span></a>`; }).join("")}</div>
+    <a class="apps-all" role="menuitem" href="${HUB}">Open the apps page</a>`;
+}
+document.addEventListener("click", (e) => {
+  const btn = $("#appsBtn"), m = $("#appsMenu"); if (!btn || !m) return;
+  if (e.target.closest("#appsBtn")) { const open = m.hidden; m.hidden = !open; btn.setAttribute("aria-expanded", String(open)); $("#userMenu") && ($("#userMenu").hidden = true); return; }
+  if (!e.target.closest("#appsMenu")) { m.hidden = true; btn.setAttribute("aria-expanded", "false"); }
+});
+document.addEventListener("keydown", (e) => { const m = $("#appsMenu"); if (m && !m.hidden && e.key === "Escape") { m.hidden = true; $("#appsBtn").focus(); } });
+// Footer on every page
+function addFooter() {
+  const shell = $("#shell"); if (!shell || $(".site-foot", shell)) return;
+  shell.insertAdjacentHTML("beforeend", `<footer class="site-foot"><span>BlueCredit Pulse · © ${new Date().getFullYear()} BlueCredit Inc.</span>
+    <span><a href="https://www.bluecredits.org" target="_blank" rel="noopener">bluecredits.org</a> · <a href="mailto:support@bluecredits.org">Support</a> · <a href="${HUB}">All apps</a></span></footer>`);
 }
 // Top-right menu on every page: who you are, workspace and admin links, sign out
 function buildUserMenu() {
@@ -266,7 +302,7 @@ function findHeaderRow(rows) {
   return best;
 }
 const tidy = (v) => String(v ?? "").replace(/\s+/g, " ").trim();
-function openDrawer() { const d = $("#drawer"); d.classList.add("open"); d.setAttribute("aria-hidden", "false"); }
-function closeDrawer() { const d = $("#drawer"); d.classList.remove("open"); d.setAttribute("aria-hidden", "true"); }
+function openDrawer() { const d = $("#drawer"); if (!d) return; d.classList.add("open"); d.setAttribute("aria-hidden", "false"); }
+function closeDrawer() { const d = $("#drawer"); if (!d) return; d.classList.remove("open"); d.setAttribute("aria-hidden", "true"); }
 document.addEventListener("click", (e) => { if (e.target.closest("[data-close]")) closeDrawer(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });

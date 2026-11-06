@@ -3,19 +3,7 @@
 "use strict";
 window.onAuthLost = () => showAuth("signin");
 
-const APPS = [
-  { key: "review", group: "win", staff: true, name: "Business Review", icon: "chart", href: "./review/", blurb: "Opportunities, action items and daily to quarterly reviews." },
-  { key: "contacts", group: "win", staff: true, name: "Contacts", icon: "users", href: "./contacts/", blurb: "Customers, investors, partners; import and follow up." },
-  { key: "funding", group: "win", staff: true, name: "Funding", icon: "banknotes", href: "./funding/", blurb: "Grant and loan applications, plus the funding catalog." },
-  { key: "opportunities", group: "win", staff: true, name: "Opportunities", icon: "gov", href: "./opportunities/", blurb: "Federal contracts, grants and state and local bids, checked daily." },
-  { key: "projects", group: "deliver", name: "Projects", icon: "briefcase", href: "./projects/", blurb: "Schedule, tasks, team, budget vs. actual, reports, close-out." },
-  { key: "agreements", group: "deliver", name: "Agreements", icon: "clipboard", href: "./agreements/", blurb: "Contracts, teaming and NDAs: fill in, e-sign, close out." },
-  { key: "onboarding", group: "deliver", name: "Onboarding", icon: "user-plus", href: "./onboarding/", blurb: "Contractors, consultants and new hires: checklists in and out." },
-  { key: "timecards", group: "daily", name: "Timecards", icon: "timer", href: "./timecards/", blurb: "Log hours by project each week; approve timesheets." },
-  { key: "scheduler", group: "daily", name: "Scheduler", icon: "calendar", href: "./scheduler/", blurb: "Team free/busy from Google or Outlook; find a time, invite." },
-  { key: "tickets", group: "daily", name: "Tickets", icon: "ticket", href: "./tickets/", blurb: "Equipment, purchases, time off, IT help and approvals." },
-  { key: "chief", group: "daily", name: "Chief of Staff", icon: "sparkles", href: "./chief/", blurb: "Your AI chief of staff: morning brief, answers, reminders." },
-];
+const APPS = PULSE_APPS;
 // Landing-page sections, in order. Every tile is the same size: icon, name, a two-line description, up to two numbers.
 const GROUPS = [
   { key: "win", title: "Win work", note: "Pipeline, relationships and funding" },
@@ -44,7 +32,7 @@ async function Launcher(isNew = false) {
     <div id="dueReminders"></div>
     ${appSections()}
     ${linkTiles()}
-    ${admin ? `<p class="hub-admin"><a href="./admin/">Team and workspace settings</a> · People join from this page with the company code.</p>` : ""}`;
+`;
   loadStats();
 }
 function appSections() {

@@ -6,7 +6,7 @@
 
 const FD = { source: "SAM.gov", status: "New", search: "", q: "", sort: "posted", level: "" };
 const LEVELS = ["Federal", "State", "Local", "Education"];
-const SRC = { "SAM.gov": { tab: "contracts", label: "Contracts", noun: "notices", site: "SAM.gov" }, "Grants.gov": { tab: "grants", label: "Grants", noun: "grants", site: "Grants.gov" }, BidMatch: { tab: "bidmatch", label: "Bid Match", noun: "bids", site: "MyBidMatch" } };
+const SRC = { "SAM.gov": { tab: "contracts", label: "Contracts", noun: "notices", site: "SAM.gov" }, "Grants.gov": { tab: "grants", label: "Grants", noun: "grants", site: "Grants.gov" }, BidMatch: { tab: "contracts/bids", label: "Bids", noun: "bids", site: "MyBidMatch" } };
 const icon = (name, cls = "ic") => `<svg class="${cls}"><use href="#i-${name}"/></svg>`;
 const isAdmin = () => S.profile?.role === "admin";
 
@@ -39,9 +39,9 @@ async function Matches() {
   if (FD.q) { const t = FD.q.toLowerCase(); rows = rows.filter((r) => [r.title, r.sol_number, r.agency, r.subtier, r.office, r.naics, (r.aln || []).join(" "), r.summary].join(" ").toLowerCase().includes(t)); }
   const sname = Object.fromEntries(searches.map((s) => [s.id, s.name]));
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>${src.label}</h1><p class="muted">${bm ? "Your MyBidMatch daily matches: federal, state, local and education bids." : (grants ? "Open and forecasted Grants.gov grants" : "New SAM.gov notices") + " that match your searches."} ${bm ? bmLine(st) : statusLine(st, grants)}</p></div>
-      <div class="actions-row"><button class="btn" id="runNow">${icon("return")}Check now</button>${bm ? `<a class="btn" href="#/settings">${icon("cog")}Bid Match link</a>` : `<a class="btn primary" href="#/searches/new?${grants ? "grants" : "contracts"}">${icon("plus")}New search</a>`}</div></div>
-    <div class="tabs src-tabs">${Object.entries(SRC).map(([k, v]) => `<a href="#/${v.tab}" aria-selected="${k === FD.source}">${v.label}${counts.by_source?.[k] ? ` <span class="count">${counts.by_source[k]}</span>` : ""}</a>`).join("")}</div>
+    <div class="page-head"><div><h1>${grants ? "Grants" : "Contracts"}</h1><p class="muted">${bm ? "Bids from your MyBidMatch daily lists: federal, state, local and education." : (grants ? "Open and forecasted Grants.gov grants" : "Federal notices from SAM.gov") + " that match your searches."} ${bm ? bmLine(st) : statusLine(st, grants)}</p></div>
+      <div class="actions-row"><button class="btn" id="runNow">${icon("return")}Check now</button>${bm ? `<a class="btn" href="#/settings">${icon("cog")}MyBidMatch link</a>` : `<a class="btn primary" href="#/searches/new?${grants ? "grants" : "contracts"}">${icon("plus")}New search</a>`}</div></div>
+    ${grants ? "" : `<div class="tabs src-tabs">${[["SAM.gov", "#/contracts", "Federal"], ["BidMatch", "#/contracts/bids", "Bids"]].map(([k, href, l]) => `<a href="${href}" aria-selected="${k === FD.source}">${l}${counts.by_source?.[k] ? ` <span class="count">${counts.by_source[k]}</span>` : ""}</a>`).join("")}</div>`}
     ${bm ? bmBanner(st) : banner(st, searches, grants)}
     ${bm ? `<div class="fed-levels">${["", ...LEVELS].map((l) => `<button class="chip ${FD.level === l ? "on" : ""}" data-lv="${l}">${l || "All"}${l ? ` <span>${levelCounts[l] || 0}</span>` : ""}</button>`).join("")}</div>` : ""}
     <div class="filters">
@@ -139,7 +139,7 @@ function banner(st, searches, grants) {
 }
 async function runNow() {
   const b = $("#runNow"); b.disabled = true;
-  try { await db.rpc("fed_run_now", {}); toast("Checking now; results arrive within a few minutes"); setTimeout(() => { if (/^#\/?(contracts|grants|bidmatch)?$/.test(location.hash)) Matches(); }, 90000); }
+  try { await db.rpc("fed_run_now", {}); toast("Checking now; results arrive within a few minutes"); setTimeout(() => { if (/^#\/?(contracts|contracts\/bids|grants)?$/.test(location.hash)) Matches(); }, 90000); }
   catch (e) { toast(e.message); }
   b.disabled = false;
 }
@@ -269,7 +269,7 @@ async function Settings() {
         <td>${c.status === "done" ? `${c.records} of ${c.total}` : c.status === "pending" ? "Waiting…" : `<span class="red">${esc(c.http_status ? "Error " + c.http_status : "Error")}</span> <span class="muted small">${esc((c.error || "").slice(0, 120))}</span>`}</td></tr>`).join("")
         || `<tr><td colspan="5" class="empty">No requests yet.</td></tr>`}</tbody></table></div></section>
     <section class="panel"><h2>Other sources</h2><p class="muted">Contracts posted on FedConnect over $25,000 also appear on SAM.gov, so they come through here.
-      DOE funding notices on FedConnect also post to Grants.gov, so the Grants tab catches them. Virginia eVA bids come through MyBidMatch (Bid Match tab).</p></section>`;
+      DOE funding notices on FedConnect also post to Grants.gov, so the Grants tab catches them. Virginia eVA and other state and local bids come through MyBidMatch (Contracts → Bids).</p></section>`;
   if (!isAdmin()) return;
   $("#keyForm").addEventListener("submit", async (e) => {
     e.preventDefault(); const k = e.target.key.value.trim(); if (!k) return;
@@ -295,12 +295,13 @@ window.addEventListener("hashchange", route);
 function route() {
   if (!S.profile) return;
   const parts = location.hash.replace(/^#\/?/, "").split("/");
-  const key = { contracts: 1, grants: 1, bidmatch: 1, searches: 1, settings: 1 }[parts[0]] ? parts[0] : "contracts";
-  if (key === "contracts") FD.source = "SAM.gov"; if (key === "grants") FD.source = "Grants.gov"; if (key === "bidmatch") FD.source = "BidMatch";
+  if (parts[0] === "bidmatch") { location.replace("#/contracts/bids"); return; }
+  const key = { contracts: 1, grants: 1, searches: 1, settings: 1 }[parts[0]] ? parts[0] : "contracts";
+  if (key === "contracts") FD.source = parts[1] === "bids" ? "BidMatch" : "SAM.gov"; if (key === "grants") FD.source = "Grants.gov";
   $$("#nav a[data-r]").forEach((a) => a.classList.toggle("on", a.dataset.r === key));
   document.body.classList.remove("nav-open"); closeDrawer();
   $("#main").innerHTML = `<p class="muted">Loading…</p>`;
-  Promise.resolve({ contracts: Matches, grants: Matches, bidmatch: Matches, searches: () => Searches((parts[1] || "").split("?")[0]), settings: Settings }[key]())
+  Promise.resolve({ contracts: Matches, grants: Matches, searches: () => Searches((parts[1] || "").split("?")[0]), settings: Settings }[key]())
     .catch((e) => ($("#main").innerHTML = setupNeeded(e)
       ? `<section class="panel"><h2>One-time setup needed</h2><p>Opportunities needs the latest database update. An admin runs the latest <code>supabase/schema.sql</code> in the Supabase SQL Editor.</p></section>`
       : `<div class="empty">Couldn't load this page: ${esc(e.message)}</div>`));

@@ -121,8 +121,8 @@ function loadAppStats() {
   }).catch(() => fill("projects", ""));
   if (S.profile.role !== "contractor") Promise.all([db.rpc("fed_status", {}), db.rpc("fed_counts", {})]).then(([st, n]) => {
     const bs = n.by_source || {};
-    fill("opportunities", (st.has_key ? hstat(bs["SAM.gov"] || 0, "new contracts", "./opportunities/#/contracts", false) : `<span class="hub-stat alert" data-href="./opportunities/#/settings"><b>Add</b> your SAM.gov key</span>`)
-      + hstat((bs["Grants.gov"] || 0) + (bs.BidMatch || 0), st.has_bidmatch ? "new grants and bids" : "new grants", st.has_bidmatch ? "./opportunities/#/bidmatch" : "./opportunities/#/grants", false));
+    fill("opportunities", (st.has_key || st.has_bidmatch ? hstat((bs["SAM.gov"] || 0) + (bs.BidMatch || 0), "new contracts and bids", "./opportunities/#/contracts", false) : `<span class="hub-stat alert" data-href="./opportunities/#/settings"><b>Add</b> your SAM.gov key</span>`)
+      + hstat(bs["Grants.gov"] || 0, "new grants", "./opportunities/#/grants", false));
   }).catch(() => fill("opportunities", ""));
   sb.from("agreements").select("status, end_date").then(({ data, error }) => {
     if (error) return fill("agreements", "");

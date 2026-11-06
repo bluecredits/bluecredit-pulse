@@ -9,7 +9,7 @@ the company's code, contractors and consultants with a separate contractor code.
 | `/review/` | **Business Review** | Opportunities, action items, and daily / weekly / monthly / quarterly reviews |
 | `/contacts/` | **Contacts** | Government POCs, primes, partners, investors, experts, mailing list; import and follow-ups |
 | `/funding/` | **Funding** | Grant and loan applications in progress, plus the funding catalog |
-| `/opportunities/` | **Opportunities** | Contracts (SAM.gov), Grants (Grants.gov) and Bid Match (MyBidMatch: federal, state, local, education) tabs from saved searches checked on a schedule (default once a day); add a contract to the pipeline or a grant to Funding |
+| `/opportunities/` | **Opportunities** | Two tabs: Contracts (sub-tabs Federal from SAM.gov and Bids from MyBidMatch: federal, state, local, education) and Grants (Grants.gov) from saved searches checked on a schedule (default once a day); add a contract to the pipeline or a grant to Funding |
 | `/timecards/` | **Timecards** | Weekly timesheets by project, approvals, hours and amounts by project |
 | `/onboarding/` | **Onboarding** | Contractors, consultants and new hires: checklist, invite, offboarding |
 | `/projects/` | **Projects** | Portfolio, schedule, task board, team, budget vs. actual, documents, risks, status reports, close-out |

@@ -18,7 +18,7 @@ Milestone: **Pulse 2.0 — pulse.bluecredits.org**. Repo: bluecredits/bluecredit
 ## 3. Database update for Scheduler and Chief of Staff (P0)
 - [ ] Supabase SQL Editor: run the latest `supabase/schema.sql` (safe to re-run; adds calendar, meetings, reminders, assistant tables)
 - [ ] Don't re-run `bluecredit_workspace.sql` (already applied Nov 6, 2026)
-- [x] Nov 6, 2026: ran `supabase/fix_20261106_agreements_hash.sql` (agreements hashing without pgcrypto; fixes "function digest does not exist")
+- [ ] Run `supabase/fix_20261106_agreements_hash.sql` once (Nov 6, 2026) (agreements hashing without pgcrypto; fixes "function digest does not exist")
 - [ ] After a week of normal use: `drop schema backup_20261106 cascade;` (pre-upgrade copy)
 
 ## 4. Google and Microsoft calendar apps (P1)

@@ -2037,6 +2037,8 @@ create index if not exists ix_fed_matches_notice on public.fed_matches (workspac
 -- grants (Grants.gov) share the same tables; source says where a row came from
 alter table public.fed_config alter column every_min set default 1440;
 alter table public.fed_config add column if not exists grants_fetch_at timestamptz;
+-- SAM.gov refuses connections from the database network, so searches go through the sam-relay Edge Function
+alter table public.fed_config add column if not exists sam_relay_url text;
 alter table public.fed_config add column if not exists grants_error text;
 alter table public.fed_config add column if not exists bidmatch_secret_id uuid;
 alter table public.fed_config add column if not exists bidmatch_hint text;
@@ -2174,7 +2176,7 @@ begin
   execute 'select decrypted_secret from vault.decrypted_secrets where id = $1' into k using c.key_secret_id;
   if k is null then update fed_config set last_error = 'The saved API key could not be read. Save it again in Settings.' where workspace_id = p_ws; return false; end if;
   execute 'select net.http_get(url := $1, params := $2, timeout_milliseconds := 180000)' into rid
-    using 'https://api.sam.gov/opportunities/v2/search',
+    using coalesce(nullif(c.sam_relay_url, ''), 'https://api.sam.gov/opportunities/v2/search'),
           jsonb_build_object('api_key', k, 'postedFrom', to_char(p_from, 'MM/DD/YYYY'), 'postedTo', to_char(p_to, 'MM/DD/YYYY'), 'limit', '200', 'offset', p_offset::text);
   insert into fed_calls (workspace_id, request_id, page_offset, posted_from, posted_to) values (p_ws, rid, p_offset, p_from, p_to);
   return true;

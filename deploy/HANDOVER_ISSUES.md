@@ -21,6 +21,12 @@ Milestone: **Pulse 2.0 — pulse.bluecredits.org**. Repo: bluecredits/bluecredit
 - [ ] Run `supabase/fix_20261106_agreements_hash.sql` once (Nov 6, 2026) (agreements hashing without pgcrypto; fixes "function digest does not exist")
 - [ ] After a week of normal use: `drop schema backup_20261106 cascade;` (pre-upgrade copy)
 
+## 3b. Federal opportunities timer (P1)
+- [ ] Supabase → Database → Extensions: turn on **pg_net** and **pg_cron** (Vault is on by default)
+- [ ] Run the latest `supabase/schema.sql` (creates the `pulse-federal` cron job, every 5 minutes)
+- [ ] Barasa pastes the SAM.gov API key in Federal → Settings; check "Database timer" shows all three On and Recent requests fill in
+- [ ] Calendar reminder: SAM.gov API keys expire every 90 days
+
 ## 4. Google and Microsoft calendar apps (P1)
 - [ ] Google Cloud: enable Calendar API, OAuth consent (External), Web client, redirect `https://pulse.bluecredits.org/fn/calendar/callback/google`
 - [ ] Submit Google verification for the sensitive scopes (calendar.freebusy, calendar.events); add testers meanwhile

@@ -7,6 +7,7 @@ const APPS = [
   { key: "review", group: "win", staff: true, name: "Business Review", icon: "chart", href: "./review/", blurb: "Opportunities, action items and daily to quarterly reviews." },
   { key: "contacts", group: "win", staff: true, name: "Contacts", icon: "users", href: "./contacts/", blurb: "Customers, investors, partners; import and follow up." },
   { key: "funding", group: "win", staff: true, name: "Funding", icon: "banknotes", href: "./funding/", blurb: "Grant and loan applications, plus the funding catalog." },
+  { key: "federal", group: "win", staff: true, name: "Federal", icon: "gov", href: "./federal/", blurb: "Saved SAM.gov searches checked automatically; add matches to Opportunities." },
   { key: "projects", group: "deliver", name: "Projects", icon: "briefcase", href: "./projects/", blurb: "Schedule, tasks, team, budget vs. actual, reports, close-out." },
   { key: "agreements", group: "deliver", name: "Agreements", icon: "clipboard", href: "./agreements/", blurb: "Contracts, teaming and NDAs: fill in, e-sign, close out." },
   { key: "onboarding", group: "deliver", name: "Onboarding", icon: "user-plus", href: "./onboarding/", blurb: "Contractors, consultants and new hires: checklists in and out." },
@@ -118,6 +119,10 @@ function loadAppStats() {
     const act = ps.filter((r) => r.status === "Active"), attn = act.filter((r) => r.health !== "On track").length, due = mine.filter((t) => t.due && new Date(t.due) - Date.now() < 3 * 864e5).length;
     fill("projects", hstat(act.length, "active projects", "./projects/") + (attn ? hstat(attn, "need attention", "./projects/", true) : "") + hstat(mine.length, "tasks assigned to you", "./projects/#/mytasks", due > 0));
   }).catch(() => fill("projects", ""));
+  if (S.profile.role !== "contractor") Promise.all([db.rpc("fed_status", {}), db.rpc("fed_counts", {})]).then(([st, n]) => {
+    fill("federal", (st.has_key ? hstat(n.new || 0, "new matches", "./federal/#/matches", false) : `<span class="hub-stat alert" data-href="./federal/#/settings"><b>Add</b> your SAM.gov key</span>`)
+      + (st.last_error ? `<span class="hub-stat alert" data-href="./federal/#/settings"><b>Check</b> settings</span>` : ""));
+  }).catch(() => fill("federal", ""));
   sb.from("agreements").select("status, end_date").then(({ data, error }) => {
     if (error) return fill("agreements", "");
     const out = (data || []).filter((r) => r.status === "Out for signature").length, act = (data || []).filter((r) => r.status === "Active");

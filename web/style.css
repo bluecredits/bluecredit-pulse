@@ -640,3 +640,29 @@ textarea.mono { font: 12.5px/1.5 ui-monospace, Menlo, monospace; }
 @media (max-width: 560px) { .hub-group .hub-apps { grid-template-columns: 1fr; } .hub-group .hub-app { min-height: 0; grid-template-columns: auto 1fr; grid-template-rows: none; } }
 .hub-app[data-app="projects"] .hub-ic, .hub-app[data-app="agreements"] .hub-ic, .hub-app[data-app="onboarding"] .hub-ic { background: linear-gradient(135deg, #6366f1, #4338ca); box-shadow: 0 8px 20px rgba(79, 70, 229, .22); }
 .hub-app[data-app="timecards"] .hub-ic, .hub-app[data-app="scheduler"] .hub-ic { background: linear-gradient(135deg, var(--teal-5), #0f766e); }
+
+/* Federal opportunities */
+.fed-list { display: grid; gap: 12px; }
+.fed-card { display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: start; padding: 16px 18px; }
+.fed-card.muted { opacity: .65; }
+.fed-top { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+.fed-hit { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--blue); background: var(--blue-0); border-radius: 999px; padding: 2px 9px; }
+.fed-hit .ic { width: 12px; height: 12px; }
+.fed-card h3 { font-size: 16px; margin: 0 0 2px; line-height: 1.35; }
+.fed-card h3 a { color: var(--ink); text-decoration: none; }
+.fed-card h3 a:hover { color: var(--blue); text-decoration: underline; }
+.fed-card .ext-ic { width: 12px; height: 12px; color: var(--muted); }
+.fed-facts { display: flex; flex-wrap: wrap; gap: 6px 22px; margin: 10px 0 0; }
+.fed-facts div { min-width: 0; }
+.fed-facts dt { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.fed-facts dd { margin: 1px 0 0; font-size: 13.5px; }
+.fed-actions { display: flex; flex-direction: column; gap: 6px; min-width: 170px; }
+.fed-actions .btn { justify-content: center; }
+.fed-checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 14px; margin-top: 6px; }
+.fed-checks .check { font-size: 13px; }
+.fed-preview { background: var(--blue-0); border-radius: 10px; padding: 10px 12px; font-size: 13px; }
+.fed-preview:empty { display: none; }
+.fed-preview ul { margin: 6px 0 0; padding-left: 18px; }
+.fed-preview li { margin: 2px 0; }
+.filters input[type=search] { min-width: 220px; flex: 1; }
+@media (max-width: 720px) { .fed-card { grid-template-columns: 1fr; } .fed-actions { flex-direction: row; flex-wrap: wrap; min-width: 0; } .fed-checks { grid-template-columns: 1fr; } }

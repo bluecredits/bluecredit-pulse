@@ -142,7 +142,7 @@ function route() {
   closeDrawer();
   const main = $("#main");
   main.innerHTML = `<p class="muted">Loading…</p>`;
-  const fn = routes[name] || (S.schema.entities[name] ? () => ListPage(name) : routes[HOME] || (() => ListPage(HOME)));
+  const fn = routes[name] || (S.schema.entities[name] ? () => ListPage(name).then(() => { if (/^\d+$/.test(id || "")) openRecord(name, +id, () => ListPage(name)); }) : routes[HOME] || (() => ListPage(HOME)));
   Promise.resolve(fn(id)).catch((e) => (main.innerHTML = `<div class="empty">Couldn't load this page: ${esc(e.message)}</div>`));
   main.focus({ preventScroll: true });
 }

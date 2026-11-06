@@ -1,4 +1,4 @@
-/* BlueCredit Pulse — records engine shared by the Business Review, Contacts and Funding apps.
+/* Pulse — records engine shared by the Business Review, Contacts and Funding apps.
    Each app's index.html sets window.PULSE_APP (its home page) and its own sidebar; pages that belong
    to another app open there. Shared helpers and sign-in come from core.js. No build step. */
 "use strict";
@@ -87,8 +87,20 @@ async function afterSignIn() {
 
 async function loadTeam() {
   S.team = must(await sb.from("profiles").select("*").order("display_name"));
-  // owner dropdowns: the original names plus anyone who has joined
-  const names = new Set(window.PULSE_SCHEMA.owners);
+  applyWorkspaceLists();
+}
+// This workspace's drop-down lists, agendas and owner names (starter pack + the admin's changes)
+function applyWorkspaceLists() {
+  const W = workspaceSettings(S.workspace);
+  S.ws = W;
+  for (const [key, list] of Object.entries(W.lists)) {
+    const [entity, field] = key.split(".");
+    const f = S.schema.entities[entity]?.fields.find((x) => x.name === field);
+    if (f && Array.isArray(list) && list.length) f.options = list;
+  }
+  S.schema.agendas = W.agendas;
+  // owner drop-downs: extra names the admin listed, plus everyone who has joined
+  const names = new Set(W.owners);
   S.team.filter((p) => p.active).forEach((p) => names.add(p.display_name.split(" ")[0]));
   S.owners = [...names];
   for (const ent of Object.values(S.schema.entities)) for (const f of ent.fields) if (f.name === "owner") f.options = S.owners;
@@ -102,9 +114,9 @@ async function boot() {
 /* ================================================================ status styling */
 
 /* ================================================================ router */
-const routes = { dashboard: Dashboard, reviews: Reviews, activity: Activity, team: Team };
+const routes = { dashboard: Dashboard, reviews: Reviews, activity: Activity, team: Team, settings: () => WorkspaceSettings() };
 // which app owns each page; anything not listed lives in Business Review
-const OWNER = { contacts: "contacts", funding: "funding" };
+const OWNER = { contacts: "contacts", funding: "funding", team: "admin", settings: "admin" };
 const HERE = location.pathname.replace(/\/index\.html$/, "/").replace(/\/$/, "").split("/").pop();
 const HOME = (window.PULSE_APP && window.PULSE_APP.home) || "dashboard";
 let navPick = null;  // the sidebar link clicked last (several can point at one page with different views)
@@ -233,7 +245,7 @@ const LIST_STATE = {};
 const PRESETS = {
   opportunities: [["Active (identified → submitted)", "stage=Identified|Qualifying|Pursuing|Submitted"], ["Due in 30 days", "__due30"], ["Past due, no outcome", "__stale"], ["All", ""]],
   funding: [["Active applications", "status=Identified|Pursuing|Submitted"], ["All applications (not catalog)", "status__not=Catalog"], ["Catalog — open deadlines", "__catalogopen"], ["Catalog — everything", "status=Catalog"], ["All", ""]],
-  contacts: [["Working contacts", "category__not=Mailing List|Corporate Prospect|Expert"], ["Follow-ups due", "__followups"], ["All", ""]],
+  contacts: [["Working contacts", "__working"], ["Follow-ups due", "__followups"], ["All", ""]],
   actions: [["Open", "status=Open"], ["Done", "status=Done"], ["All", ""]],
   resources: [["All", ""]],
 };
@@ -242,6 +254,7 @@ function presetParams(key) {
   if (key === "__due30") return { stage: "Identified|Qualifying|Pursuing|Submitted", deadline__gte: t, deadline__lte: addDays(t, 30) };
   if (key === "__stale") return { stage: "Identified|Qualifying|Pursuing", deadline__lte: addDays(t, -1) };
   if (key === "__catalogopen") return { status: "Catalog", deadline__gte: t };
+  if (key === "__working") return S.ws?.working_exclude?.length ? { category__not: S.ws.working_exclude.join("|") } : {};
   if (key === "__followups") return { next_step_date__lte: t, status__not: "Do Not Contact|Dormant" };
   return Object.fromEntries(new URLSearchParams(key));
 }
@@ -648,7 +661,7 @@ async function ReviewDetail(id) {
       <div class="review-side">
         <section class="panel"><h2>Notes <span class="save-state" id="saveState"></span></h2>
           <div class="form" style="margin-bottom:10px"><label>Date<input type="date" id="rvDate" value="${esc(r.review_date)}"></label>
-            <label>Attendees<input id="rvAtt" value="${esc(r.attendees || "")}" placeholder="Barasa, Sohaib…"></label></div>
+            <label>Attendees<input id="rvAtt" value="${esc(r.attendees || "")}" placeholder="Names of who attended"></label></div>
           <textarea class="notes-area" id="rvNotes" placeholder="Decisions, updates, blockers…">${esc(r.notes || "")}</textarea></section>
         <section class="panel"><h2>Action items <small id="openCount">${actions.filter((a) => a.status === "Open").length} open</small></h2>
           <div id="rvActions">${actions.map(actionItem).join("") || `<p class="muted">Capture who does what by when.</p>`}</div>
@@ -736,6 +749,77 @@ async function Team() {
     const name = $("#myName").value.trim(); if (!name) return;
     try { must(await sb.from("profiles").update({ display_name: name }).eq("id", S.user.id)); S.profile.display_name = name; setWho(name); toast("Saved"); await loadTeam(); }
     catch (e) { toast(e.message); }
+  });
+}
+
+/* ================================================================ workspace settings (admins) */
+const LIST_LABELS = { "opportunities.kind": "Opportunity types", "funding.type": "Funding types",
+  "contacts.category": "Contact categories", "resources.category": "Resource categories" };
+const LINK_KINDS = { talent: "Talent management (hiring, performance)", ai: "AI chief of staff", other: "Other tool" };
+async function WorkspaceSettings() {
+  if (S.profile.role !== "admin") { $("#main").innerHTML = `<div class="empty">Only admins can change workspace settings.</div>`; return; }
+  await loadWorkspace();
+  const w = S.workspace, W = workspaceSettings(w), cfg = w.config || {};
+  const lines = (a) => esc((a || []).join("\n"));
+  const linkRow = (l = {}) => `<div class="link-row">
+      <select data-k="kind" aria-label="Kind">${Object.entries(LINK_KINDS).map(([k, v]) => `<option value="${k}" ${l.kind === k ? "selected" : ""}>${esc(v)}</option>`).join("")}</select>
+      <input data-k="label" placeholder="Name, e.g. Kibali" value="${esc(l.label || "")}" aria-label="Name">
+      <input data-k="url" placeholder="https://…" value="${esc(l.url || "")}" aria-label="Link">
+      <input data-k="note" placeholder="What it's for (optional)" value="${esc(l.note || "")}" aria-label="Note">
+      <button class="btn small" type="button" data-del-link aria-label="Remove">Remove</button></div>`;
+  $("#main").innerHTML = `
+    <div class="page-head"><div><h1>Workspace settings</h1><p class="muted">These apply to everyone in ${esc(w.name)}.</p></div>
+      <div class="actions"><button class="btn primary" id="wsSave">Save changes</button></div></div>
+    <section class="panel"><h2>Company</h2><div class="form-grid">
+      <label>Company name<input id="wsName" value="${esc(w.name)}" maxlength="80"></label>
+      <label>Logo link <small class="muted">(https image, square works best)</small><input id="wsLogo" value="${esc(w.logo_url || "")}" placeholder="https://…/logo.png"></label>
+      <div class="ws-preview"><span class="ws-logo" id="wsLogoPrev"></span><b id="wsNamePrev"></b></div></div></section>
+    <section class="panel"><h2>Connected tools <small>shown as tiles on everyone's landing page</small></h2>
+      <p class="muted">Link your talent management tool (hiring and performance reviews), an AI chief of staff, or anything else the team uses.</p>
+      <div id="links">${(cfg.links || []).map(linkRow).join("")}</div>
+      <button class="btn small" type="button" id="addLink">Add a tool</button></section>
+    <section class="panel"><h2>Lists <small>one per line</small></h2>
+      <p class="muted">Started from the <b>${esc((window.PULSE_PACKS[w.template] || window.PULSE_PACKS.general).label)}</b> starter pack. Stages and statuses are fixed so reports and reviews add up.</p>
+      <div class="form-grid lists-grid">${Object.entries(LIST_LABELS).map(([k, label]) => `<label>${esc(label)}<textarea rows="8" data-list="${k}">${lines(W.lists[k])}</textarea></label>`).join("")}
+        <label>Extra owner names <small class="muted">(besides team members)</small><textarea rows="4" id="wsOwners">${lines(W.owners)}</textarea></label>
+        <label>Categories left out of "Working contacts"<textarea rows="4" id="wsWorking">${lines(W.working_exclude)}</textarea></label></div></section>
+    <section class="panel"><h2>Review agendas</h2><div class="form-grid lists-grid">
+      ${Object.entries(S.schema.cadences).map(([c, cfgc]) => `<label>${esc(cfgc.label)}<textarea rows="6" data-agenda="${c}">${lines(W.agendas[c])}</textarea></label>`).join("")}</div></section>
+    <section class="panel"><h2>Start over from a starter pack</h2>
+      <p class="muted">Replaces the lists and agendas above with a pack's. Records you already have keep their values.</p>
+      <div class="add-action" style="grid-template-columns:1fr auto;max-width:560px;margin:0"><select id="wsPack">${Object.entries(window.PULSE_PACKS).map(([k, p]) => `<option value="${k}" ${k === w.template ? "selected" : ""}>${esc(p.label)} — ${esc(p.blurb)}</option>`).join("")}</select>
+        <button class="btn" id="wsReset">Use this pack</button></div></section>
+    <section class="panel danger-zone"><h2>Delete workspace</h2>
+      <p class="muted">Permanently deletes ${esc(w.name)}: every record, review, request, asset and member. Export what you need first (each list page has Export CSV).</p>
+      <div class="add-action" style="grid-template-columns:1fr auto;max-width:560px;margin:0"><input id="wsDelName" placeholder="Type ${esc(w.name)} to confirm" aria-label="Workspace name">
+        <button class="btn danger" id="wsDelete">Delete workspace</button></div></section>`;
+  const prev = () => { $("#wsNamePrev").textContent = $("#wsName").value; const u = $("#wsLogo").value.trim();
+    $("#wsLogoPrev").innerHTML = /^https:\/\//i.test(u) ? `<img src="${esc(u)}" alt="">` : esc($("#wsName").value.split(/\s+/).map((x) => x[0] || "").slice(0, 2).join("").toUpperCase()); };
+  prev(); $("#wsName").addEventListener("input", prev); $("#wsLogo").addEventListener("input", prev);
+  $("#addLink").addEventListener("click", () => $("#links").insertAdjacentHTML("beforeend", linkRow()));
+  $("#links").addEventListener("click", (e) => e.target.closest("[data-del-link]")?.closest(".link-row").remove());
+  const split = (t) => t.split("\n").map((x) => x.trim()).filter(Boolean);
+  const save = async (extra = {}) => {
+    const links = $$(".link-row").map((r) => Object.fromEntries($$("[data-k]", r).map((i) => [i.dataset.k, i.value.trim()]))).filter((l) => l.url);
+    const bad = links.find((l) => !/^https:\/\/[^\s]+$/i.test(l.url));
+    if (bad) throw new Error(`The link for ${bad.label || "a tool"} must start with https://`);
+    const config = { ...cfg, links,
+      lists: Object.fromEntries($$("[data-list]").map((t) => [t.dataset.list, split(t.value)]).filter(([, v]) => v.length)),
+      agendas: Object.fromEntries($$("[data-agenda]").map((t) => [t.dataset.agenda, split(t.value)])),
+      owners: split($("#wsOwners").value), working_exclude: split($("#wsWorking").value), ...extra.config };
+    await db.rpc("update_workspace", { p: { name: $("#wsName").value.trim(), logo_url: $("#wsLogo").value.trim(), config, ...(extra.template ? { template: extra.template } : {}) } });
+    await loadWorkspace(); applyWorkspaceLists();
+  };
+  $("#wsSave").addEventListener("click", async () => { try { await save(); toast("Saved"); } catch (e) { toast(e.message); } });
+  $("#wsReset").addEventListener("click", async () => {
+    const k = $("#wsPack").value;
+    if (!confirm(`Replace the lists and agendas with the ${window.PULSE_PACKS[k].label} pack?`)) return;
+    try { await save({ template: k, config: { lists: {}, agendas: {}, working_exclude: null } }); toast("Starter pack applied"); WorkspaceSettings(); } catch (e) { toast(e.message); }
+  });
+  $("#wsDelete").addEventListener("click", async () => {
+    if ($("#wsDelName").value.trim() !== w.name) return toast(`Type ${w.name} exactly to confirm`);
+    if (!confirm(`Delete ${w.name} and everything in it? This can't be undone.`)) return;
+    try { await db.rpc("delete_workspace", { p_confirm: $("#wsDelName").value.trim() }); await sb.auth.signOut(); location.href = HUB; } catch (e) { toast(e.message); }
   });
 }
 

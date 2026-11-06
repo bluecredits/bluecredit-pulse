@@ -1,4 +1,4 @@
-/* BlueCredit Pulse — shared core for every app in the workspace (landing page, Business Review, Tickets).
+/* Pulse — shared core for every app (landing page, Business Review, Contacts, Funding, Tickets, Admin).
    One Supabase project and one set of accounts: signing in on the landing page signs you in everywhere,
    because all apps live on the same site. No build step. */
 "use strict";
@@ -6,7 +6,7 @@ const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const CFG = window.PULSE_CONFIG || {};
-const S = { user: null, profile: null, team: [] };
+const S = { user: null, profile: null, team: [], workspace: null };
 const today = () => new Date().toLocaleDateString("en-CA");
 const addDays = (iso, n) => { const d = new Date(iso + "T12:00:00"); d.setDate(d.getDate() + n); return d.toLocaleDateString("en-CA"); };
 const daysUntil = (iso) => Math.round((new Date(iso + "T12:00:00") - new Date(today() + "T12:00:00")) / 864e5);
@@ -46,8 +46,25 @@ async function requireMember() {
   const prof = must(await sb.from("profiles").select("*").eq("id", user.id).maybeSingle());
   if (!prof || !prof.active) { goSignIn(); return null; }
   S.user = user; S.profile = prof;
+  await loadWorkspace();
   if (!S.team.length) S.team = must(await sb.from("profiles").select("*").order("display_name"));
   return { user, profile: prof };
+}
+// The company this person belongs to: name, logo, starter pack and saved settings. Shows it in the top bar.
+const WS_COLS = "id, name, logo_url, template, config, plan, created_at";
+async function loadWorkspace() {
+  S.workspace = must(await sb.from("workspaces").select(WS_COLS).maybeSingle());
+  applyBrand();
+  return S.workspace;
+}
+function applyBrand() {
+  const w = S.workspace; if (!w) return;
+  $$("[data-ws-name]").forEach((e) => (e.textContent = w.name));
+  $$("[data-ws-logo]").forEach((e) => {
+    e.innerHTML = w.logo_url ? `<img src="${esc(w.logo_url)}" alt="">` : esc(w.name.split(/\s+/).map((x) => x[0]).slice(0, 2).join("").toUpperCase());
+  });
+  const app = document.title.split(" · ")[0];
+  document.title = (app && app !== "Pulse" ? app + " · " : "") + w.name + " · Pulse";
 }
 function setWho(name) {
   $$("#whoami").forEach((e) => (e.textContent = name));

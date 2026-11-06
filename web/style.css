@@ -434,3 +434,31 @@ a.hub-site:hover { background: #fff; box-shadow: var(--shadow-md); }
   .hub-ic { width: 48px; height: 48px; border-radius: 14px; }
   .hub-page .topbar .user span { display: none; }
 }
+
+/* ---------- product + workspace branding: "Pulse" wordmark, then the company's logo and name */
+.wordmark .p:first-child { margin-left: 0; }
+.by-line { margin: -14px 0 6px; font: 600 12px var(--font-ui); color: var(--ink-3, #64748b); letter-spacing: .04em; text-transform: uppercase; }
+.ws-chip { display: inline-flex; align-items: center; gap: 8px; margin-left: 14px; padding-left: 14px; border-left: 1px solid var(--line);
+  font: 600 15px var(--font-ui); color: var(--ink); white-space: nowrap; min-width: 0; }
+.ws-chip:empty, .ws-chip:has(.ws-name:empty) { display: none; }
+.ws-logo { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; flex: none; overflow: hidden;
+  background: linear-gradient(135deg, var(--blue-5), var(--teal-5)); color: #fff; font: 700 11px var(--font-ui); }
+.ws-logo img { width: 100%; height: 100%; object-fit: contain; background: #fff; }
+.ws-name { overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+.ws-chip + .crumb { margin-left: 10px; }
+@media (max-width: 760px) { .ws-name { display: none; } .ws-chip { margin-left: 8px; padding-left: 8px; } }
+
+/* ---------- workspace settings */
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px 18px; align-items: start; }
+.lists-grid textarea { font: 14px/1.5 var(--font-body, inherit); resize: vertical; }
+.ws-preview { display: flex; align-items: center; gap: 10px; align-self: end; padding: 8px 0; font: 600 15px var(--font-ui); }
+.ws-preview .ws-logo { width: 40px; height: 40px; border-radius: 10px; font-size: 14px; }
+.link-row { display: grid; grid-template-columns: 1.3fr 1fr 1.6fr 1.4fr auto; gap: 8px; margin-bottom: 8px; }
+@media (max-width: 760px) { .link-row { grid-template-columns: 1fr 1fr; } .link-row [data-k="url"], .link-row [data-k="note"] { grid-column: span 2; } }
+.danger-zone { border-color: #fecaca; }
+.btn.danger.primary, .danger-zone .btn.danger { border-color: #fca5a5; }
+.welcome { border: 1px solid var(--blue-2, #bfdbfe); background: linear-gradient(135deg, #eff6ff, #f0fdfa); margin-bottom: 26px; }
+.hub-ic.ai { background: linear-gradient(135deg, #7c3aed, #3b82f6); }
+.hub-ic.ext { background: linear-gradient(135deg, #64748b, #334155); }
+.ext-ic { width: 14px; height: 14px; vertical-align: -1px; color: var(--muted); }
+.small { font-size: 12px; }

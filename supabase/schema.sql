@@ -1,44 +1,100 @@
 -- =====================================================================
--- BlueCredit Pulse — Supabase schema
--- Run once in Supabase: SQL Editor → New query → paste this file → Run.
+-- Pulse (by BlueCredit) — Supabase schema
+-- Run in Supabase: SQL Editor → New query → paste this file → Run.
 -- Safe to re-run: it only creates what is missing and replaces functions.
+-- An older single-company install is upgraded in place: its data becomes the first workspace.
 --
 -- Security model
---   * Anyone can create a Supabase login, but a login sees NOTHING until it
---     joins with the company code (join_company). Every table is locked by
---     row-level security to active members only.
---   * The first person to join becomes admin. Admins see and rotate the
---     company code and can turn accounts off or make other admins.
+--   * Each company is a WORKSPACE. Every row of business data carries a workspace_id, and
+--     row-level security only shows a signed-in person the rows of the workspace they belong to.
+--   * Anyone can create a login, but a login sees NOTHING until it either creates a workspace
+--     (create_workspace — they become its admin) or joins one with its company code
+--     (join_company — they become a member). One login belongs to one workspace.
+--   * Admins see and rotate their workspace's code, manage members, edit the workspace's
+--     lists and branding, and can delete the workspace with all its data.
 -- =====================================================================
 
--- ---------------------------------------------------------------- team
+create extension if not exists pgcrypto;
+
+-- ---------------------------------------------------------------- workspaces + team
+create table if not exists public.workspaces (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  join_code text not null,
+  logo_url text,
+  template text not null default 'general',
+  config jsonb not null default '{}',
+  plan text not null default 'free',
+  created_by uuid,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists ux_workspaces_code on public.workspaces (upper(join_code));
+
 create table if not exists public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
+  workspace_id uuid references public.workspaces (id) on delete cascade,
   display_name text not null,
   email text,
   role text not null default 'member' check (role in ('admin', 'member')),
   active boolean not null default true,
   created_at timestamptz not null default now()
 );
-
-create table if not exists public.settings (key text primary key, value text);
+alter table public.profiles add column if not exists workspace_id uuid references public.workspaces (id) on delete cascade;
+create index if not exists ix_profiles_workspace on public.profiles (workspace_id);
 create table if not exists public.join_attempts (uid uuid, ts timestamptz default now());
 
-create or replace function public.new_company_code() returns text
-language sql volatile as $$
-  select 'BLUE-' || string_agg(substr('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 1 + floor(random() * 32)::int, 1), '')
-         filter (where g <= 4) || '-' ||
-         string_agg(substr('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 1 + floor(random() * 32)::int, 1), '')
-         filter (where g > 4)
-  from generate_series(1, 8) g
-$$;
+-- Codes look like ACME-7KQ2-XR9D: up to 4 letters of the company name, then 8 random characters.
+create or replace function public.new_company_code(p_name text default null) returns text
+language plpgsql volatile as $$
+declare
+  a text := 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  pre text := left(regexp_replace(upper(coalesce(p_name, '')), '[^A-Z]', '', 'g'), 4);
+  v text;
+begin
+  if length(pre) < 2 then pre := 'TEAM'; end if;
+  loop
+    select pre || '-' || string_agg(substr(a, 1 + floor(random() * 32)::int, 1), '') filter (where g <= 4) || '-' ||
+           string_agg(substr(a, 1 + floor(random() * 32)::int, 1), '') filter (where g > 4)
+      into v from generate_series(1, 8) g;
+    exit when not exists (select 1 from workspaces where upper(join_code) = v);
+  end loop;
+  return v;
+end $$;
 
-insert into public.settings (key, value) values ('company_code', public.new_company_code())
-on conflict (key) do nothing;
+-- Upgrade from the single-company version: everyone already on the team, and all existing data,
+-- move into one workspace that keeps the old company code.
+do $$
+declare v_ws uuid; v_code text; v_name text;
+begin
+  if exists (select 1 from public.profiles where workspace_id is null) then
+    if to_regclass('public.settings') is not null then
+      execute $q$select max(value) filter (where key = 'company_code'), max(value) filter (where key = 'company_name') from public.settings$q$
+        into v_code, v_name;
+    end if;
+    insert into public.workspaces (name, join_code, template, created_by)
+    values (coalesce(v_name, 'My company'), coalesce(v_code, public.new_company_code(v_name)), 'general',
+            (select id from public.profiles where role = 'admin' order by created_at limit 1))
+    returning id into v_ws;
+    update public.profiles set workspace_id = v_ws where workspace_id is null;
+  end if;
+end $$;
+alter table public.profiles alter column workspace_id set not null;
+
+-- The signed-in person's workspace (null if they haven't joined one, or were turned off)
+create or replace function public.ws() returns uuid
+language sql stable security definer set search_path = public as $$
+  select workspace_id from profiles where id = auth.uid() and active
+$$;
+-- Column default for workspace_id: the signer's workspace; for loader scripts using the
+-- service key (no signed-in user) the workspace set with: set pulse.workspace = '<uuid>'
+create or replace function public.ws_default() returns uuid
+language sql stable security definer set search_path = public as $$
+  select coalesce(ws(), case when auth.uid() is null then nullif(current_setting('pulse.workspace', true), '')::uuid end)
+$$;
 
 create or replace function public.is_member() returns boolean
 language sql stable security definer set search_path = public as $$
-  select exists (select 1 from profiles where id = auth.uid() and active)
+  select ws() is not null
 $$;
 
 create or replace function public.is_admin() returns boolean
@@ -52,40 +108,75 @@ language sql stable security definer set search_path = public as $$
   select coalesce((select split_part(display_name, ' ', 1) from profiles where id = auth.uid()), 'system')
 $$;
 
-create or replace function public.join_company(p_code text, p_name text) returns text
+create or replace function public.check_join_rate() returns void
 language plpgsql volatile security definer set search_path = public as $$
-declare v_code text; v_role text; v_email text; v_active boolean;
 begin
   if auth.uid() is null then raise exception 'Sign in first.'; end if;
   if (select count(*) from join_attempts where uid = auth.uid() and ts > now() - interval '1 hour') >= 8 then
     raise exception 'Too many tries. Wait an hour, or ask your admin for the code.';
   end if;
   insert into join_attempts (uid) values (auth.uid());
-  select value into v_code from settings where key = 'company_code';
-  if v_code is null or upper(trim(coalesce(p_code, ''))) <> upper(v_code) then
-    raise exception 'That company code isn''t valid. Check it with your admin.';
-  end if;
-  if coalesce(trim(p_name), '') = '' then raise exception 'Enter your name.'; end if;
+end $$;
 
-  select role, active into v_role, v_active from profiles where id = auth.uid();
+create or replace function public.check_new_member(p_name text) returns text
+language plpgsql stable security definer set search_path = public as $$
+declare v_ws text;
+begin
+  if coalesce(trim(p_name), '') = '' then raise exception 'Enter your name.'; end if;
+  select w.name into v_ws from profiles p join workspaces w on w.id = p.workspace_id where p.id = auth.uid();
+  if v_ws is not null then
+    raise exception 'This login already belongs to the % workspace. Sign up with another email to use a second workspace.', v_ws;
+  end if;
+  return (select email from auth.users where id = auth.uid());
+end $$;
+
+-- Start a new company workspace; the caller becomes its admin. Returns the new company code.
+create or replace function public.create_workspace(p_company text, p_name text, p_template text default 'general') returns text
+language plpgsql volatile security definer set search_path = public as $$
+declare v_email text; v_ws uuid; v_code text; v_company text := trim(coalesce(p_company, ''));
+begin
+  perform check_join_rate();
+  if v_company = '' then raise exception 'Enter your company name.'; end if;
+  if length(v_company) > 80 then raise exception 'Keep the company name under 80 characters.'; end if;
+  v_email := check_new_member(p_name);
+  v_code := new_company_code(v_company);
+  insert into workspaces (name, join_code, template, created_by)
+  values (v_company, v_code, case when p_template in ('general', 'govcon', 'fundraising') then p_template else 'general' end, auth.uid())
+  returning id into v_ws;
+  insert into profiles (id, workspace_id, display_name, email, role) values (auth.uid(), v_ws, trim(p_name), v_email, 'admin');
+  insert into activity (workspace_id, user_name, entity, action, summary)
+    values (v_ws, split_part(trim(p_name), ' ', 1), 'team', 'create', trim(p_name) || ' started the ' || v_company || ' workspace');
+  return v_code;
+end $$;
+
+-- Join an existing workspace with its company code. Returns the role ('member', or the existing role on re-join).
+create or replace function public.join_company(p_code text, p_name text) returns text
+language plpgsql volatile security definer set search_path = public as $$
+declare v_ws uuid; v_email text; p profiles;
+begin
+  perform check_join_rate();
+  select id into v_ws from workspaces where upper(join_code) = upper(trim(coalesce(p_code, '')));
+  if v_ws is null then raise exception 'That company code isn''t valid. Check it with your admin.'; end if;
+  if coalesce(trim(p_name), '') = '' then raise exception 'Enter your name.'; end if;
+  select * into p from profiles where id = auth.uid();
   if found then
-    if not v_active then raise exception 'This account is turned off. Ask an admin to turn it back on.'; end if;
+    if p.workspace_id <> v_ws then perform check_new_member(p_name); end if;
+    if not p.active then raise exception 'This account is turned off. Ask an admin to turn it back on.'; end if;
     update profiles set display_name = trim(p_name) where id = auth.uid();
-    return v_role;
+    return p.role;
   end if;
   select email into v_email from auth.users where id = auth.uid();
-  v_role := case when exists (select 1 from profiles) then 'member' else 'admin' end;
-  insert into profiles (id, display_name, email, role) values (auth.uid(), trim(p_name), v_email, v_role);
-  insert into activity (user_name, entity, action, summary)
-    values (split_part(trim(p_name), ' ', 1), 'team', 'create', trim(p_name) || ' joined the team');
-  return v_role;
+  insert into profiles (id, workspace_id, display_name, email, role) values (auth.uid(), v_ws, trim(p_name), v_email, 'member');
+  insert into activity (workspace_id, user_name, entity, action, summary)
+    values (v_ws, split_part(trim(p_name), ' ', 1), 'team', 'create', trim(p_name) || ' joined the team');
+  return 'member';
 end $$;
 
 create or replace function public.get_company_code() returns text
 language plpgsql stable security definer set search_path = public as $$
 begin
   if not is_admin() then raise exception 'Only admins can see the company code.'; end if;
-  return (select value from settings where key = 'company_code');
+  return (select join_code from workspaces where id = ws());
 end $$;
 
 create or replace function public.rotate_company_code(p_code text default null) returns text
@@ -93,9 +184,10 @@ language plpgsql volatile security definer set search_path = public as $$
 declare v text := upper(trim(coalesce(p_code, '')));
 begin
   if not is_admin() then raise exception 'Only admins can change the company code.'; end if;
-  if v = '' then v := new_company_code(); end if;
-  if length(v) < 6 then raise exception 'Use at least 6 characters.'; end if;
-  update settings set value = v where key = 'company_code';
+  if v = '' then v := new_company_code((select name from workspaces where id = ws())); end if;
+  if length(v) < 8 then raise exception 'Use at least 8 characters.'; end if;
+  if exists (select 1 from workspaces where upper(join_code) = v and id <> ws()) then raise exception 'That code is taken. Try another.'; end if;
+  update workspaces set join_code = v where id = ws();
   insert into activity (user_name, entity, action, summary) values (member_name(), 'team', 'update', 'Changed the company code');
   return v;
 end $$;
@@ -108,9 +200,59 @@ begin
   if p_id = auth.uid() and (p_role <> 'admin' or not p_active) then
     raise exception 'You can''t remove your own admin access. Ask another admin.';
   end if;
-  update profiles set role = p_role, active = p_active where id = p_id returning display_name into v_name;
+  update profiles set role = p_role, active = p_active where id = p_id and workspace_id = ws() returning display_name into v_name;
+  if v_name is null then raise exception 'That person isn''t on your team.'; end if;
   insert into activity (user_name, entity, action, summary)
     values (member_name(), 'team', 'update', v_name || ': ' || p_role || case when p_active then '' else ', turned off' end);
+end $$;
+
+-- Admin: rename the workspace, set its logo, and edit its lists (stored in config)
+create or replace function public.update_workspace(p jsonb) returns void
+language plpgsql volatile security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'Only admins can change workspace settings.'; end if;
+  if p ? 'name' and coalesce(trim(p ->> 'name'), '') = '' then raise exception 'The workspace needs a name.'; end if;
+  if p ? 'logo_url' and nullif(trim(p ->> 'logo_url'), '') is not null and p ->> 'logo_url' !~* '^https://' then
+    raise exception 'The logo link must start with https://';
+  end if;
+  if p ? 'config' and (jsonb_typeof(p -> 'config') <> 'object' or length((p -> 'config')::text) > 50000) then
+    raise exception 'Those settings are too large.';
+  end if;
+  update workspaces set
+    name = case when p ? 'name' then left(trim(p ->> 'name'), 80) else name end,
+    logo_url = case when p ? 'logo_url' then nullif(trim(p ->> 'logo_url'), '') else logo_url end,
+    config = case when p ? 'config' then p -> 'config' else config end,
+    template = case when p ->> 'template' in ('general', 'govcon', 'fundraising') then p ->> 'template' else template end
+  where id = ws();
+  insert into activity (user_name, entity, action, summary) values (member_name(), 'team', 'update', 'Changed workspace settings');
+end $$;
+
+-- Admin: permanently delete the workspace and everything in it. p_confirm must be the workspace name.
+create or replace function public.delete_workspace(p_confirm text) returns void
+language plpgsql volatile security definer set search_path = public as $$
+declare w workspaces;
+begin
+  if not is_admin() then raise exception 'Only admins can delete the workspace.'; end if;
+  select * into w from workspaces where id = ws();
+  if trim(coalesce(p_confirm, '')) <> w.name then raise exception 'Type the workspace name exactly to confirm.'; end if;
+  perform set_config('pulse.bulk', 'on', true);   -- don't write activity lines for rows being deleted
+  delete from workspaces where id = w.id;   -- cascades to members and every record
+end $$;
+
+-- ---------------------------------------------------------------- workspace wall for every data table
+-- Adds workspace_id (filled in automatically on insert), moves rows from an older single-company
+-- install into the first workspace, and indexes it.
+create or replace function public.add_workspace_wall(p_table text) returns void
+language plpgsql volatile as $$
+declare v_first uuid := (select id from public.workspaces order by created_at limit 1);
+begin
+  execute format('alter table public.%I add column if not exists workspace_id uuid references public.workspaces (id) on delete cascade', p_table);
+  if v_first is not null then
+    execute format('update public.%I set workspace_id = %L where workspace_id is null', p_table, v_first);
+  end if;
+  execute format('alter table public.%I alter column workspace_id set default public.ws_default()', p_table);
+  execute format('alter table public.%I alter column workspace_id set not null', p_table);
+  execute format('create index if not exists %I on public.%I (workspace_id)', 'ix_' || p_table || '_ws', p_table);
 end $$;
 
 -- ---------------------------------------------------------------- records
@@ -159,17 +301,19 @@ create table if not exists public.activity (
   field text, old_value text, new_value text, summary text
 );
 
+select public.add_workspace_wall(t) from unnest(array['opportunities', 'funding', 'contacts', 'resources', 'reviews', 'actions', 'activity']) t;
+
 create index if not exists ix_opp_deadline on public.opportunities (deadline);
 create index if not exists ix_opp_stage on public.opportunities (stage);
 create index if not exists ix_fund_deadline on public.funding (deadline);
 create index if not exists ix_fund_status on public.funding (status);
-create index if not exists ix_contacts_email on public.contacts (lower(email));
+create index if not exists ix_contacts_email on public.contacts (workspace_id, lower(email));
 create index if not exists ix_contacts_category on public.contacts (category);
 create index if not exists ix_contacts_next on public.contacts (next_step_date);
 create index if not exists ix_actions_status on public.actions (status, due_date);
 create index if not exists ix_actions_review on public.actions (review_id);
 create index if not exists ix_actions_linked on public.actions (linked_type, linked_id);
-create index if not exists ix_activity_ts on public.activity (ts desc);
+create index if not exists ix_activity_ts on public.activity (workspace_id, ts desc);
 create index if not exists ix_activity_entity on public.activity (entity, entity_id);
 create index if not exists ix_reviews_cadence on public.reviews (cadence, review_date desc);
 
@@ -198,35 +342,35 @@ begin
   nm := member_name();
   if tg_op = 'DELETE' then
     o := to_jsonb(old);
-    insert into activity (user_name, entity, entity_id, action, old_value, summary)
-      values (nm, tg_table_name, (o ->> 'id')::bigint, 'delete', left(o::text, 4000),
+    insert into activity (workspace_id, user_name, entity, entity_id, action, old_value, summary)
+      values ((o ->> 'workspace_id')::uuid, nm, tg_table_name, (o ->> 'id')::bigint, 'delete', left(o::text, 4000),
               'Deleted ' || noun || ': ' || coalesce(o ->> tcol, o ->> 'organization', ''));
     return null;
   end if;
   n := to_jsonb(new);
   title := coalesce(nullif(n ->> tcol, ''), n ->> 'organization', '');
   if tg_op = 'INSERT' then
-    insert into activity (user_name, entity, entity_id, action, summary)
-      values (nm, tg_table_name, (n ->> 'id')::bigint, 'create', 'Added ' || noun || ': ' || title);
+    insert into activity (workspace_id, user_name, entity, entity_id, action, summary)
+      values ((n ->> 'workspace_id')::uuid, nm, tg_table_name, (n ->> 'id')::bigint, 'create', 'Added ' || noun || ': ' || title);
     if scol is not null and tg_table_name in ('opportunities', 'funding') and n ->> scol is not null then
-      insert into activity (user_name, entity, entity_id, action, field, new_value, summary)
-        values (nm, tg_table_name, (n ->> 'id')::bigint, 'update', scol, n ->> scol, title || ': ' || scol || ' → ' || (n ->> scol));
+      insert into activity (workspace_id, user_name, entity, entity_id, action, field, new_value, summary)
+        values ((n ->> 'workspace_id')::uuid, nm, tg_table_name, (n ->> 'id')::bigint, 'update', scol, n ->> scol, title || ': ' || scol || ' → ' || (n ->> scol));
     end if;
     return null;
   end if;
   o := to_jsonb(old);
   if scol is not null and (o ->> scol) is distinct from (n ->> scol) then
-    insert into activity (user_name, entity, entity_id, action, field, old_value, new_value, summary)
-      values (nm, tg_table_name, (n ->> 'id')::bigint, 'update', scol, o ->> scol, n ->> scol,
+    insert into activity (workspace_id, user_name, entity, entity_id, action, field, old_value, new_value, summary)
+      values ((n ->> 'workspace_id')::uuid, nm, tg_table_name, (n ->> 'id')::bigint, 'update', scol, o ->> scol, n ->> scol,
               title || ': ' || scol || ' ' || coalesce(o ->> scol, '—') || ' → ' || coalesce(n ->> scol, '—'));
   end if;
   select string_agg(k, ', ' order by k) into changed
     from jsonb_object_keys(n) k
-   where k not in ('updated_at', 'updated_by', 'created_at', 'meta', coalesce(scol, ''))
+   where k not in ('updated_at', 'updated_by', 'created_at', 'meta', 'workspace_id', coalesce(scol, ''))
      and (n -> k) is distinct from (o -> k);
   if changed is not null then
-    insert into activity (user_name, entity, entity_id, action, summary)
-      values (nm, tg_table_name, (n ->> 'id')::bigint, 'update', title || ': edited ' || changed);
+    insert into activity (workspace_id, user_name, entity, entity_id, action, summary)
+      values ((n ->> 'workspace_id')::uuid, nm, tg_table_name, (n ->> 'id')::bigint, 'update', title || ': edited ' || changed);
   end if;
   return null;
 end $$;
@@ -254,21 +398,33 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------- row-level security
+alter table public.workspaces enable row level security;
 alter table public.profiles enable row level security;
-alter table public.settings enable row level security;
 alter table public.join_attempts enable row level security;
 alter table public.activity enable row level security;
 
+-- members read their own workspace, but never its company code (admins get it from get_company_code)
+drop policy if exists members_read on public.workspaces;
+create policy members_read on public.workspaces for select to authenticated using (id = ws());
+revoke all on public.workspaces from authenticated, anon;
+grant select (id, name, logo_url, template, config, plan, created_at) on public.workspaces to authenticated;
+
 drop policy if exists members_read on public.profiles;
-create policy members_read on public.profiles for select to authenticated using (is_member() or id = auth.uid());
+create policy members_read on public.profiles for select to authenticated using (workspace_id = ws() or id = auth.uid());
 drop policy if exists own_name on public.profiles;
 create policy own_name on public.profiles for update to authenticated using (id = auth.uid() and is_member()) with check (id = auth.uid());
-revoke update on public.profiles from authenticated, anon;
+revoke insert, update, delete on public.profiles from authenticated, anon;
 grant update (display_name) on public.profiles to authenticated;
-revoke all on public.settings, public.join_attempts from authenticated, anon;
+revoke all on public.join_attempts from authenticated, anon;
+do $$ begin
+  if to_regclass('public.settings') is not null then
+    execute 'alter table public.settings enable row level security';
+    execute 'revoke all on public.settings from authenticated, anon';
+  end if;
+end $$;
 
 drop policy if exists members_read on public.activity;
-create policy members_read on public.activity for select to authenticated using (is_member());
+create policy members_read on public.activity for select to authenticated using (workspace_id = ws());
 revoke insert, update, delete on public.activity from authenticated, anon;
 
 do $$
@@ -277,15 +433,17 @@ begin
   foreach t in array array['opportunities', 'funding', 'contacts', 'resources', 'reviews', 'actions'] loop
     execute format('alter table public.%I enable row level security', t);
     execute format('drop policy if exists members_all on public.%I', t);
-    execute format('create policy members_all on public.%I for all to authenticated using (is_member()) with check (is_member())', t);
+    execute format('create policy members_all on public.%I for all to authenticated using (workspace_id = ws()) with check (workspace_id = ws())', t);
     execute format('revoke all on public.%I from anon', t);
   end loop;
 end $$;
 
-revoke execute on function public.join_company(text, text), public.get_company_code(), public.rotate_company_code(text),
-  public.set_member(uuid, text, boolean) from anon, public;
-grant execute on function public.join_company(text, text), public.get_company_code(), public.rotate_company_code(text),
-  public.set_member(uuid, text, boolean) to authenticated;
+revoke execute on function public.join_company(text, text), public.create_workspace(text, text, text), public.get_company_code(),
+  public.rotate_company_code(text), public.set_member(uuid, text, boolean), public.update_workspace(jsonb),
+  public.delete_workspace(text), public.check_join_rate(), public.check_new_member(text), public.add_workspace_wall(text) from anon, public;
+grant execute on function public.join_company(text, text), public.create_workspace(text, text, text), public.get_company_code(),
+  public.rotate_company_code(text), public.set_member(uuid, text, boolean), public.update_workspace(jsonb),
+  public.delete_workspace(text) to authenticated;
 
 -- ---------------------------------------------------------------- dashboard + review snapshot
 create or replace function public.dashboard_data(p_owner text) returns jsonb
@@ -431,15 +589,18 @@ revoke execute on function public.dashboard_data(text), public.build_snapshot(te
 -- A row merges into an existing contact when the email matches and the organizations agree (or one is blank),
 -- or, with no email, when name + organization match. Merging fills empty fields, adds the import label to Tags
 -- and appends new details to Notes, so nothing already there is overwritten. Writes one activity line per import.
-create or replace function public.import_contacts(p_rows jsonb, p_label text default null, p_by text default null)
+drop function if exists public.import_contacts(jsonb, text, text);
+create or replace function public.import_contacts(p_rows jsonb, p_label text default null, p_by text default null, p_workspace uuid default null)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare
+  v_ws uuid := case when auth.uid() is null then p_workspace else ws() end;
   r jsonb; v_id bigint; v_email text; v_name text; v_org text; v_notes text; v_tags text;
   n_new int := 0; n_merged int := 0; n_skipped int := 0;
   who text := case when auth.uid() is null then coalesce(nullif(trim(p_by), ''), 'system') else member_name() end;
   lbl text := nullif(trim(p_label), '');
 begin
   if auth.uid() is not null and not is_member() then raise exception 'Only team members can import contacts.'; end if;
+  if v_ws is null then raise exception 'Pass p_workspace (the workspace id) when importing with the service key.'; end if;
   if jsonb_typeof(p_rows) <> 'array' then raise exception 'Expected a list of contacts.'; end if;
   if jsonb_array_length(p_rows) > 5000 then raise exception 'Import at most 5,000 rows at a time.'; end if;
   perform set_config('pulse.bulk', 'on', true);
@@ -453,16 +614,16 @@ begin
     v_id := null;
     if v_email is not null then
       select id into v_id from contacts
-       where lower(email) = v_email and (organization is null or organization = '' or v_org is null or lower(organization) = lower(v_org))
+       where workspace_id = v_ws and lower(email) = v_email and (organization is null or organization = '' or v_org is null or lower(organization) = lower(v_org))
        order by id limit 1;
     else
       select id into v_id from contacts
-       where lower(coalesce(name, '')) = lower(coalesce(v_name, '')) and lower(coalesce(organization, '')) = lower(coalesce(v_org, ''))
+       where workspace_id = v_ws and lower(coalesce(name, '')) = lower(coalesce(v_name, '')) and lower(coalesce(organization, '')) = lower(coalesce(v_org, ''))
        order by id limit 1;
     end if;
     if v_id is null then
-      insert into contacts (name, organization, role, email, phone, category, status, owner, location, linkedin, tags, notes, source, updated_by)
-      values (v_name, v_org, nullif(trim(r ->> 'role'), ''), v_email, nullif(trim(r ->> 'phone'), ''),
+      insert into contacts (workspace_id, name, organization, role, email, phone, category, status, owner, location, linkedin, tags, notes, source, updated_by)
+      values (v_ws, v_name, v_org, nullif(trim(r ->> 'role'), ''), v_email, nullif(trim(r ->> 'phone'), ''),
               coalesce(nullif(trim(r ->> 'category'), ''), 'Other'), coalesce(nullif(trim(r ->> 'status'), ''), 'To Contact'),
               nullif(trim(r ->> 'owner'), ''), nullif(trim(r ->> 'location'), ''), nullif(trim(r ->> 'linkedin'), ''),
               nullif(v_tags, ''), v_notes, coalesce(nullif(trim(r ->> 'source'), ''), lbl, 'Import'), who);
@@ -482,19 +643,19 @@ begin
         notes = case when v_notes is null or coalesce(c.notes, '') ilike '%' || v_notes || '%' then c.notes
                      else concat_ws(E'\n', nullif(c.notes, ''), 'From ' || coalesce(lbl, 'import') || ': ' || v_notes) end,
         updated_by = who
-      where c.id = v_id;
+      where c.id = v_id and c.workspace_id = v_ws;
       n_merged := n_merged + 1;
     end if;
   end loop;
   perform set_config('pulse.bulk', 'off', true);
-  insert into activity (user_name, entity, action, summary)
-    values (who, 'contacts', 'import', format('Imported %s: %s new contact%s, %s matched existing contact%s',
+  insert into activity (workspace_id, user_name, entity, action, summary)
+    values (v_ws, who, 'contacts', 'import', format('Imported %s: %s new contact%s, %s matched existing contact%s',
             coalesce(lbl, 'a contact list'), n_new, case when n_new = 1 then '' else 's' end,
             n_merged, case when n_merged = 1 then '' else 's' end));
   return jsonb_build_object('added', n_new, 'merged', n_merged, 'skipped', n_skipped);
 end $$;
-revoke execute on function public.import_contacts(jsonb, text, text) from anon, public;
-grant execute on function public.import_contacts(jsonb, text, text) to authenticated;
+revoke execute on function public.import_contacts(jsonb, text, text, uuid) from anon, public;
+grant execute on function public.import_contacts(jsonb, text, text, uuid) to authenticated;
 
 -- ---------------------------------------------------------------- keep id counters ahead of imported rows
 -- Rows loaded with explicit ids (Table Editor CSV import) don't advance the id counters; this realigns them.
@@ -542,6 +703,11 @@ create table if not exists public.ticket_events (
   ts timestamptz not null default now(), user_id uuid, user_name text,
   kind text not null, body text, from_status text, to_status text
 );
+select public.add_workspace_wall(t) from unnest(array['assets', 'tickets', 'ticket_events']) t;
+-- request numbers count up per workspace (REQ-0001, REQ-0002 …); older requests keep their id as the number
+alter table public.tickets add column if not exists number int;
+update public.tickets set number = id where number is null;
+create unique index if not exists ux_tickets_number on public.tickets (workspace_id, number);
 create index if not exists ix_tickets_requester on public.tickets (requester_id, status);
 create index if not exists ix_tickets_approver on public.tickets (approver_id, status);
 create index if not exists ix_tickets_assignee on public.tickets (assignee_id, status);
@@ -553,18 +719,18 @@ alter table public.ticket_events enable row level security;
 alter table public.assets enable row level security;
 drop policy if exists desk_read on public.tickets;
 create policy desk_read on public.tickets for select to authenticated using (
-  is_member() and (requester_id = auth.uid() or approver_id = auth.uid() or assignee_id = auth.uid() or is_admin()));
+  workspace_id = ws() and (requester_id = auth.uid() or approver_id = auth.uid() or assignee_id = auth.uid() or is_admin()));
 drop policy if exists desk_read on public.ticket_events;
 create policy desk_read on public.ticket_events for select to authenticated using (
   exists (select 1 from public.tickets t where t.id = ticket_id));
 drop policy if exists assets_read on public.assets;
-create policy assets_read on public.assets for select to authenticated using (is_member() and (is_admin() or assigned_to = auth.uid()));
+create policy assets_read on public.assets for select to authenticated using (workspace_id = ws() and (is_admin() or assigned_to = auth.uid()));
 drop policy if exists assets_admin_insert on public.assets;
-create policy assets_admin_insert on public.assets for insert to authenticated with check (is_admin());
+create policy assets_admin_insert on public.assets for insert to authenticated with check (is_admin() and workspace_id = ws());
 drop policy if exists assets_admin_update on public.assets;
-create policy assets_admin_update on public.assets for update to authenticated using (is_admin()) with check (is_admin());
+create policy assets_admin_update on public.assets for update to authenticated using (is_admin() and workspace_id = ws()) with check (is_admin() and workspace_id = ws());
 drop policy if exists assets_admin_delete on public.assets;
-create policy assets_admin_delete on public.assets for delete to authenticated using (is_admin());
+create policy assets_admin_delete on public.assets for delete to authenticated using (is_admin() and workspace_id = ws());
 revoke all on public.tickets, public.ticket_events, public.assets from anon;
 revoke insert, update, delete on public.tickets, public.ticket_events from authenticated;
 grant select on public.tickets, public.ticket_events to authenticated;
@@ -574,6 +740,9 @@ grant select, insert, update, delete on public.assets to authenticated;
 create or replace function public.asset_sync() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
+  if new.assigned_to is not null and not exists (select 1 from profiles where id = new.assigned_to and workspace_id = new.workspace_id) then
+    raise exception 'Assign assets to someone on your own team.';
+  end if;
   if tg_op = 'INSERT' or new.assigned_to is distinct from old.assigned_to then
     new.assigned_since := case when new.assigned_to is null then null else coalesce(
       case when tg_op = 'INSERT' then new.assigned_since end, current_date) end;
@@ -605,9 +774,9 @@ create or replace function public.desk_pick_approver(p_requester uuid, p_choice 
 language plpgsql stable security definer set search_path = public as $$
 declare v uuid; other_admin boolean;
 begin
-  other_admin := exists (select 1 from profiles where active and role = 'admin' and id <> p_requester);
+  other_admin := exists (select 1 from profiles where workspace_id = ws() and active and role = 'admin' and id <> p_requester);
   if p_choice is not null then
-    if not exists (select 1 from profiles where id = p_choice and active) then
+    if not exists (select 1 from profiles where id = p_choice and active and workspace_id = ws()) then
       raise exception 'The approver you picked isn''t an active team member.';
     end if;
     if p_choice = p_requester and (other_admin or not exists (select 1 from profiles where id = p_requester and role = 'admin')) then
@@ -615,9 +784,9 @@ begin
     end if;
     return p_choice;
   end if;
-  select id into v from profiles where active and role = 'admin' and id <> p_requester order by created_at limit 1;
+  select id into v from profiles where workspace_id = ws() and active and role = 'admin' and id <> p_requester order by created_at limit 1;
   if v is null and exists (select 1 from profiles where id = p_requester and role = 'admin') then v := p_requester; end if;
-  if v is null then raise exception 'There''s no admin to approve this yet. Ask an admin to join Pulse first.'; end if;
+  if v is null then raise exception 'There''s no admin to approve this yet. Ask an admin to join first.'; end if;
   return v;
 end $$;
 
@@ -636,7 +805,7 @@ begin
   if v_type in ('Asset problem', 'Return an asset') and v_asset is null then raise exception 'Pick the asset this is about.'; end if;
   if v_asset is not null then
     select coalesce(nullif(tag, '') || ' · ', '') || name into v_label from assets
-     where id = v_asset and (assigned_to = auth.uid() or is_admin());
+     where id = v_asset and workspace_id = ws() and (assigned_to = auth.uid() or is_admin());
     if v_label is null then raise exception 'That asset isn''t assigned to you.'; end if;
   end if;
   if v_type in ('Time off', 'Travel') and v_start is null then raise exception 'Add the start date.'; end if;
@@ -645,9 +814,11 @@ begin
   v_needs := desk_needs_approval(v_type) or (v_type = 'Other' and nullif(p ->> 'approver_id', '') is not null);
   if v_needs then v_appr := desk_pick_approver(auth.uid(), nullif(p ->> 'approver_id', '')::uuid); end if;
   v_status := case when v_needs then 'Pending approval' else 'Open' end;
-  insert into tickets (type, title, description, status, priority, requester_id, approver_id, asset_id, asset_label,
+  perform pg_advisory_xact_lock(hashtext('tickets:' || ws()::text));
+  insert into tickets (number, type, title, description, status, priority, requester_id, approver_id, asset_id, asset_label,
                        amount, start_date, end_date, reference, needed_by)
-  values (v_type, v_title, nullif(trim(p ->> 'description'), ''), v_status,
+  values ((select coalesce(max(number), 0) + 1 from tickets where workspace_id = ws()),
+          v_type, v_title, nullif(trim(p ->> 'description'), ''), v_status,
           coalesce(nullif(p ->> 'priority', ''), 'Normal'), auth.uid(), v_appr, v_asset, v_label,
           v_amount, v_start, v_end, nullif(trim(p ->> 'reference'), ''), nullif(p ->> 'needed_by', '')::date)
   returning id into v_id;
@@ -660,7 +831,7 @@ create or replace function public.desk_update(p_id bigint, p jsonb) returns void
 language plpgsql volatile security definer set search_path = public as $$
 declare t tickets; changed text[] := '{}'; v_appr uuid;
 begin
-  select * into t from tickets where id = p_id;
+  select * into t from tickets where id = p_id and workspace_id = ws();
   if not found then raise exception 'Request not found.'; end if;
   if not coalesce(t.requester_id = auth.uid() or is_admin(), false) then raise exception 'Only the requester or an admin can edit this.'; end if;
   if t.status not in ('Pending approval', 'Open') then raise exception 'This request can''t be edited any more. Add a comment instead.'; end if;
@@ -700,7 +871,7 @@ create or replace function public.desk_decide(p_id bigint, p_approve boolean, p_
 language plpgsql volatile security definer set search_path = public as $$
 declare t tickets; v_to text := case when p_approve then 'Approved' else 'Rejected' end;
 begin
-  select * into t from tickets where id = p_id for update;
+  select * into t from tickets where id = p_id and workspace_id = ws() for update;
   if not found then raise exception 'Request not found.'; end if;
   if t.approver_id is distinct from auth.uid() or not is_member() then raise exception 'Only the approver can decide on this request.'; end if;
   if t.status <> 'Pending approval' then raise exception 'This request has already been decided.'; end if;
@@ -714,7 +885,7 @@ create or replace function public.desk_set_status(p_id bigint, p_status text, p_
 language plpgsql volatile security definer set search_path = public as $$
 declare t tickets; v_to text := p_status; v_worker boolean;
 begin
-  select * into t from tickets where id = p_id for update;
+  select * into t from tickets where id = p_id and workspace_id = ws() for update;
   if not found then raise exception 'Request not found.'; end if;
   v_worker := is_admin() or coalesce(t.assignee_id = auth.uid(), false);
   if p_status = 'Cancelled' then
@@ -754,9 +925,9 @@ language plpgsql volatile security definer set search_path = public as $$
 declare t tickets;
 begin
   if not is_admin() then raise exception 'Only admins can assign requests.'; end if;
-  select * into t from tickets where id = p_id;
+  select * into t from tickets where id = p_id and workspace_id = ws();
   if not found then raise exception 'Request not found.'; end if;
-  if p_assignee is not null and not exists (select 1 from profiles where id = p_assignee and active) then
+  if p_assignee is not null and not exists (select 1 from profiles where id = p_assignee and active and workspace_id = ws()) then
     raise exception 'Pick an active team member.';
   end if;
   if p_assignee is not distinct from t.assignee_id then return; end if;
@@ -769,7 +940,7 @@ language plpgsql volatile security definer set search_path = public as $$
 declare t tickets;
 begin
   if nullif(trim(p_body), '') is null then raise exception 'Write a comment first.'; end if;
-  select * into t from tickets where id = p_id;
+  select * into t from tickets where id = p_id and workspace_id = ws();
   if not found or not is_member() or not coalesce(t.requester_id = auth.uid() or t.approver_id = auth.uid()
      or t.assignee_id = auth.uid() or is_admin(), false) then raise exception 'Request not found.'; end if;
   perform desk_log(p_id, 'comment', p_body);

@@ -4,16 +4,17 @@
 window.onAuthLost = () => showAuth("signin");
 
 const APPS = [
-  { key: "review", name: "Business Review", icon: "chart", href: "./review/", blurb: "Opportunities, action items, and daily to quarterly business reviews." },
-  { key: "contacts", name: "Contacts", icon: "users", href: "./contacts/", blurb: "Customers, investors, partners and the mailing list; import and follow up." },
-  { key: "funding", name: "Funding", icon: "banknotes", href: "./funding/", blurb: "Grant and loan applications in progress, plus the catalog of funding programs." },
+  { key: "review", staff: true, name: "Business Review", icon: "chart", href: "./review/", blurb: "Opportunities, action items, and daily to quarterly business reviews." },
+  { key: "contacts", staff: true, name: "Contacts", icon: "users", href: "./contacts/", blurb: "Customers, investors, partners and the mailing list; import and follow up." },
+  { key: "funding", staff: true, name: "Funding", icon: "banknotes", href: "./funding/", blurb: "Grant and loan applications in progress, plus the catalog of funding programs." },
+  { key: "timecards", name: "Timecards", icon: "timer", href: "./timecards/", blurb: "Log hours by project each week; approve timesheets; hours and amounts by project." },
   { key: "tickets", name: "Tickets", icon: "ticket", href: "./tickets/", blurb: "Ask for equipment, purchases, time off or IT help; approve requests; see your assets." },
 ];
 
 // ?next=review#/contacts → back to where someone was when they had to sign in
 function goNext() {
   const p = new URLSearchParams(location.search), next = p.get("next");
-  const app = APPS.find((a) => a.key === next);
+  const app = myApps().find((a) => a.key === next);
   if (!app) return false;
   location.replace(app.href + (/^#\//.test(location.hash) ? location.hash : ""));
   return true;
@@ -27,7 +28,7 @@ async function Launcher(isNew = false) {
     <section class="hub-hero"><h1>${h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"}, ${esc(firstName())}</h1>
       <p class="muted">${new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })} · Pick up where you left off.</p></section>
     <h2 class="hub-h">Workspace apps</h2>
-    <div class="hub-apps">${APPS.map((a) => `<a class="hub-app" href="${a.href}" data-app="${a.key}">
+    <div class="hub-apps">${myApps().map((a) => `<a class="hub-app" href="${a.href}" data-app="${a.key}">
         <div class="hub-ic">${icon(a.icon)}</div><div class="hub-body"><h3>${esc(a.name)}</h3><p>${esc(a.blurb)}</p>
         <div class="hub-stats" id="stats-${a.key}"><span class="muted">Loading…</span></div></div></a>`).join("")}</div>
     ${linkTiles()}
@@ -54,9 +55,12 @@ function linkTiles() {
     <a class="hub-app" href="${esc(l.url)}" target="_blank" rel="noopener"><div class="hub-ic ${l.kind === "ai" ? "ai" : "ext"}">${icon(l.kind === "ai" ? "sparkles" : l.kind === "talent" ? "team" : "link")}</div>
       <div class="hub-body"><h3>${esc(l.label || "Link")} <svg class="ic ext-ic"><use href="#i-external"/></svg></h3><p>${esc(l.note || new URL(l.url).hostname)}</p></div></a>`).join("")}</div>`;
 }
+const myApps = () => APPS.filter((a) => !a.staff || S.profile?.role !== "contractor");
 function icon(name, cls = "ic") { return `<svg class="${cls}"><use href="#i-${name}"/></svg>`; }
 async function loadStats() {
+  loadAppStats();
   const stat = (n, label, href, alert, preset) => `<span class="hub-stat ${alert && n ? "alert" : ""}" ${href ? `data-href="${href}"` : ""} ${preset ? `data-preset="${preset}"` : ""}><b>${Number(n).toLocaleString()}</b> ${label}</span>`;
+  if (S.profile.role === "contractor") return deskStats(stat);
   db.rpc("dashboard_data", { p_owner: firstName() }).then((d) => {
     const k = d.kpis;
     $("#stats-review").innerHTML = [stat(d.due_soon.length, `deadline${d.due_soon.length === 1 ? "" : "s"} in 14 days`, "./review/#/dashboard", false),
@@ -71,11 +75,26 @@ async function loadStats() {
     const el = $("#stats-contacts"), t = stat(count, "contacts", "");
     if (/follow-ups/.test(el.textContent)) el.insertAdjacentHTML("beforeend", t); else el.dataset.total = t;
   });
+  deskStats(stat);
+}
+function deskStats(stat) {
   db.rpc("desk_counts", {}).then((c) => {
     $("#stats-tickets").innerHTML = [stat(c.approvals, "waiting for your approval", "./tickets/#/approvals", true),
       stat(c.my_open, "of your requests open", "./tickets/#/requests"), c.to_work ? stat(c.to_work, "to work on", "./tickets/#/requests") : "",
       stat(c.my_assets, "assets assigned to you", "./tickets/#/assets")].join("");
   }).catch(() => ($("#stats-tickets").innerHTML = S.profile.role === "admin" ? `<span class="hub-stat alert">One-time database update needed</span>` : `<span class="muted">Not set up yet</span>`));
+}
+// stats for the newer apps; each fills its own tile and stays quiet if its tables aren't there yet
+const hstat = (n, label, href, alert) => `<span class="hub-stat ${alert && n ? "alert" : ""}" data-href="${href}"><b>${(+n || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}</b> ${label}</span>`;
+const fill = (key, html) => { const el = $("#stats-" + key); if (el) el.innerHTML = html; };
+function loadAppStats() {
+  const d = new Date(), wk = new Date(d); wk.setDate(d.getDate() - ((d.getDay() + 6) % 7)); const w = wk.toLocaleDateString("en-CA");
+  Promise.all([sb.from("time_entries").select("hours").eq("user_id", S.user.id).gte("work_date", w),
+               sb.from("timesheets").select("user_id, status").eq("status", "Submitted")]).then(([a, b]) => {
+    if (a.error) return fill("timecards", "");
+    const h = (a.data || []).reduce((x, r) => x + +r.hours, 0), wait = (b.data || []).filter((t) => t.user_id !== S.user.id).length;
+    fill("timecards", hstat(h, "hours this week", "./timecards/#/week") + (wait ? hstat(wait, "timesheets to approve", "./timecards/#/approvals", true) : ""));
+  });
 }
 document.addEventListener("click", (e) => {
   const s = e.target.closest("[data-href]");

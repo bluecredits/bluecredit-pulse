@@ -79,6 +79,7 @@ Object.assign(db, {
 
 async function afterSignIn() {
   const who = await requireMember(); if (!who) return;
+  if (who.profile.role === "contractor") { location.replace(HUB); return; }  // business records are staff-only
   await loadTeam();
   showShell();
   route();

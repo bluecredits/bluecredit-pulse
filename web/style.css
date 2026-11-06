@@ -462,3 +462,30 @@ a.hub-site:hover { background: #fff; box-shadow: var(--shadow-md); }
 .hub-ic.ext { background: linear-gradient(135deg, #64748b, #334155); }
 .ext-ic { width: 14px; height: 14px; vertical-align: -1px; color: var(--muted); }
 .small { font-size: 12px; }
+
+/* ---------- timecards */
+.week-nav { align-items: center; }
+.week-label { font: 600 15px var(--font-ui); min-width: 150px; text-align: center; }
+.tc-panel { padding: 0; }
+.tc-grid th.num, .tc-grid td.num { text-align: right; }
+.tc-grid th.today { color: var(--blue); }
+.tc-grid td.tc-proj b { display: block; } .tc-grid td.tc-proj small { color: var(--muted); }
+.tc-grid tbody tr { cursor: default; }
+.tc-in { width: 64px; text-align: right; padding: 6px 8px; border-radius: 10px; }
+.tc-in.saved { border-color: var(--green); box-shadow: 0 0 0 3px rgba(22, 163, 74, .15); }
+.tc-grid tfoot td { font-weight: 600; border-top: 1px solid var(--line); }
+.tc-grid tfoot select { max-width: 260px; }
+.tc-foot { display: flex; gap: 16px; align-items: end; justify-content: space-between; flex-wrap: wrap; padding: 16px 20px; border-top: 1px solid var(--line); }
+.tc-foot label { flex: 1 1 320px; }
+.notice-bar { display: flex; gap: 12px; align-items: flex-start; padding: 12px 16px; border-radius: 14px; margin-bottom: 16px; background: var(--blue-0); color: var(--ink-2); border: 1px solid var(--blue-1); }
+.notice-bar.alert { background: var(--red-1); border-color: #fecaca; } .notice-bar.ok { background: var(--green-1); border-color: #bbf7d0; }
+.notice-bar > .ic { flex: none; margin-top: 2px; }
+.budget-bar { width: 110px; height: 8px; background: var(--line-2); border-radius: 999px; overflow: hidden; }
+.budget-bar i { display: block; height: 100%; background: var(--blue); } .budget-bar.warn i { background: var(--amber); } .budget-bar.over i { background: var(--red); }
+label.check { display: flex; gap: 8px; align-items: center; font-weight: 500; }
+label.check input { width: auto; }
+label.inline { display: inline-flex; gap: 6px; align-items: center; }
+label.inline input { width: auto; }
+.people-pick { border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; display: grid; gap: 6px; }
+.pp-row { display: grid; grid-template-columns: 1fr 110px; gap: 10px; align-items: center; }
+.drawer .form-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }

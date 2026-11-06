@@ -4,16 +4,22 @@
 window.onAuthLost = () => showAuth("signin");
 
 const APPS = [
-  { key: "review", staff: true, name: "Business Review", icon: "chart", href: "./review/", blurb: "Opportunities, action items, and daily to quarterly business reviews." },
-  { key: "contacts", staff: true, name: "Contacts", icon: "users", href: "./contacts/", blurb: "Customers, investors, partners and the mailing list; import and follow up." },
-  { key: "funding", staff: true, name: "Funding", icon: "banknotes", href: "./funding/", blurb: "Grant and loan applications in progress, plus the catalog of funding programs." },
-  { key: "timecards", name: "Timecards", icon: "timer", href: "./timecards/", blurb: "Log hours by project each week; approve timesheets; hours and amounts by project." },
-  { key: "onboarding", name: "Onboarding", icon: "user-plus", href: "./onboarding/", blurb: "Bring on contractors, consultants and new hires with a checklist; offboard them cleanly." },
-  { key: "projects", name: "Projects", icon: "briefcase", href: "./projects/", blurb: "Run funded work: schedule, task board, team, budget vs. actual, status reports, close-out." },
-  { key: "agreements", name: "Agreements", icon: "clipboard", href: "./agreements/", blurb: "Teaming, consulting and confidentiality agreements: fill in, e-sign, amend and close out." },
-  { key: "scheduler", name: "Scheduler", icon: "calendar", href: "./scheduler/", blurb: "Everyone's Google or Outlook free/busy in one view; find a time and send the invites." },
-  { key: "chief", name: "Chief of Staff", icon: "sparkles", href: "./chief/", blurb: "Your AI chief of staff: a prioritized brief each morning, answers about your work, reminders." },
-  { key: "tickets", name: "Tickets", icon: "ticket", href: "./tickets/", blurb: "Ask for equipment, purchases, time off or IT help; approve requests; see your assets." },
+  { key: "review", group: "win", staff: true, name: "Business Review", icon: "chart", href: "./review/", blurb: "Opportunities, action items, and daily to quarterly business reviews." },
+  { key: "contacts", group: "win", staff: true, name: "Contacts", icon: "users", href: "./contacts/", blurb: "Customers, investors, partners and the mailing list; import and follow up." },
+  { key: "funding", group: "win", staff: true, name: "Funding", icon: "banknotes", href: "./funding/", blurb: "Grant and loan applications in progress, plus the catalog of funding programs." },
+  { key: "projects", group: "deliver", name: "Projects", icon: "briefcase", href: "./projects/", blurb: "Run funded work: schedule, task board, team, budget vs. actual, status reports, close-out." },
+  { key: "agreements", group: "deliver", name: "Agreements", icon: "clipboard", href: "./agreements/", blurb: "Client contracts, teaming, consulting and confidentiality agreements: fill in, e-sign, close out." },
+  { key: "onboarding", group: "deliver", name: "Onboarding", icon: "user-plus", href: "./onboarding/", blurb: "Bring on contractors, consultants and new hires with a checklist; offboard them cleanly." },
+  { key: "timecards", group: "daily", name: "Timecards", icon: "timer", href: "./timecards/", blurb: "Log hours by project each week; approve timesheets." },
+  { key: "scheduler", group: "daily", name: "Scheduler", icon: "calendar", href: "./scheduler/", blurb: "Team free/busy from Google or Outlook; find a time and send invites." },
+  { key: "tickets", group: "daily", name: "Tickets", icon: "ticket", href: "./tickets/", blurb: "Equipment, purchases, time off and IT help; approvals; your assets." },
+  { key: "chief", group: "daily", name: "Chief of Staff", icon: "sparkles", href: "./chief/", blurb: "Your AI chief of staff: morning brief, answers about your work, reminders." },
+];
+// Landing-page sections, in order. "compact" sections use small tiles (icon, name, one line of numbers).
+const GROUPS = [
+  { key: "win", title: "Win work", note: "Pipeline, relationships and funding" },
+  { key: "deliver", title: "Deliver work", note: "Projects, contracts and the people on them" },
+  { key: "daily", title: "Every day", note: "Time, meetings, requests and your assistant", compact: true },
 ];
 
 // ?next=review#/contacts → back to where someone was when they had to sign in
@@ -32,14 +38,26 @@ async function Launcher(isNew = false) {
     ${isNew && admin ? welcome() : ""}
     <section class="hub-hero"><h1>${h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"}, ${esc(firstName())}</h1>
       <p class="muted">${new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })} · Pick up where you left off.</p></section>
-    <h2 class="hub-h">Workspace apps</h2>
     <div id="dueReminders"></div>
-    <div class="hub-apps">${myApps().map((a) => `<a class="hub-app" href="${a.href}" data-app="${a.key}">
-        <div class="hub-ic ${a.key === "chief" ? "ai" : ""}">${icon(a.icon)}</div><div class="hub-body"><h3>${esc(a.key === "chief" ? S.workspace?.config?.chief_name || a.name : a.name)}</h3><p>${esc(a.blurb)}</p>
-        <div class="hub-stats" id="stats-${a.key}"><span class="muted">Loading…</span></div></div></a>`).join("")}</div>
+    ${appSections()}
     ${linkTiles()}
     ${admin ? `<p class="hub-admin"><a href="./admin/">Team and workspace settings</a> · People join from this page with the company code.</p>` : ""}`;
   loadStats();
+}
+function appSections() {
+  const mine = myApps();
+  return GROUPS.map((g) => {
+    const apps = mine.filter((a) => a.group === g.key);
+    if (!apps.length) return "";
+    return `<section class="hub-group"><h2 class="hub-h">${esc(g.title)} <span>${esc(g.note)}</span></h2>
+      <div class="hub-apps ${g.compact ? "compact" : ""}">${apps.map((a) => appTile(a, g.compact)).join("")}</div></section>`;
+  }).join("");
+}
+function appTile(a, compact) {
+  const name = a.key === "chief" ? S.workspace?.config?.chief_name || a.name : a.name;
+  return `<a class="hub-app ${compact ? "sm" : ""}" href="${a.href}" data-app="${a.key}" ${compact ? `title="${esc(a.blurb)}"` : ""}>
+    <div class="hub-ic ${a.key === "chief" ? "ai" : ""}">${icon(a.icon)}</div><div class="hub-body"><h3>${esc(name)}</h3>${compact ? "" : `<p>${esc(a.blurb)}</p>`}
+    <div class="hub-stats" id="stats-${a.key}"><span class="muted">Loading…</span></div></div></a>`;
 }
 // Links an admin set in Workspace settings → Integrations (talent tool, AI chief of staff, …)
 // First visit after creating a workspace: show the code to invite people

@@ -4,31 +4,32 @@
 window.onAuthLost = () => showAuth("signin");
 
 const APPS = [
-  { key: "review", group: "win", staff: true, name: "Business Review", icon: "chart", href: "./review/", blurb: "Opportunities, action items, and daily to quarterly business reviews." },
-  { key: "contacts", group: "win", staff: true, name: "Contacts", icon: "users", href: "./contacts/", blurb: "Customers, investors, partners and the mailing list; import and follow up." },
-  { key: "funding", group: "win", staff: true, name: "Funding", icon: "banknotes", href: "./funding/", blurb: "Grant and loan applications in progress, plus the catalog of funding programs." },
-  { key: "projects", group: "deliver", name: "Projects", icon: "briefcase", href: "./projects/", blurb: "Run funded work: schedule, task board, team, budget vs. actual, status reports, close-out." },
-  { key: "agreements", group: "deliver", name: "Agreements", icon: "clipboard", href: "./agreements/", blurb: "Client contracts, teaming, consulting and confidentiality agreements: fill in, e-sign, close out." },
-  { key: "onboarding", group: "deliver", name: "Onboarding", icon: "user-plus", href: "./onboarding/", blurb: "Bring on contractors, consultants and new hires with a checklist; offboard them cleanly." },
+  { key: "review", group: "win", staff: true, name: "Business Review", icon: "chart", href: "./review/", blurb: "Opportunities, action items and daily to quarterly reviews." },
+  { key: "contacts", group: "win", staff: true, name: "Contacts", icon: "users", href: "./contacts/", blurb: "Customers, investors, partners; import and follow up." },
+  { key: "funding", group: "win", staff: true, name: "Funding", icon: "banknotes", href: "./funding/", blurb: "Grant and loan applications, plus the funding catalog." },
+  { key: "projects", group: "deliver", name: "Projects", icon: "briefcase", href: "./projects/", blurb: "Schedule, tasks, team, budget vs. actual, reports, close-out." },
+  { key: "agreements", group: "deliver", name: "Agreements", icon: "clipboard", href: "./agreements/", blurb: "Contracts, teaming and NDAs: fill in, e-sign, close out." },
+  { key: "onboarding", group: "deliver", name: "Onboarding", icon: "user-plus", href: "./onboarding/", blurb: "Contractors, consultants and new hires: checklists in and out." },
   { key: "timecards", group: "daily", name: "Timecards", icon: "timer", href: "./timecards/", blurb: "Log hours by project each week; approve timesheets." },
-  { key: "scheduler", group: "daily", name: "Scheduler", icon: "calendar", href: "./scheduler/", blurb: "Team free/busy from Google or Outlook; find a time and send invites." },
-  { key: "tickets", group: "daily", name: "Tickets", icon: "ticket", href: "./tickets/", blurb: "Equipment, purchases, time off and IT help; approvals; your assets." },
-  { key: "chief", group: "daily", name: "Chief of Staff", icon: "sparkles", href: "./chief/", blurb: "Your AI chief of staff: morning brief, answers about your work, reminders." },
+  { key: "scheduler", group: "daily", name: "Scheduler", icon: "calendar", href: "./scheduler/", blurb: "Team free/busy from Google or Outlook; find a time, invite." },
+  { key: "tickets", group: "daily", name: "Tickets", icon: "ticket", href: "./tickets/", blurb: "Equipment, purchases, time off, IT help and approvals." },
+  { key: "chief", group: "daily", name: "Chief of Staff", icon: "sparkles", href: "./chief/", blurb: "Your AI chief of staff: morning brief, answers, reminders." },
 ];
-// Landing-page sections, in order. "compact" sections use small tiles (icon, name, one line of numbers).
+// Landing-page sections, in order. Every tile is the same size: icon, name, a two-line description, up to two numbers.
 const GROUPS = [
   { key: "win", title: "Win work", note: "Pipeline, relationships and funding" },
   { key: "deliver", title: "Deliver work", note: "Projects, contracts and the people on them" },
-  { key: "daily", title: "Every day", note: "Time, meetings, requests and your assistant", compact: true },
+  { key: "daily", title: "Every day", note: "Time, meetings, requests and your assistant" },
 ];
 
-// ?next=review#/contacts → back to where someone was when they had to sign in
-function goNext() {
-  const p = new URLSearchParams(location.search), next = p.get("next");
-  const app = myApps().find((a) => a.key === next);
-  if (!app) return false;
-  location.replace(app.href + (/^#\//.test(location.hash) ? location.hash : ""));
-  return true;
+// Signing in always lands on this apps page. If someone was sent here from an app (?next=review#/contacts),
+// offer a link back to where they were instead of jumping there.
+function resumeLink() {
+  const p = new URLSearchParams(location.search), app = myApps().find((a) => a.key === p.get("next"));
+  const hash = /^#\//.test(location.hash) ? location.hash : "";
+  history.replaceState(null, "", location.pathname);
+  if (!app) return "";
+  return `<div class="notice-bar">${icon("arrow-out")}<div>You were in <b>${esc(app.name)}</b>. <a href="${app.href + esc(hash)}">Continue where you left off</a></div></div>`;
 }
 
 async function Launcher(isNew = false) {
@@ -38,6 +39,7 @@ async function Launcher(isNew = false) {
     ${isNew && admin ? welcome() : ""}
     <section class="hub-hero"><h1>${h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"}, ${esc(firstName())}</h1>
       <p class="muted">${new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })} · Pick up where you left off.</p></section>
+    ${resumeLink()}
     <div id="dueReminders"></div>
     ${appSections()}
     ${linkTiles()}
@@ -50,13 +52,13 @@ function appSections() {
     const apps = mine.filter((a) => a.group === g.key);
     if (!apps.length) return "";
     return `<section class="hub-group"><h2 class="hub-h">${esc(g.title)} <span>${esc(g.note)}</span></h2>
-      <div class="hub-apps ${g.compact ? "compact" : ""}">${apps.map((a) => appTile(a, g.compact)).join("")}</div></section>`;
+      <div class="hub-apps">${apps.map(appTile).join("")}</div></section>`;
   }).join("");
 }
-function appTile(a, compact) {
+function appTile(a) {
   const name = a.key === "chief" ? S.workspace?.config?.chief_name || a.name : a.name;
-  return `<a class="hub-app ${compact ? "sm" : ""}" href="${a.href}" data-app="${a.key}" ${compact ? `title="${esc(a.blurb)}"` : ""}>
-    <div class="hub-ic ${a.key === "chief" ? "ai" : ""}">${icon(a.icon)}</div><div class="hub-body"><h3>${esc(name)}</h3>${compact ? "" : `<p>${esc(a.blurb)}</p>`}
+  return `<a class="hub-app" href="${a.href}" data-app="${a.key}" title="${esc(a.blurb)}">
+    <div class="hub-ic ${a.key === "chief" ? "ai" : ""}">${icon(a.icon)}</div><div class="hub-body"><h3>${esc(name)}</h3><p>${esc(a.blurb)}</p>
     <div class="hub-stats" id="stats-${a.key}"><span class="muted">Loading…</span></div></div></a>`;
 }
 // Links an admin set in Workspace settings → Integrations (talent tool, AI chief of staff, …)
@@ -75,9 +77,9 @@ document.addEventListener("click", async (e) => {
 function linkTiles() {
   const links = (S.workspace?.config?.links || []).filter((l) => /^https:\/\//i.test(l.url || ""));
   if (!links.length) return "";
-  return `<section class="hub-group"><h2 class="hub-h">Connected tools <span>Links your admin added</span></h2><div class="hub-apps compact hub-links">${links.map((l) => `
-    <a class="hub-app sm" href="${esc(l.url)}" target="_blank" rel="noopener" title="${esc(l.note || "")}"><div class="hub-ic ${l.kind === "ai" ? "ai" : "ext"}">${icon(l.kind === "ai" ? "sparkles" : l.kind === "talent" ? "team" : "link")}</div>
-      <div class="hub-body"><h3>${esc(l.label || "Link")} <svg class="ic ext-ic"><use href="#i-external"/></svg></h3><div class="hub-stats"><span class="hub-stat">${esc(l.note || new URL(l.url).hostname)}</span></div></div></a>`).join("")}</div></section>`;
+  return `<section class="hub-group"><h2 class="hub-h">Connected tools <span>Links your admin added</span></h2><div class="hub-apps hub-links">${links.map((l) => `
+    <a class="hub-app" href="${esc(l.url)}" target="_blank" rel="noopener"><div class="hub-ic ${l.kind === "ai" ? "ai" : "ext"}">${icon(l.kind === "ai" ? "sparkles" : l.kind === "talent" ? "team" : "link")}</div>
+      <div class="hub-body"><h3>${esc(l.label || "Link")} <svg class="ic ext-ic"><use href="#i-external"/></svg></h3><p>${esc(l.note || new URL(l.url).hostname)}</p></div></a>`).join("")}</div></section>`;
 }
 const myApps = () => APPS.filter((a) => (!a.staff || S.profile?.role !== "contractor") && CFG.apps?.[a.key] !== false);
 function icon(name, cls = "ic") { return `<svg class="${cls}"><use href="#i-${name}"/></svg>`; }
@@ -261,7 +263,6 @@ async function afterSignIn(isNew = false) {
   S.profile = prof;
   await loadWorkspace();
   S.team = must(await sb.from("profiles").select("*").order("display_name"));
-  if (goNext()) return;
   $("#login").hidden = true; $("#setup").hidden = true;
   showShell();
   Launcher(isNew);

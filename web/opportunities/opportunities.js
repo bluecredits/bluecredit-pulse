@@ -243,10 +243,10 @@ async function Settings() {
       ${st.grants_error ? `<div class="notice-bar">${icon("alert")}<div>${esc(st.grants_error)}</div></div>` : ""}
     </section>
     <section class="panel"><h2>MyBidMatch</h2>
-      ${st.has_bidmatch ? `<p>Linked (${esc(st.bidmatch_hint)}). ${st.bidmatch_fetch_at ? `Last read ${ago(st.bidmatch_fetch_at)}; ${st.bidmatch} bids from the last 30 days.` : "First read in progress."}</p>` : `<p>Not linked. Pulse reads your daily MyBidMatch lists (federal, state, local and education bids matched by your APEX profile) and sorts them by level.</p>`}
+      ${st.has_bidmatch ? `<p>Linked (${esc(st.bidmatch_hint)}). ${st.bidmatch_fetch_at ? `Last read ${ago(st.bidmatch_fetch_at)}; ${st.bidmatch} bids from the last 3 days.` : "First read in progress."}</p>` : `<p>Not linked. Pulse reads your daily MyBidMatch lists (federal, state, local and education bids matched by your APEX profile) and sorts them by level.</p>`}
       ${isAdmin() ? `<form id="bmForm" class="add-action" style="grid-template-columns:1fr auto auto"><input name="link" type="password" autocomplete="off" placeholder="https://mybidmatch.outreachsystems.com/go?sub=…">
         <button class="btn primary">${st.has_bidmatch ? "Replace" : "Save link"}</button>${st.has_bidmatch ? `<button type="button" class="btn" id="clearBm">Remove</button>` : ""}</form>
-        <p class="muted small">The link is in every MyBidMatch email. It's stored encrypted like the API key. Pulse reads each day's list and each bid's details once.</p>` : ""}
+        <p class="muted small">The link is in every MyBidMatch email. It's stored encrypted like the API key. Pulse reads the last 3 days of lists, and each bid's details once.</p>` : ""}
       ${st.bidmatch_error ? `<div class="notice-bar">${icon("alert")}<div>${esc(st.bidmatch_error)}</div></div>` : ""}
     </section>
     <section class="panel"><h2>Schedule</h2>

@@ -2166,6 +2166,7 @@ exception when undefined_function or invalid_schema_name or undefined_table then
 end $$;
 
 -- ----- MyBidMatch (Outreach Systems): the subscriber's daily match lists, read from their private link
+-- Only the last 3 days of lists are read (older days are skipped).
 create or replace function public.fed_unhtml(p text) returns text language sql immutable as $$
   select nullif(trim(regexp_replace(replace(replace(replace(replace(replace(replace(regexp_replace(coalesce(p, ''), '<[^>]+>', ' ', 'g'),
     '&nbsp;', ' '), '&quot;', '"'), '&#39;', ''''), '&lt;', '<'), '&gt;', '>'), '&amp;', '&'), '\s+', ' ', 'g')), '') $$;
@@ -2221,7 +2222,7 @@ begin
     if p_html !~* 'mybidmatch' then raise exception 'That page is not a MyBidMatch list'; end if;
     for m in select regexp_matches(p_html, 'href="/go\?doc=([0-9A-Fa-f-]{36})"[^>]*>[A-Za-z]+, ([A-Za-z]{3} +[0-9]{1,2}, [0-9]{4})</a>\s*</td>\s*<td[^>]*>\s*([0-9]+)', 'g') loop
       d := to_date(regexp_replace(m[2], ' +', ' ', 'g'), 'Mon DD, YYYY');
-      if d >= current_date - 30 and m[3]::int > 0 and not exists (select 1 from fed_bm_docs where workspace_id = p_ws and doc = upper(m[1])) then
+      if d >= current_date - 3 and m[3]::int > 0 and not exists (select 1 from fed_bm_docs where workspace_id = p_ws and doc = upper(m[1])) then
         insert into fed_bm_docs (workspace_id, doc, list_date, articles) values (p_ws, upper(m[1]), d, m[3]::int);
         perform fed_request_bm(p_ws, 'doc', upper(m[1]));
         n := n + 1;

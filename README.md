@@ -69,7 +69,7 @@ then add a tile to `APPS` in `web/hub.js`.
 - **Matches:** Contracts and Grants tabs, each New / Saved / Dismissed / Added. **Add to pipeline** creates a Business Review
   opportunity (stage Identified); **Add to Funding** creates a Funding record (type Grant, status Identified).
 - **Bid Match:** an admin pastes the private MyBidMatch link (`mybidmatch.outreachsystems.com/go?sub=…`, kept in Vault). Each check reads the
-  list of days, each new day's list and each new bid's page once, and sorts bids into Federal / State / Local / Education from the
+  list of days, each new day's list (last 3 days only) and each new bid's page once, and sorts bids into Federal / State / Local / Education from the
   buyer and the notice text. This is how Virginia eVA (VBO) bids come in. If MyBidMatch changes its page layout, the parser in
   `fed_store_bm` needs updating.
 - **Setup:** in Supabase turn on the `pg_net` and `pg_cron` extensions (Vault is on by default), then run `supabase/schema.sql`;

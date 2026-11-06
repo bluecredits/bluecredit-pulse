@@ -92,13 +92,13 @@ function deskStats(stat) {
 const hstat = (n, label, href, alert) => `<span class="hub-stat ${alert && n ? "alert" : ""}" data-href="${href}"><b>${(+n || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}</b> ${label}</span>`;
 const fill = (key, html) => { const el = $("#stats-" + key); if (el) el.innerHTML = html; };
 function loadAppStats() {
-  sb.from("reminders").select("id, text, remind_at").eq("user_id", S.user.id).eq("done", false).order("remind_at").then(({ data, error }) => {
+  if (CFG.apps?.chief !== false) sb.from("reminders").select("id, text, remind_at").eq("user_id", S.user.id).eq("done", false).order("remind_at").then(({ data, error }) => {
     if (error) return fill("chief", "");
     const due = (data || []).filter((r) => Date.parse(r.remind_at) < Date.now() + 36e5);
     fill("chief", hstat(due.length, "reminders due", "./chief/#/reminders", true) + `<span class="hub-stat" data-href="./chief/#/brief"><b>Today's</b> brief</span>`);
     if (due.length) $("#dueReminders").innerHTML = `<div class="notice-bar">${icon("clock")}<div><b>Reminder${due.length > 1 ? "s" : ""}:</b> ${due.slice(0, 3).map((r) => esc(r.text)).join(" · ")}${due.length > 3 ? ` · and ${due.length - 3} more` : ""} <a href="./chief/#/reminders">Open</a></div></div>`;
   });
-  db.rpc("calendar_status", {}).then((st) => {
+  if (CFG.apps?.scheduler !== false) db.rpc("calendar_status", {}).then((st) => {
     const mine = (st || []).some((x) => x.user_id === S.user.id && x.status === "connected"), n = new Set((st || []).filter((x) => x.status === "connected").map((x) => x.user_id)).size;
     fill("scheduler", (mine ? "" : `<span class="hub-stat alert" data-href="./scheduler/#/connect"><b>Connect</b> your calendar</span>`) + hstat(n, `of ${S.team.filter((p) => p.active).length} calendars linked`, "./scheduler/"));
   }).catch(() => fill("scheduler", ""));

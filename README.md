@@ -11,6 +11,9 @@ the company's code, contractors and consultants with a separate contractor code.
 | `/funding/` | **Funding** | Grant and loan applications in progress, plus the funding catalog |
 | `/timecards/` | **Timecards** | Weekly timesheets by project, approvals, hours and amounts by project |
 | `/onboarding/` | **Onboarding** | Contractors, consultants and new hires: checklist, invite, offboarding |
+| `/projects/` | **Projects** | Portfolio, schedule, task board, team, budget vs. actual, documents, risks, status reports, close-out |
+| `/agreements/` | **Agreements** | Teaming, consulting, confidentiality agreements and amendments: fill in, e-sign, amend, close out |
+| `/sign/` | **Signing page** | Public page a signer opens from their private link (no Pulse account needed) |
 | `/scheduler/` | **Scheduler** | Everyone's Google/Outlook free/busy, find a time, book with invites |
 | `/chief/` | **Chief of Staff** | AI chief of staff (Claude): daily brief, Q&A, suggestions, reminders |
 | `/admin/` | **Admin** | Team, roles, codes, workspace settings (name, logo, lists, tools, AI name) |
@@ -51,6 +54,28 @@ sidebar and sets `window.PULSE_APP = { home: ... }`; a link to a page that belon
 
 To add another app: make `web/<app>/index.html` that loads `../core.js` and calls `requireMember()`,
 then add a tile to `APPS` in `web/hub.js`.
+
+## Agreements
+
+- **Templates** (`web/agreements/templates.js`): Teaming, Consulting, Confidentiality & Assignment, Amendment. Governing law is
+  chosen per agreement (country, then state/province); venue and notice wording follow it. Workspaces can edit the wording or
+  add their own templates; any `{{placeholder}}` without a defined field becomes a form field. Special provisions are added
+  as numbered sections. Company details (legal name, entity, address, signer) live in Agreements → Templates.
+- **Signing:** sending locks the text and stores its SHA-256 fingerprint. Each signer gets a private link
+  (`/sign/#<token>`; only a hash of the token is stored). Signing records a typed or drawn signature, consent to sign
+  electronically, time, IP address and browser. When everyone has signed the agreement becomes Active and the linked
+  onboarding checklist ticks the matching items. Signed elsewhere? **Upload signed copy** (stored in the database, 10 MB max).
+- **Lifecycle:** Draft → Out for signature → Active → (Amendments) → Expired / Terminated → close-out checklist → Closed out.
+  Declined or voided agreements can be copied into a corrected draft.
+- The wording is a starting point, not legal advice: have counsel review it for the places you use it.
+
+## Projects
+
+Projects share the Timecards `projects` table. Each has a manager, dates, contract value, cost budget and budget hours;
+milestones (shown on a timeline), tasks (board and list), team (from Timecards), costs (labor from approved and pending
+hours × rates, plus other costs), agreements, risks/issues/decisions/changes, and weekly status reports that prefill from
+finished tasks and upcoming milestones. Close-out checks open tasks, milestones, agreements and unapproved timesheets.
+Contractors see only their assigned projects (milestones and tasks; they can move their own tasks).
 
 ## Tickets
 

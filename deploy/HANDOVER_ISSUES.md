@@ -41,7 +41,14 @@ Milestone: **Pulse 2.0 — pulse.bluecredits.org**. Repo: bluecredits/bluecredit
 - [ ] Barasa drafts / approves Terms and Privacy (Pulse holds other companies' data; mention Claude processing for Chief of Staff and calendar access)
 - [ ] Add pages and links on the sign-up card and footer
 
-## 8. Later (P2)
+## 8. Agreements (e-sign) checks (P1)
+- [ ] Barasa / counsel review the four templates' wording (`web/agreements/templates.js`) and BlueCredit's company details (Agreements → Templates)
+- [ ] Send a test agreement to an outside email; sign on a phone; confirm the executed copy prints with the certificate
+- [ ] Once email sending works (issue 1), consider emailing signing links and executed copies automatically (today: copy link / open in email)
+- [ ] Optional: DocuSign or Adobe Acrobat Sign integration (needs an API account; "Upload signed copy" covers it meanwhile)
+- [ ] If uploads grow, move `agreement_files` to Supabase Storage (private bucket, path per workspace)
+
+## 9. Later (P2)
 - [ ] Mail integration for Chief of Staff (Gmail / Outlook read + draft, same OAuth apps, new scopes)
 - [ ] Billing (Stripe) per workspace once plans are decided; `workspaces.plan` is already there
 - [ ] Dedicated-database option for customers who require their own instance

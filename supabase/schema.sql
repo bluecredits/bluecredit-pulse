@@ -572,6 +572,23 @@ begin
         'funding', (select count(*) from activity where entity = 'funding' and action = 'create' and ts::date >= since),
         'contacts', (select count(*) from activity where entity = 'contacts' and action = 'create' and ts::date >= since)));
 
+  -- new leads from Opportunities (SAM.gov, Grants.gov, MyBidMatch) found in this period and not yet reviewed
+  if to_regclass('public.fed_notices') is not null then
+    snap := snap || jsonb_build_object('leads', coalesce((select jsonb_object_agg(src, obj) from (
+      select n.source src, jsonb_build_object(
+          'new', count(*) filter (where n.status = 'New'), 'saved', count(*) filter (where n.status = 'Saved'),
+          'due_soon', count(*) filter (where n.response_deadline::date between t and until),
+          'items', coalesce(jsonb_agg(jsonb_build_object('id', n.notice_id, 'title', n.title, 'agency', coalesce(n.subtier, n.agency), 'due', n.response_deadline,
+                      'status', n.status, 'level', n.level, 'naics', n.naics, 'url', n.ui_link)
+                    order by n.response_deadline nulls last, n.posted_date desc) filter (where n.rk <= 12), '[]')) obj
+        from (select f.*, row_number() over (partition by f.source order by f.response_deadline nulls last, f.posted_date desc) rk
+                from fed_notices f
+               where f.status in ('New', 'Saved') and f.first_seen::date >= since and f.first_seen::date <= t
+                 and (f.response_deadline is null or f.response_deadline >= t)
+                 and (f.source = 'BidMatch' or exists (select 1 from fed_matches m where m.workspace_id = f.workspace_id and m.notice_id = f.notice_id))) n
+       group by n.source) z), '{}'));
+  end if;
+
   if p_cadence <> 'daily' then
     snap := snap || jsonb_build_object(
       'opp_pipeline', coalesce((select jsonb_agg(jsonb_build_object('k', stage, 'n', n, 'value', v) order by n desc) from (
@@ -2643,3 +2660,9 @@ grant execute on function public.fed_status(), public.fed_save_config(jsonb), pu
 do $$ begin
   perform cron.schedule('pulse-federal', '*/5 * * * *', 'select public.fed_tick()');
 exception when others then raise notice 'pg_cron schedule not created (%). Turn on pg_cron and run this file again.', sqlerrm; end $$;
+
+-- daily reviews start with the new leads from Opportunities (added once to each workspace's saved daily agenda)
+update public.workspaces set config = jsonb_set(config, '{agendas,daily}',
+    jsonb_build_array('New SAM.gov, grant and bid matches: add to the pipeline or dismiss') || (config #> '{agendas,daily}'))
+ where jsonb_typeof(config #> '{agendas,daily}') = 'array'
+   and not (config #> '{agendas,daily}') @> '["New SAM.gov, grant and bid matches: add to the pipeline or dismiss"]';

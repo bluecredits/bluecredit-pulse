@@ -13,7 +13,7 @@ window.PULSE_PACKS = {
     },
     working_exclude: ["Mailing List"],
     agendas: {
-      daily: ["Yesterday: what moved", "Today: top 3 priorities per person", "Deadlines in the next 7 days", "Blockers and asks"],
+      daily: ["New SAM.gov, grant and bid matches: add to the pipeline or dismiss", "Yesterday: what moved", "Today: top 3 priorities per person", "Deadlines in the next 7 days", "Blockers and asks"],
       weekly: ["Last week's action items: close out", "Deals and applications that moved", "Deadlines in the next 30 days", "Follow-ups due", "New opportunities to qualify"],
       monthly: ["Pipeline by stage and value", "Wins, losses and lessons", "Funding: submitted, pending, upcoming", "Key relationships", "Next month's targets"],
       quarterly: ["Results vs goals (revenue, win rate, money raised)", "Performance by owner", "Strategy: markets and customers to keep, add or drop", "Fundraise and investor pipeline", "Goals for next quarter"],
@@ -30,7 +30,7 @@ window.PULSE_PACKS = {
     },
     working_exclude: ["Mailing List"],
     agendas: {
-      daily: ["Yesterday: submissions, replies, calls", "Today: top 3 priorities per person", "Deadlines in the next 7 days", "Blockers and asks"],
+      daily: ["New SAM.gov, grant and bid matches: add to the pipeline or dismiss", "Yesterday: submissions, replies, calls", "Today: top 3 priorities per person", "Deadlines in the next 7 days", "Blockers and asks"],
       weekly: ["Last week's action items: close out", "Submissions and decisions this week", "Deadlines in the next 30 days: go / no-go", "Outreach to agencies and primes", "New solicitations and forecasts to qualify"],
       monthly: ["Pipeline by stage and value", "Wins, losses and debriefs", "Teaming and subcontractor relationships", "Registrations and certifications (SAM, set-asides)", "Next month's targets"],
       quarterly: ["Quarter results vs goals (submissions, win rate, $ won)", "Performance by owner", "Strategy: agencies, NAICS and vehicles to keep, add or drop", "Past performance and capability statement", "Goals for next quarter"],

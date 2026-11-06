@@ -608,6 +608,19 @@ async function Reviews(id) {
 
 async function reviewActions(id) { return must(await sb.from("actions").select("*").eq("review_id", id).order("status").order("due_date", { nullsFirst: false })); }
 
+// New leads from the Opportunities app (SAM.gov, Grants.gov, MyBidMatch) that nobody has reviewed yet
+function leadsSec(s, sec) {
+  if (!s.leads) return "";
+  const SRCS = [["SAM.gov", "Contracts · SAM.gov", "contracts"], ["BidMatch", "Contracts · APEX BidMatch", "contracts/bids"], ["Grants.gov", "Grants · Grants.gov", "grants"]];
+  const total = SRCS.reduce((a, [k]) => a + (s.leads[k]?.new || 0) + (s.leads[k]?.saved || 0), 0);
+  const body = SRCS.map(([k, label, tab]) => { const L = s.leads[k]; if (!L) return "";
+    return `<div class="lead-src"><h4>${label} <span class="meta">${L.new} new${L.saved ? ` · ${L.saved} saved` : ""}${L.due_soon ? ` · ${L.due_soon} due in this window` : ""}</span>
+        <a class="no-print" href="../opportunities/#/${tab}">Review all</a></h4>
+      <ul class="list">${L.items.map((x) => `<li><span><a href="${esc(x.url || "../opportunities/#/" + tab)}" target="_blank" rel="noopener">${esc(x.title)}</a><br><span class="meta">${esc([x.level, x.agency, x.naics && "NAICS " + x.naics, x.status === "Saved" ? "saved" : ""].filter(Boolean).join(" · "))}</span></span>
+        <span class="meta">${x.due ? dueCell(String(x.due).slice(0, 10)) : "no due date"}</span></li>`).join("")}</ul>
+      ${L.new + L.saved > L.items.length ? `<p class="meta"><a href="../opportunities/#/${tab}">and ${L.new + L.saved - L.items.length} more</a></p>` : ""}</div>`; }).join("");
+  return sec("New opportunities to review", total, total ? body : `<p class="muted">No new contract, grant or bid matches in this period.</p>`);
+}
 async function ReviewDetail(id) {
   const r = must(await sb.from("reviews").select("*").eq("id", id).single());
   const actions = await reviewActions(id);
@@ -632,6 +645,7 @@ async function ReviewDetail(id) {
         <div><b>${sum("Lost") + sum("Missed")}</b><span>Lost or missed</span></div>
         <div><b>${R.win_rate == null ? "—" : R.win_rate + "%"}</b><span>Win rate</span></div>
         <div><b>${money(R.value_won) || "$0"}</b><span>Contract value won</span></div></div>` : ""}
+      ${leadsSec(s, sec)}
       ${sec("Carry-over from last review", s.carry_over.length, s.previous_review ? ul(s.carry_over.map((a) => `<li><span>${esc(a.text)}</span><span class="meta">${esc(a.owner || "")}</span></li>`),
           `Everything from <a href="#/reviews/${s.previous_review.id}">${esc(s.previous_review.title)}</a> is closed.`) : `<p class="muted">This is the first ${s.cadence} review.</p>`)}
       ${sec("Overdue actions", s.actions_overdue.length, ul(s.actions_overdue.map((a) => `<li><span>${esc(a.text)}</span><span class="meta">${esc(a.owner || "")} · ${dueCell(a.due_date)}</span></li>`), "None overdue."))}

@@ -8,11 +8,11 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../style.css?v=20261106h">
+<link rel="stylesheet" href="../style.css?v=20261106i">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3C11 11 7 15.5 7 20a9 9 0 0 0 18 0c0-4.5-4-9-9-17z' fill='%233B82F6'/%3E%3C/svg%3E">
 </head>
 <body>
-<script src="../icons.js?v=20261106h"></script>
+<script src="../icons.js?v=20261106i"></script>
 <div id="setup" class="login" hidden>
   <div class="login-card">
     <h1>Almost there</h1>
@@ -23,12 +23,13 @@
 
 <header class="topbar" id="topbar" hidden>
   <button class="menu-btn" id="menuBtn" aria-label="Open menu"><svg class="ic"><use href="#i-menu"/></svg></button>
-  <a class="wordmark" href="../"><span class="p">Pulse</span></a>
+  <a class="bc-lockup" href="../" aria-label="BlueCredit Pulse"><img src="../logo.png" alt="BlueCredit"><span class="s">Pulse</span></a>
   <span class="ws-chip"><span class="ws-logo" data-ws-logo></span><span class="ws-name" data-ws-name></span></span>
   <span class="crumb">Business Review</span>
   <span class="spacer"></span>
   <a class="apps-btn" href="../" title="All apps" aria-label="All apps"><svg class="ic"><use href="#i-grid"/></svg><span>All apps</span></a>
-  <div class="user"><span id="whoami"></span><div class="avatar" id="avatar"></div></div>
+  <div class="user-menu"><button class="user" id="userBtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="userMenu"><span id="whoami"></span><div class="avatar" id="avatar"></div><svg class="ic chev"><use href="#i-chevron-right"/></svg></button>
+    <div class="menu" id="userMenu" role="menu" hidden></div></div>
 </header>
 <div id="shell" class="shell" hidden>
   <aside class="side">
@@ -45,7 +46,6 @@
       <a href="#/activity" data-r="activity"><svg class="ic"><use href="#i-clock"/></svg><span>Activity log</span></a>
       <a href="#/team" data-r="team"><svg class="ic"><use href="#i-team"/></svg><span>Team</span></a>
     </nav>
-    <div class="side-foot"><button data-signout><svg class="ic"><use href="#i-logout"/></svg><span>Sign out</span></button></div>
   </aside>
   <div class="scrim" id="scrim"></div>
   <main id="main" tabindex="-1"></main>
@@ -63,11 +63,11 @@
 </div>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="../config.js?v=20261106h"></script>
-<script src="../core.js?v=20261106h"></script>
+<script src="../config.js?v=20261106i"></script>
+<script src="../core.js?v=20261106i"></script>
 <script>window.PULSE_APP = { home: "dashboard" };</script>
-<script src="../schema.js?v=20261106h"></script>
-<script src="../packs.js?v=20261106h"></script>
-<script src="../records.js?v=20261106h"></script>
+<script src="../schema.js?v=20261106i"></script>
+<script src="../packs.js?v=20261106i"></script>
+<script src="../records.js?v=20261106i"></script>
 </body>
 </html>

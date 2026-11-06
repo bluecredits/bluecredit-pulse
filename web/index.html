@@ -8,15 +8,14 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="./style.css?v=20261106h">
+<link rel="stylesheet" href="./style.css?v=20261106i">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3C11 11 7 15.5 7 20a9 9 0 0 0 18 0c0-4.5-4-9-9-17z' fill='%233B82F6'/%3E%3C/svg%3E">
 </head>
 <body class="hub-page">
-<script src="./icons.js?v=20261106h"></script>
+<script src="./icons.js?v=20261106i"></script>
 <div id="login" class="login" hidden>
   <div class="login-card">
-    <div class="wordmark" aria-label="Pulse"><span class="p">Pulse</span></div>
-    <p class="by-line">by BlueCredit</p>
+    <div class="bc-lockup big" aria-label="BlueCredit Pulse"><img src="logo.png" alt="BlueCredit"><span class="s">Pulse</span></div>
     <p class="muted" style="margin:-6px 0 4px">Your team's workspace for business reviews, contacts, funding, timecards, scheduling and requests.</p>
     <div class="auth-tabs" role="tablist" id="authTabs">
       <button role="tab" data-mode="signin" aria-selected="true">Sign in</button>
@@ -86,11 +85,11 @@
 </div>
 
 <header class="topbar" id="topbar" hidden>
-  <a class="wordmark" href="./"><span class="p">Pulse</span></a>
+  <a class="bc-lockup" href="./" aria-label="BlueCredit Pulse"><img src="logo.png" alt="BlueCredit"><span class="s">Pulse</span></a>
   <span class="ws-chip"><span class="ws-logo" data-ws-logo></span><span class="ws-name" data-ws-name></span></span>
   <span class="spacer"></span>
-  <div class="user"><span id="whoami"></span><div class="avatar" id="avatar"></div></div>
-  <button class="btn small" data-signout>Sign out</button>
+  <div class="user-menu"><button class="user" id="userBtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="userMenu"><span id="whoami"></span><div class="avatar" id="avatar"></div><svg class="ic chev"><use href="#i-chevron-right"/></svg></button>
+    <div class="menu" id="userMenu" role="menu" hidden></div></div>
 </header>
 <div id="shell" class="hub" hidden>
   <main id="main" class="hub-main" tabindex="-1"></main>
@@ -98,9 +97,9 @@
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script>window.PULSE_HUB = "./";</script>
-<script src="./config.js?v=20261106h"></script>
-<script src="./packs.js?v=20261106h"></script>
-<script src="./core.js?v=20261106h"></script>
-<script src="./hub.js?v=20261106h"></script>
+<script src="./config.js?v=20261106i"></script>
+<script src="./packs.js?v=20261106i"></script>
+<script src="./core.js?v=20261106i"></script>
+<script src="./hub.js?v=20261106i"></script>
 </body>
 </html>

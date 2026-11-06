@@ -280,6 +280,7 @@ async function boot() {
   sb.auth.onAuthStateChange((event) => { if (event === "PASSWORD_RECOVERY") showAuth("reset"); });
   if (/type=recovery/.test(location.hash)) return;
   const { data: { session } } = await sb.auth.getSession();
+  if (session && new URLSearchParams(location.search).get("reset")) { history.replaceState(null, "", location.pathname); showAuth("reset"); return; }
   if (session) afterSignIn().catch((e) => { showAuth("signin"); authErr(e); });
   else showAuth("signin", new URLSearchParams(location.search).get("next") ? "Sign in to continue." : "");
 }

@@ -102,7 +102,33 @@ function setWho(name) {
 function showShell() {
   $("#shell").hidden = false; $("#topbar").hidden = false;
   if (S.profile) setWho(S.profile.display_name);
+  buildUserMenu();
 }
+// Top-right menu on every page: who you are, workspace and admin links, sign out
+function buildUserMenu() {
+  const m = $("#userMenu"); if (!m || !S.profile) return;
+  const p = S.profile, admin = p.role === "admin", ic = (n) => `<svg class="ic"><use href="#i-${n}"/></svg>`;
+  const role = { admin: "Admin", member: "Member", contractor: "Contractor" }[p.role] || p.role;
+  const item = (href, icon, label) => `<a role="menuitem" href="${href}">${ic(icon)}<span>${label}</span></a>`;
+  m.innerHTML = `<div class="menu-head"><b>${esc(p.display_name)}</b><span>${esc(S.user?.email || p.email || "")}</span><small>${esc(role)}${S.workspace ? " · " + esc(S.workspace.name) : ""}</small></div>
+    ${item(HUB, "grid", "All apps")}
+    ${admin ? `<div class="menu-sep"></div><div class="menu-label">Admin</div>${item(HUB + "admin/#/settings", "cog", "Workspace settings")}${item(HUB + "admin/#/team", "team", "Team, roles and codes")}${item(HUB + "review/#/activity", "clock", "Activity log")}` : ""}
+    <div class="menu-sep"></div>
+    ${CFG.apps?.scheduler !== false ? item(HUB + "scheduler/#/connect", "calendar", "Connect my calendar") : ""}
+    ${item(HUB + "?reset=1", "key", "Change password")}
+    <button role="menuitem" type="button" data-signout>${ic("logout")}<span>Sign out</span></button>`;
+}
+document.addEventListener("click", (e) => {
+  const btn = $("#userBtn"), m = $("#userMenu"); if (!btn || !m) return;
+  if (e.target.closest("#userBtn")) { const open = m.hidden; m.hidden = !open; btn.setAttribute("aria-expanded", String(open)); if (open) m.querySelector("[role=menuitem]")?.focus(); return; }
+  if (!e.target.closest("#userMenu")) { m.hidden = true; btn.setAttribute("aria-expanded", "false"); }
+});
+document.addEventListener("keydown", (e) => {
+  const m = $("#userMenu"); if (!m || m.hidden) return;
+  if (e.key === "Escape") { m.hidden = true; $("#userBtn").setAttribute("aria-expanded", "false"); $("#userBtn").focus(); }
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); const it = $$("[role=menuitem]", m), i = it.indexOf(document.activeElement);
+    it[(i + (e.key === "ArrowDown" ? 1 : -1) + it.length) % it.length]?.focus(); }
+});
 document.addEventListener("click", async (e) => {
   if (!e.target.closest("[data-signout]")) return;
   await sb.auth.signOut(); location.href = HUB;

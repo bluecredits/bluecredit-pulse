@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Projects · Pulse</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3C11 11 7 15.5 7 20a9 9 0 0 0 18 0c0-4.5-4-9-9-17z' fill='%233B82F6'/%3E%3C/svg%3E">
+</head>
+<body>
+<script src="../icons.js"></script>
+<div id="setup" class="login" hidden>
+  <div class="login-card">
+    <h1>Almost there</h1>
+    <p>This site isn't connected to its database yet. An admin needs to add the Supabase project URL and anon key to <code>web/config.js</code> in the GitHub repo.</p>
+    <p class="muted">See the README for the 5-minute setup.</p>
+  </div>
+</div>
+
+<header class="topbar" id="topbar" hidden>
+  <button class="menu-btn" id="menuBtn" aria-label="Open menu"><svg class="ic"><use href="#i-menu"/></svg></button>
+  <a class="wordmark" href="../"><span class="p">Pulse</span></a>
+  <span class="ws-chip"><span class="ws-logo" data-ws-logo></span><span class="ws-name" data-ws-name></span></span>
+  <span class="crumb">Projects</span>
+  <span class="spacer"></span>
+  <a class="apps-btn" href="../" title="All apps" aria-label="All apps"><svg class="ic"><use href="#i-grid"/></svg><span>All apps</span></a>
+  <div class="user"><span id="whoami"></span><div class="avatar" id="avatar"></div></div>
+</header>
+<div id="shell" class="shell" hidden>
+  <aside class="side">
+    <div class="side-head"><span>Projects</span></div>
+    <nav id="nav">
+      <div class="nav-label">Projects</div>
+      <a href="#/portfolio" data-r="portfolio"><svg class="ic"><use href="#i-briefcase"/></svg><span>Portfolio</span></a>
+      <a href="#/mytasks" data-r="mytasks"><svg class="ic"><use href="#i-check"/></svg><span>My tasks</span></a>
+      <a href="#/new" data-r="new"><svg class="ic"><use href="#i-plus"/></svg><span>New project</span></a>
+    </nav>
+    <div class="side-foot"><button data-signout><svg class="ic"><use href="#i-logout"/></svg><span>Sign out</span></button></div>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+  <main id="main" tabindex="-1"></main>
+</div>
+
+<div id="drawer" class="drawer" aria-hidden="true">
+  <div class="drawer-scrim" data-close></div>
+  <section class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
+    <header class="drawer-head">
+      <h2 id="drawerTitle"></h2>
+      <button class="icon-btn" data-close aria-label="Close">✕</button>
+    </header>
+    <div id="drawerBody" class="drawer-body"></div>
+  </section>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="../config.js"></script>
+<script src="../core.js"></script>
+<script src="./projects.js"></script>
+</body>
+</html>

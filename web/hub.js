@@ -9,6 +9,7 @@ const APPS = [
   { key: "funding", staff: true, name: "Funding", icon: "banknotes", href: "./funding/", blurb: "Grant and loan applications in progress, plus the catalog of funding programs." },
   { key: "timecards", name: "Timecards", icon: "timer", href: "./timecards/", blurb: "Log hours by project each week; approve timesheets; hours and amounts by project." },
   { key: "onboarding", name: "Onboarding", icon: "user-plus", href: "./onboarding/", blurb: "Bring on contractors, consultants and new hires with a checklist; offboard them cleanly." },
+  { key: "projects", name: "Projects", icon: "briefcase", href: "./projects/", blurb: "Run funded work: schedule, task board, team, budget vs. actual, status reports, close-out." },
   { key: "agreements", name: "Agreements", icon: "clipboard", href: "./agreements/", blurb: "Teaming, consulting and confidentiality agreements: fill in, e-sign, amend and close out." },
   { key: "scheduler", name: "Scheduler", icon: "calendar", href: "./scheduler/", blurb: "Everyone's Google or Outlook free/busy in one view; find a time and send the invites." },
   { key: "chief", name: "Chief of Staff", icon: "sparkles", href: "./chief/", blurb: "Your AI chief of staff: a prioritized brief each morning, answers about your work, reminders." },
@@ -93,6 +94,10 @@ function deskStats(stat) {
 const hstat = (n, label, href, alert) => `<span class="hub-stat ${alert && n ? "alert" : ""}" data-href="${href}"><b>${(+n || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}</b> ${label}</span>`;
 const fill = (key, html) => { const el = $("#stats-" + key); if (el) el.innerHTML = html; };
 function loadAppStats() {
+  Promise.all([db.rpc("project_rollup", {}), db.rpc("my_tasks", {})]).then(([ps, mine]) => {
+    const act = ps.filter((r) => r.status === "Active"), attn = act.filter((r) => r.health !== "On track").length, due = mine.filter((t) => t.due && new Date(t.due) - Date.now() < 3 * 864e5).length;
+    fill("projects", hstat(act.length, "active projects", "./projects/") + (attn ? hstat(attn, "need attention", "./projects/", true) : "") + hstat(mine.length, "tasks assigned to you", "./projects/#/mytasks", due > 0));
+  }).catch(() => fill("projects", ""));
   sb.from("agreements").select("status, end_date").then(({ data, error }) => {
     if (error) return fill("agreements", "");
     const out = (data || []).filter((r) => r.status === "Out for signature").length, act = (data || []).filter((r) => r.status === "Active");

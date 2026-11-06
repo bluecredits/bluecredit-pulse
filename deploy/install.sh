@@ -38,6 +38,7 @@ say "Website → $WEB"
 rsync -a --delete --exclude '.DS_Store' "$REPO/web/" "$WEB/"
 # point the site at this server's functions
 sed -i 's#^\(\s*\)// functionsUrl:.*#\1functionsUrl: "https://'"$DOMAIN"'/fn",#' "$WEB/config.js"
+sed -i 's#apps: { scheduler: false, chief: false },#apps: { scheduler: true, chief: true },#' "$WEB/config.js"
 grep -q 'functionsUrl' "$WEB/config.js" || sed -i 's#appName:#functionsUrl: "https://'"$DOMAIN"'/fn",\n  appName:#' "$WEB/config.js"
 
 say "Server functions → $APP"

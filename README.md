@@ -1,19 +1,29 @@
-# BlueCredit Pulse
+# Pulse, by BlueCredit
 
-BlueCredit's internal workspace. One sign-in opens a landing page with the team's apps:
+A workspace for startups. Any company can **Start a workspace** and gets its own private space; teammates join with
+the company's code, contractors and consultants with a separate contractor code. One sign-in opens the apps:
 
 | Address | App | What it's for |
 |---|---|---|
-| `/` | **Landing page** | Sign in or join with the company code; launches every app |
+| `/` | **Landing page** | Sign in, start a workspace, or join one with a code; launches every app |
 | `/review/` | **Business Review** | Opportunities, action items, and daily / weekly / monthly / quarterly reviews |
 | `/contacts/` | **Contacts** | Government POCs, primes, partners, investors, experts, mailing list; import and follow-ups |
 | `/funding/` | **Funding** | Grant and loan applications in progress, plus the funding catalog |
+| `/timecards/` | **Timecards** | Weekly timesheets by project, approvals, hours and amounts by project |
+| `/onboarding/` | **Onboarding** | Contractors, consultants and new hires: checklist, invite, offboarding |
+| `/scheduler/` | **Scheduler** | Everyone's Google/Outlook free/busy, find a time, book with invites |
+| `/chief/` | **Chief of Staff** | AI chief of staff (Claude): daily brief, Q&A, suggestions, reminders |
+| `/admin/` | **Admin** | Team, roles, codes, workspace settings (name, logo, lists, tools, AI name) |
 | `/tickets/` | **Tickets** | My requests, My approvals, My assets: equipment, purchases, time off, travel, access and IT help |
 
-- **Site:** https://bluecredits.github.io/bluecredit-pulse/ (GitHub Pages, from the `web/` folder; no build step)
-- **Data and logins:** one Supabase project shared by all the apps. Nothing confidential is stored in this repo.
-- **Access:** join with the **company code** on the landing page, then sign in with email and password.
-  Without the code an account sees nothing; the database enforces this, not just the page.
+- **Site:** https://pulse.bluecredits.org (Contabo, see `deploy/DEPLOY_CONTABO.md`) and
+  https://bluecredits.github.io/bluecredit-pulse/ (GitHub Pages, from `web/`; no build step).
+- **Data and logins:** one Supabase project for every company. Each company is a **workspace**; every row carries its
+  `workspace_id` and row-level security only shows a person their own workspace's rows. Nothing confidential is in this repo.
+- **Roles:** *admin* (creates the workspace or is promoted), *member* (joins with the company code), *contractor*
+  (joins with the contractor code; sees only Timecards for their projects, their onboarding checklist, Tickets and Scheduler).
+- **Server functions:** `supabase/functions/calendar` (Google/Outlook) and `supabase/functions/chief` (Claude) run on
+  the Contabo server or as Supabase Edge Functions. Secrets live only there.
 
 ### Code layout
 
@@ -23,11 +33,16 @@ web/core.js                shared by every app: Supabase client, sign-in check, 
 web/icons.js, style.css    shared icon set and styles (matches the Marketplace look)
 web/config.js              Supabase URL + publishable key
 web/records.js, schema.js  records engine shared by Business Review, Contacts and Funding (fields, lists, reviews)
+web/packs.js               starter packs (lists and agendas a new workspace starts with)
 web/review/                Business Review app
 web/contacts/              Contacts app
 web/funding/               Funding app
 web/tickets/               Tickets app
-supabase/schema.sql        the whole database: tables, security rules, functions (safe to re-run)
+web/timecards/, onboarding/, scheduler/, chief/, admin/   the other apps
+supabase/functions/        calendar and chief server functions (Deno) + tests
+deploy/                    Contabo: install.sh, nginx site, systemd services, DEPLOY_CONTABO.md
+supabase/schema.sql        the whole database: tables, security rules, functions (safe to re-run; upgrades old installs)
+supabase/bluecredit_workspace.sql   one-time: BlueCredit's own lists after the multi-company upgrade
 ```
 
 Business Review, Contacts and Funding share one records engine. Each app's `index.html` has its own

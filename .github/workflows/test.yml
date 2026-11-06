@@ -1,0 +1,15 @@
+name: Tests
+on:
+  push:
+    paths: ["supabase/functions/**", "web/**", ".github/workflows/test.yml"]
+  pull_request:
+jobs:
+  functions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.x }
+      - run: deno check supabase/functions/calendar/index.ts supabase/functions/chief/index.ts
+      - run: deno test --no-check -A supabase/functions/
+      - run: for f in web/*.js web/*/*.js; do node --check "$f"; done

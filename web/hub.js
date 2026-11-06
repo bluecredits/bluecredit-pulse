@@ -9,6 +9,8 @@ const APPS = [
   { key: "funding", staff: true, name: "Funding", icon: "banknotes", href: "./funding/", blurb: "Grant and loan applications in progress, plus the catalog of funding programs." },
   { key: "timecards", name: "Timecards", icon: "timer", href: "./timecards/", blurb: "Log hours by project each week; approve timesheets; hours and amounts by project." },
   { key: "onboarding", name: "Onboarding", icon: "user-plus", href: "./onboarding/", blurb: "Bring on contractors, consultants and new hires with a checklist; offboard them cleanly." },
+  { key: "scheduler", name: "Scheduler", icon: "calendar", href: "./scheduler/", blurb: "Everyone's Google or Outlook free/busy in one view; find a time and send the invites." },
+  { key: "chief", name: "Chief of Staff", icon: "sparkles", href: "./chief/", blurb: "Your AI chief of staff: a prioritized brief each morning, answers about your work, reminders." },
   { key: "tickets", name: "Tickets", icon: "ticket", href: "./tickets/", blurb: "Ask for equipment, purchases, time off or IT help; approve requests; see your assets." },
 ];
 
@@ -29,8 +31,9 @@ async function Launcher(isNew = false) {
     <section class="hub-hero"><h1>${h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"}, ${esc(firstName())}</h1>
       <p class="muted">${new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })} · Pick up where you left off.</p></section>
     <h2 class="hub-h">Workspace apps</h2>
+    <div id="dueReminders"></div>
     <div class="hub-apps">${myApps().map((a) => `<a class="hub-app" href="${a.href}" data-app="${a.key}">
-        <div class="hub-ic">${icon(a.icon)}</div><div class="hub-body"><h3>${esc(a.name)}</h3><p>${esc(a.blurb)}</p>
+        <div class="hub-ic ${a.key === "chief" ? "ai" : ""}">${icon(a.icon)}</div><div class="hub-body"><h3>${esc(a.key === "chief" ? S.workspace?.config?.chief_name || a.name : a.name)}</h3><p>${esc(a.blurb)}</p>
         <div class="hub-stats" id="stats-${a.key}"><span class="muted">Loading…</span></div></div></a>`).join("")}</div>
     ${linkTiles()}
     ${admin ? `<p class="hub-admin"><a href="./admin/">Team and workspace settings</a> · People join from this page with the company code.</p>` : ""}`;
@@ -56,7 +59,7 @@ function linkTiles() {
     <a class="hub-app" href="${esc(l.url)}" target="_blank" rel="noopener"><div class="hub-ic ${l.kind === "ai" ? "ai" : "ext"}">${icon(l.kind === "ai" ? "sparkles" : l.kind === "talent" ? "team" : "link")}</div>
       <div class="hub-body"><h3>${esc(l.label || "Link")} <svg class="ic ext-ic"><use href="#i-external"/></svg></h3><p>${esc(l.note || new URL(l.url).hostname)}</p></div></a>`).join("")}</div>`;
 }
-const myApps = () => APPS.filter((a) => !a.staff || S.profile?.role !== "contractor");
+const myApps = () => APPS.filter((a) => (!a.staff || S.profile?.role !== "contractor") && CFG.apps?.[a.key] !== false);
 function icon(name, cls = "ic") { return `<svg class="${cls}"><use href="#i-${name}"/></svg>`; }
 async function loadStats() {
   loadAppStats();
@@ -89,6 +92,16 @@ function deskStats(stat) {
 const hstat = (n, label, href, alert) => `<span class="hub-stat ${alert && n ? "alert" : ""}" data-href="${href}"><b>${(+n || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}</b> ${label}</span>`;
 const fill = (key, html) => { const el = $("#stats-" + key); if (el) el.innerHTML = html; };
 function loadAppStats() {
+  sb.from("reminders").select("id, text, remind_at").eq("user_id", S.user.id).eq("done", false).order("remind_at").then(({ data, error }) => {
+    if (error) return fill("chief", "");
+    const due = (data || []).filter((r) => Date.parse(r.remind_at) < Date.now() + 36e5);
+    fill("chief", hstat(due.length, "reminders due", "./chief/#/reminders", true) + `<span class="hub-stat" data-href="./chief/#/brief"><b>Today's</b> brief</span>`);
+    if (due.length) $("#dueReminders").innerHTML = `<div class="notice-bar">${icon("clock")}<div><b>Reminder${due.length > 1 ? "s" : ""}:</b> ${due.slice(0, 3).map((r) => esc(r.text)).join(" · ")}${due.length > 3 ? ` · and ${due.length - 3} more` : ""} <a href="./chief/#/reminders">Open</a></div></div>`;
+  });
+  db.rpc("calendar_status", {}).then((st) => {
+    const mine = (st || []).some((x) => x.user_id === S.user.id && x.status === "connected"), n = new Set((st || []).filter((x) => x.status === "connected").map((x) => x.user_id)).size;
+    fill("scheduler", (mine ? "" : `<span class="hub-stat alert" data-href="./scheduler/#/connect"><b>Connect</b> your calendar</span>`) + hstat(n, `of ${S.team.filter((p) => p.active).length} calendars linked`, "./scheduler/"));
+  }).catch(() => fill("scheduler", ""));
   sb.from("onboardings").select("status, checklist, user_id").then(({ data, error }) => {
     if (error) return fill("onboarding", "");
     if (S.profile.role === "contractor") {

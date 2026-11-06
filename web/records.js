@@ -775,6 +775,9 @@ async function WorkspaceSettings() {
       <label>Company name<input id="wsName" value="${esc(w.name)}" maxlength="80"></label>
       <label>Logo link <small class="muted">(https image, square works best)</small><input id="wsLogo" value="${esc(w.logo_url || "")}" placeholder="https://…/logo.png"></label>
       <div class="ws-preview"><span class="ws-logo" id="wsLogoPrev"></span><b id="wsNamePrev"></b></div></div></section>
+    <section class="panel"><h2>AI chief of staff</h2><div class="form-grid">
+      <label>What your team calls it<input id="wsChief" value="${esc(cfg.chief_name || "")}" placeholder="Chief of Staff" maxlength="40"></label>
+      <p class="muted" style="align-self:end">Each person gets their own brief and can ask questions about their work. It only sees what that person can see, and only suggests changes for them to accept.</p></div></section>
     <section class="panel"><h2>Connected tools <small>shown as tiles on everyone's landing page</small></h2>
       <p class="muted">Link your talent management tool (hiring and performance reviews), an AI chief of staff, or anything else the team uses.</p>
       <div id="links">${(cfg.links || []).map(linkRow).join("")}</div>
@@ -807,7 +810,7 @@ async function WorkspaceSettings() {
     const config = { ...cfg, links,
       lists: Object.fromEntries($$("[data-list]").map((t) => [t.dataset.list, split(t.value)]).filter(([, v]) => v.length)),
       agendas: Object.fromEntries($$("[data-agenda]").map((t) => [t.dataset.agenda, split(t.value)])),
-      owners: split($("#wsOwners").value), working_exclude: split($("#wsWorking").value), ...extra.config };
+      owners: split($("#wsOwners").value), working_exclude: split($("#wsWorking").value), chief_name: $("#wsChief").value.trim() || undefined, ...extra.config };
     await db.rpc("update_workspace", { p: { name: $("#wsName").value.trim(), logo_url: $("#wsLogo").value.trim(), config, ...(extra.template ? { template: extra.template } : {}) } });
     await loadWorkspace(); applyWorkspaceLists();
   };

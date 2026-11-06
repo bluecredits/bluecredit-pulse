@@ -10,6 +10,8 @@
 window.PULSE_CONFIG = {
   appName: "Pulse",
   // functionsUrl: "https://pulse.bluecredits.org/fn",
+  // Apps that need the server functions stay hidden until they're deployed (install.sh switches them on)
+  apps: { scheduler: false, chief: false },
   supabaseUrl: "https://dtnohwaxnnwqplmdtdeq.supabase.co",
   supabaseAnonKey: "sb_publishable_LSwFfqry2e6FfcEE_msnHw_dLzj910i",
 };

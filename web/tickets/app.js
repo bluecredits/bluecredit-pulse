@@ -1,4 +1,4 @@
-/* BlueCredit Pulse · Tickets — router and start-up. Pages live in desk.js; helpers and sign-in in ../core.js. */
+/* Pulse · Tickets — router and start-up. Pages live in desk.js; helpers and sign-in in ../core.js. */
 "use strict";
 
 const routes = { requests: DeskRequests, approvals: DeskApprovals, assets: DeskAssets };

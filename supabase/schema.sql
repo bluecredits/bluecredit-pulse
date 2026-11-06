@@ -1,44 +1,113 @@
 -- =====================================================================
--- BlueCredit Pulse — Supabase schema
--- Run once in Supabase: SQL Editor → New query → paste this file → Run.
+-- Pulse (by BlueCredit) — Supabase schema
+-- Run in Supabase: SQL Editor → New query → paste this file → Run.
 -- Safe to re-run: it only creates what is missing and replaces functions.
+-- An older single-company install is upgraded in place: its data becomes the first workspace.
 --
 -- Security model
---   * Anyone can create a Supabase login, but a login sees NOTHING until it
---     joins with the company code (join_company). Every table is locked by
---     row-level security to active members only.
---   * The first person to join becomes admin. Admins see and rotate the
---     company code and can turn accounts off or make other admins.
+--   * Each company is a WORKSPACE. Every row of business data carries a workspace_id, and
+--     row-level security only shows a signed-in person the rows of the workspace they belong to.
+--   * Anyone can create a login, but a login sees NOTHING until it either creates a workspace
+--     (create_workspace — they become its admin) or joins one with its company code
+--     (join_company — they become a member). One login belongs to one workspace.
+--   * Admins see and rotate their workspace's code, manage members, edit the workspace's
+--     lists and branding, and can delete the workspace with all its data.
 -- =====================================================================
 
--- ---------------------------------------------------------------- team
+create extension if not exists pgcrypto;
+
+-- ---------------------------------------------------------------- workspaces + team
+create table if not exists public.workspaces (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  join_code text not null,
+  logo_url text,
+  template text not null default 'general',
+  config jsonb not null default '{}',
+  plan text not null default 'free',
+  created_by uuid,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists ux_workspaces_code on public.workspaces (upper(join_code));
+
 create table if not exists public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
+  workspace_id uuid references public.workspaces (id) on delete cascade,
   display_name text not null,
   email text,
-  role text not null default 'member' check (role in ('admin', 'member')),
+  role text not null default 'member' check (role in ('admin', 'member', 'contractor')),
   active boolean not null default true,
   created_at timestamptz not null default now()
 );
-
-create table if not exists public.settings (key text primary key, value text);
+alter table public.profiles add column if not exists workspace_id uuid references public.workspaces (id) on delete cascade;
+alter table public.profiles drop constraint if exists profiles_role_check;
+alter table public.profiles add constraint profiles_role_check check (role in ('admin', 'member', 'contractor'));
+-- contractors and consultants join with a separate code and only see Timecards, Onboarding, Tickets and Scheduler
+alter table public.workspaces add column if not exists contractor_code text;
+create unique index if not exists ux_workspaces_ccode on public.workspaces (upper(contractor_code));
+create index if not exists ix_profiles_workspace on public.profiles (workspace_id);
 create table if not exists public.join_attempts (uid uuid, ts timestamptz default now());
 
-create or replace function public.new_company_code() returns text
-language sql volatile as $$
-  select 'BLUE-' || string_agg(substr('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 1 + floor(random() * 32)::int, 1), '')
-         filter (where g <= 4) || '-' ||
-         string_agg(substr('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 1 + floor(random() * 32)::int, 1), '')
-         filter (where g > 4)
-  from generate_series(1, 8) g
+-- Codes look like ACME-7KQ2-XR9D: up to 4 letters of the company name, then 8 random characters.
+create or replace function public.new_company_code(p_name text default null) returns text
+language plpgsql volatile as $$
+declare
+  a text := 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  pre text := left(regexp_replace(upper(coalesce(p_name, '')), '[^A-Z]', '', 'g'), 4);
+  v text;
+begin
+  if length(pre) < 2 then pre := 'TEAM'; end if;
+  loop
+    select pre || '-' || string_agg(substr(a, 1 + floor(random() * 32)::int, 1), '') filter (where g <= 4) || '-' ||
+           string_agg(substr(a, 1 + floor(random() * 32)::int, 1), '') filter (where g > 4)
+      into v from generate_series(1, 8) g;
+    exit when not exists (select 1 from workspaces where upper(join_code) = v or upper(contractor_code) = v);
+  end loop;
+  return v;
+end $$;
+
+-- Upgrade from the single-company version: everyone already on the team, and all existing data,
+-- move into one workspace that keeps the old company code.
+do $$
+declare v_ws uuid; v_code text; v_name text;
+begin
+  if exists (select 1 from public.profiles where workspace_id is null) then
+    if to_regclass('public.settings') is not null then
+      execute $q$select max(value) filter (where key = 'company_code'), max(value) filter (where key = 'company_name') from public.settings$q$
+        into v_code, v_name;
+    end if;
+    insert into public.workspaces (name, join_code, template, created_by)
+    values (coalesce(v_name, 'My company'), coalesce(v_code, public.new_company_code(v_name)), 'general',
+            (select id from public.profiles where role = 'admin' order by created_at limit 1))
+    returning id into v_ws;
+    update public.profiles set workspace_id = v_ws where workspace_id is null;
+  end if;
+end $$;
+alter table public.profiles alter column workspace_id set not null;
+update public.workspaces set contractor_code = public.new_company_code(name) where contractor_code is null;
+alter table public.workspaces alter column contractor_code set not null;
+
+-- The signed-in person's workspace (null if they haven't joined one, or were turned off)
+create or replace function public.ws() returns uuid
+language sql stable security definer set search_path = public as $$
+  select workspace_id from profiles where id = auth.uid() and active
+$$;
+-- Column default for workspace_id: the signer's workspace; for loader scripts using the
+-- service key (no signed-in user) the workspace set with: set pulse.workspace = '<uuid>'
+create or replace function public.ws_default() returns uuid
+language sql stable security definer set search_path = public as $$
+  select coalesce(ws(), case when auth.uid() is null then nullif(current_setting('pulse.workspace', true), '')::uuid end)
 $$;
 
-insert into public.settings (key, value) values ('company_code', public.new_company_code())
-on conflict (key) do nothing;
+-- Staff (admins and members) see the business records; contractors don't.
+create or replace function public.staff_ws() returns uuid
+language sql stable security definer set search_path = public as $$
+  select workspace_id from profiles where id = auth.uid() and active and role in ('admin', 'member')
+$$;
 
 create or replace function public.is_member() returns boolean
 language sql stable security definer set search_path = public as $$
-  select exists (select 1 from profiles where id = auth.uid() and active)
+  select ws() is not null
 $$;
 
 create or replace function public.is_admin() returns boolean
@@ -52,32 +121,71 @@ language sql stable security definer set search_path = public as $$
   select coalesce((select split_part(display_name, ' ', 1) from profiles where id = auth.uid()), 'system')
 $$;
 
-create or replace function public.join_company(p_code text, p_name text) returns text
+create or replace function public.check_join_rate() returns void
 language plpgsql volatile security definer set search_path = public as $$
-declare v_code text; v_role text; v_email text; v_active boolean;
 begin
   if auth.uid() is null then raise exception 'Sign in first.'; end if;
   if (select count(*) from join_attempts where uid = auth.uid() and ts > now() - interval '1 hour') >= 8 then
     raise exception 'Too many tries. Wait an hour, or ask your admin for the code.';
   end if;
   insert into join_attempts (uid) values (auth.uid());
-  select value into v_code from settings where key = 'company_code';
-  if v_code is null or upper(trim(coalesce(p_code, ''))) <> upper(v_code) then
-    raise exception 'That company code isn''t valid. Check it with your admin.';
-  end if;
-  if coalesce(trim(p_name), '') = '' then raise exception 'Enter your name.'; end if;
+end $$;
 
-  select role, active into v_role, v_active from profiles where id = auth.uid();
+create or replace function public.check_new_member(p_name text) returns text
+language plpgsql stable security definer set search_path = public as $$
+declare v_ws text;
+begin
+  if coalesce(trim(p_name), '') = '' then raise exception 'Enter your name.'; end if;
+  select w.name into v_ws from profiles p join workspaces w on w.id = p.workspace_id where p.id = auth.uid();
+  if v_ws is not null then
+    raise exception 'This login already belongs to the % workspace. Sign up with another email to use a second workspace.', v_ws;
+  end if;
+  return (select email from auth.users where id = auth.uid());
+end $$;
+
+-- Start a new company workspace; the caller becomes its admin. Returns the new company code.
+create or replace function public.create_workspace(p_company text, p_name text, p_template text default 'general') returns text
+language plpgsql volatile security definer set search_path = public as $$
+declare v_email text; v_ws uuid; v_code text; v_company text := trim(coalesce(p_company, ''));
+begin
+  perform check_join_rate();
+  if v_company = '' then raise exception 'Enter your company name.'; end if;
+  if length(v_company) > 80 then raise exception 'Keep the company name under 80 characters.'; end if;
+  v_email := check_new_member(p_name);
+  v_code := new_company_code(v_company);
+  insert into workspaces (name, join_code, contractor_code, template, created_by)
+  values (v_company, v_code, new_company_code(v_company), case when p_template in ('general', 'govcon', 'fundraising') then p_template else 'general' end, auth.uid())
+  returning id into v_ws;
+  insert into profiles (id, workspace_id, display_name, email, role) values (auth.uid(), v_ws, trim(p_name), v_email, 'admin');
+  insert into activity (workspace_id, user_name, entity, action, summary)
+    values (v_ws, split_part(trim(p_name), ' ', 1), 'team', 'create', trim(p_name) || ' started the ' || v_company || ' workspace');
+  return v_code;
+end $$;
+
+-- Join an existing workspace with its company code. Returns the role ('member', or the existing role on re-join).
+create or replace function public.join_company(p_code text, p_name text) returns text
+language plpgsql volatile security definer set search_path = public as $$
+declare v_ws uuid; v_email text; p profiles; v_role text;
+begin
+  perform check_join_rate();
+  select id, case when upper(join_code) = upper(trim(coalesce(p_code, ''))) then 'member' else 'contractor' end into v_ws, v_role
+    from workspaces where upper(trim(coalesce(p_code, ''))) in (upper(join_code), upper(contractor_code));
+  if v_ws is null then raise exception 'That company code isn''t valid. Check it with your admin.'; end if;
+  if coalesce(trim(p_name), '') = '' then raise exception 'Enter your name.'; end if;
+  select * into p from profiles where id = auth.uid();
   if found then
-    if not v_active then raise exception 'This account is turned off. Ask an admin to turn it back on.'; end if;
+    if p.workspace_id <> v_ws then perform check_new_member(p_name); end if;
+    if not p.active then raise exception 'This account is turned off. Ask an admin to turn it back on.'; end if;
     update profiles set display_name = trim(p_name) where id = auth.uid();
-    return v_role;
+    return p.role;
   end if;
   select email into v_email from auth.users where id = auth.uid();
-  v_role := case when exists (select 1 from profiles) then 'member' else 'admin' end;
-  insert into profiles (id, display_name, email, role) values (auth.uid(), trim(p_name), v_email, v_role);
-  insert into activity (user_name, entity, action, summary)
-    values (split_part(trim(p_name), ' ', 1), 'team', 'create', trim(p_name) || ' joined the team');
+  insert into profiles (id, workspace_id, display_name, email, role) values (auth.uid(), v_ws, trim(p_name), v_email, v_role);
+  insert into activity (workspace_id, user_name, entity, action, summary)
+    values (v_ws, split_part(trim(p_name), ' ', 1), 'team', 'create', trim(p_name) || case when v_role = 'contractor' then ' joined as a contractor' else ' joined the team' end);
+  -- link them to their onboarding record, if an admin set one up with this email
+  update onboardings set user_id = auth.uid(), status = case when status = 'Planned' then 'In progress' else status end
+   where workspace_id = v_ws and user_id is null and lower(email) = lower(v_email);
   return v_role;
 end $$;
 
@@ -85,18 +193,31 @@ create or replace function public.get_company_code() returns text
 language plpgsql stable security definer set search_path = public as $$
 begin
   if not is_admin() then raise exception 'Only admins can see the company code.'; end if;
-  return (select value from settings where key = 'company_code');
+  return (select join_code from workspaces where id = ws());
+end $$;
+create or replace function public.get_contractor_code() returns text
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'Only admins can see the contractor code.'; end if;
+  return (select contractor_code from workspaces where id = ws());
 end $$;
 
-create or replace function public.rotate_company_code(p_code text default null) returns text
+drop function if exists public.rotate_company_code(text);
+create or replace function public.rotate_company_code(p_code text default null, p_kind text default 'team') returns text
 language plpgsql volatile security definer set search_path = public as $$
 declare v text := upper(trim(coalesce(p_code, '')));
 begin
   if not is_admin() then raise exception 'Only admins can change the company code.'; end if;
-  if v = '' then v := new_company_code(); end if;
-  if length(v) < 6 then raise exception 'Use at least 6 characters.'; end if;
-  update settings set value = v where key = 'company_code';
-  insert into activity (user_name, entity, action, summary) values (member_name(), 'team', 'update', 'Changed the company code');
+  if v = '' then v := new_company_code((select name from workspaces where id = ws())); end if;
+  if length(v) < 8 then raise exception 'Use at least 8 characters.'; end if;
+  if exists (select 1 from workspaces where (upper(join_code) = v or upper(contractor_code) = v) and id <> ws())
+     or v = upper((select case when p_kind = 'contractor' then join_code else contractor_code end from workspaces where id = ws())) then
+    raise exception 'That code is taken. Try another.';
+  end if;
+  if p_kind = 'contractor' then update workspaces set contractor_code = v where id = ws();
+  else update workspaces set join_code = v where id = ws(); end if;
+  insert into activity (user_name, entity, action, summary)
+    values (member_name(), 'team', 'update', case when p_kind = 'contractor' then 'Changed the contractor code' else 'Changed the company code' end);
   return v;
 end $$;
 
@@ -105,12 +226,63 @@ language plpgsql volatile security definer set search_path = public as $$
 declare v_name text;
 begin
   if not is_admin() then raise exception 'Only admins can change team members.'; end if;
+  if p_role not in ('admin', 'member', 'contractor') then raise exception 'Unknown role %', p_role; end if;
   if p_id = auth.uid() and (p_role <> 'admin' or not p_active) then
     raise exception 'You can''t remove your own admin access. Ask another admin.';
   end if;
-  update profiles set role = p_role, active = p_active where id = p_id returning display_name into v_name;
+  update profiles set role = p_role, active = p_active where id = p_id and workspace_id = ws() returning display_name into v_name;
+  if v_name is null then raise exception 'That person isn''t on your team.'; end if;
   insert into activity (user_name, entity, action, summary)
     values (member_name(), 'team', 'update', v_name || ': ' || p_role || case when p_active then '' else ', turned off' end);
+end $$;
+
+-- Admin: rename the workspace, set its logo, and edit its lists (stored in config)
+create or replace function public.update_workspace(p jsonb) returns void
+language plpgsql volatile security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'Only admins can change workspace settings.'; end if;
+  if p ? 'name' and coalesce(trim(p ->> 'name'), '') = '' then raise exception 'The workspace needs a name.'; end if;
+  if p ? 'logo_url' and nullif(trim(p ->> 'logo_url'), '') is not null and p ->> 'logo_url' !~* '^https://' then
+    raise exception 'The logo link must start with https://';
+  end if;
+  if p ? 'config' and (jsonb_typeof(p -> 'config') <> 'object' or length((p -> 'config')::text) > 50000) then
+    raise exception 'Those settings are too large.';
+  end if;
+  update workspaces set
+    name = case when p ? 'name' then left(trim(p ->> 'name'), 80) else name end,
+    logo_url = case when p ? 'logo_url' then nullif(trim(p ->> 'logo_url'), '') else logo_url end,
+    config = case when p ? 'config' then p -> 'config' else config end,
+    template = case when p ->> 'template' in ('general', 'govcon', 'fundraising') then p ->> 'template' else template end
+  where id = ws();
+  insert into activity (user_name, entity, action, summary) values (member_name(), 'team', 'update', 'Changed workspace settings');
+end $$;
+
+-- Admin: permanently delete the workspace and everything in it. p_confirm must be the workspace name.
+create or replace function public.delete_workspace(p_confirm text) returns void
+language plpgsql volatile security definer set search_path = public as $$
+declare w workspaces;
+begin
+  if not is_admin() then raise exception 'Only admins can delete the workspace.'; end if;
+  select * into w from workspaces where id = ws();
+  if trim(coalesce(p_confirm, '')) <> w.name then raise exception 'Type the workspace name exactly to confirm.'; end if;
+  perform set_config('pulse.bulk', 'on', true);   -- don't write activity lines for rows being deleted
+  delete from workspaces where id = w.id;   -- cascades to members and every record
+end $$;
+
+-- ---------------------------------------------------------------- workspace wall for every data table
+-- Adds workspace_id (filled in automatically on insert), moves rows from an older single-company
+-- install into the first workspace, and indexes it.
+create or replace function public.add_workspace_wall(p_table text) returns void
+language plpgsql volatile as $$
+declare v_first uuid := (select id from public.workspaces order by created_at limit 1);
+begin
+  execute format('alter table public.%I add column if not exists workspace_id uuid references public.workspaces (id) on delete cascade', p_table);
+  if v_first is not null then
+    execute format('update public.%I set workspace_id = %L where workspace_id is null', p_table, v_first);
+  end if;
+  execute format('alter table public.%I alter column workspace_id set default public.ws_default()', p_table);
+  execute format('alter table public.%I alter column workspace_id set not null', p_table);
+  execute format('create index if not exists %I on public.%I (workspace_id)', 'ix_' || p_table || '_ws', p_table);
 end $$;
 
 -- ---------------------------------------------------------------- records
@@ -159,17 +331,19 @@ create table if not exists public.activity (
   field text, old_value text, new_value text, summary text
 );
 
+select public.add_workspace_wall(t) from unnest(array['opportunities', 'funding', 'contacts', 'resources', 'reviews', 'actions', 'activity']) t;
+
 create index if not exists ix_opp_deadline on public.opportunities (deadline);
 create index if not exists ix_opp_stage on public.opportunities (stage);
 create index if not exists ix_fund_deadline on public.funding (deadline);
 create index if not exists ix_fund_status on public.funding (status);
-create index if not exists ix_contacts_email on public.contacts (lower(email));
+create index if not exists ix_contacts_email on public.contacts (workspace_id, lower(email));
 create index if not exists ix_contacts_category on public.contacts (category);
 create index if not exists ix_contacts_next on public.contacts (next_step_date);
 create index if not exists ix_actions_status on public.actions (status, due_date);
 create index if not exists ix_actions_review on public.actions (review_id);
 create index if not exists ix_actions_linked on public.actions (linked_type, linked_id);
-create index if not exists ix_activity_ts on public.activity (ts desc);
+create index if not exists ix_activity_ts on public.activity (workspace_id, ts desc);
 create index if not exists ix_activity_entity on public.activity (entity, entity_id);
 create index if not exists ix_reviews_cadence on public.reviews (cadence, review_date desc);
 
@@ -198,35 +372,35 @@ begin
   nm := member_name();
   if tg_op = 'DELETE' then
     o := to_jsonb(old);
-    insert into activity (user_name, entity, entity_id, action, old_value, summary)
-      values (nm, tg_table_name, (o ->> 'id')::bigint, 'delete', left(o::text, 4000),
+    insert into activity (workspace_id, user_name, entity, entity_id, action, old_value, summary)
+      values ((o ->> 'workspace_id')::uuid, nm, tg_table_name, (o ->> 'id')::bigint, 'delete', left(o::text, 4000),
               'Deleted ' || noun || ': ' || coalesce(o ->> tcol, o ->> 'organization', ''));
     return null;
   end if;
   n := to_jsonb(new);
   title := coalesce(nullif(n ->> tcol, ''), n ->> 'organization', '');
   if tg_op = 'INSERT' then
-    insert into activity (user_name, entity, entity_id, action, summary)
-      values (nm, tg_table_name, (n ->> 'id')::bigint, 'create', 'Added ' || noun || ': ' || title);
+    insert into activity (workspace_id, user_name, entity, entity_id, action, summary)
+      values ((n ->> 'workspace_id')::uuid, nm, tg_table_name, (n ->> 'id')::bigint, 'create', 'Added ' || noun || ': ' || title);
     if scol is not null and tg_table_name in ('opportunities', 'funding') and n ->> scol is not null then
-      insert into activity (user_name, entity, entity_id, action, field, new_value, summary)
-        values (nm, tg_table_name, (n ->> 'id')::bigint, 'update', scol, n ->> scol, title || ': ' || scol || ' → ' || (n ->> scol));
+      insert into activity (workspace_id, user_name, entity, entity_id, action, field, new_value, summary)
+        values ((n ->> 'workspace_id')::uuid, nm, tg_table_name, (n ->> 'id')::bigint, 'update', scol, n ->> scol, title || ': ' || scol || ' → ' || (n ->> scol));
     end if;
     return null;
   end if;
   o := to_jsonb(old);
   if scol is not null and (o ->> scol) is distinct from (n ->> scol) then
-    insert into activity (user_name, entity, entity_id, action, field, old_value, new_value, summary)
-      values (nm, tg_table_name, (n ->> 'id')::bigint, 'update', scol, o ->> scol, n ->> scol,
+    insert into activity (workspace_id, user_name, entity, entity_id, action, field, old_value, new_value, summary)
+      values ((n ->> 'workspace_id')::uuid, nm, tg_table_name, (n ->> 'id')::bigint, 'update', scol, o ->> scol, n ->> scol,
               title || ': ' || scol || ' ' || coalesce(o ->> scol, '—') || ' → ' || coalesce(n ->> scol, '—'));
   end if;
   select string_agg(k, ', ' order by k) into changed
     from jsonb_object_keys(n) k
-   where k not in ('updated_at', 'updated_by', 'created_at', 'meta', coalesce(scol, ''))
+   where k not in ('updated_at', 'updated_by', 'created_at', 'meta', 'workspace_id', coalesce(scol, ''))
      and (n -> k) is distinct from (o -> k);
   if changed is not null then
-    insert into activity (user_name, entity, entity_id, action, summary)
-      values (nm, tg_table_name, (n ->> 'id')::bigint, 'update', title || ': edited ' || changed);
+    insert into activity (workspace_id, user_name, entity, entity_id, action, summary)
+      values ((n ->> 'workspace_id')::uuid, nm, tg_table_name, (n ->> 'id')::bigint, 'update', title || ': edited ' || changed);
   end if;
   return null;
 end $$;
@@ -254,21 +428,33 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------- row-level security
+alter table public.workspaces enable row level security;
 alter table public.profiles enable row level security;
-alter table public.settings enable row level security;
 alter table public.join_attempts enable row level security;
 alter table public.activity enable row level security;
 
+-- members read their own workspace, but never its company code (admins get it from get_company_code)
+drop policy if exists members_read on public.workspaces;
+create policy members_read on public.workspaces for select to authenticated using (id = ws());
+revoke all on public.workspaces from authenticated, anon;
+grant select (id, name, logo_url, template, config, plan, created_at) on public.workspaces to authenticated;
+
 drop policy if exists members_read on public.profiles;
-create policy members_read on public.profiles for select to authenticated using (is_member() or id = auth.uid());
+create policy members_read on public.profiles for select to authenticated using (workspace_id = ws() or id = auth.uid());
 drop policy if exists own_name on public.profiles;
 create policy own_name on public.profiles for update to authenticated using (id = auth.uid() and is_member()) with check (id = auth.uid());
-revoke update on public.profiles from authenticated, anon;
+revoke insert, update, delete on public.profiles from authenticated, anon;
 grant update (display_name) on public.profiles to authenticated;
-revoke all on public.settings, public.join_attempts from authenticated, anon;
+revoke all on public.join_attempts from authenticated, anon;
+do $$ begin
+  if to_regclass('public.settings') is not null then
+    execute 'alter table public.settings enable row level security';
+    execute 'revoke all on public.settings from authenticated, anon';
+  end if;
+end $$;
 
 drop policy if exists members_read on public.activity;
-create policy members_read on public.activity for select to authenticated using (is_member());
+create policy members_read on public.activity for select to authenticated using (workspace_id = staff_ws());
 revoke insert, update, delete on public.activity from authenticated, anon;
 
 do $$
@@ -277,15 +463,17 @@ begin
   foreach t in array array['opportunities', 'funding', 'contacts', 'resources', 'reviews', 'actions'] loop
     execute format('alter table public.%I enable row level security', t);
     execute format('drop policy if exists members_all on public.%I', t);
-    execute format('create policy members_all on public.%I for all to authenticated using (is_member()) with check (is_member())', t);
+    execute format('create policy members_all on public.%I for all to authenticated using (workspace_id = staff_ws()) with check (workspace_id = staff_ws())', t);
     execute format('revoke all on public.%I from anon', t);
   end loop;
 end $$;
 
-revoke execute on function public.join_company(text, text), public.get_company_code(), public.rotate_company_code(text),
-  public.set_member(uuid, text, boolean) from anon, public;
-grant execute on function public.join_company(text, text), public.get_company_code(), public.rotate_company_code(text),
-  public.set_member(uuid, text, boolean) to authenticated;
+revoke execute on function public.join_company(text, text), public.create_workspace(text, text, text), public.get_company_code(),
+  public.get_contractor_code(), public.rotate_company_code(text, text), public.set_member(uuid, text, boolean), public.update_workspace(jsonb),
+  public.delete_workspace(text), public.check_join_rate(), public.check_new_member(text), public.add_workspace_wall(text) from anon, public;
+grant execute on function public.join_company(text, text), public.create_workspace(text, text, text), public.get_company_code(),
+  public.get_contractor_code(), public.rotate_company_code(text, text), public.set_member(uuid, text, boolean), public.update_workspace(jsonb),
+  public.delete_workspace(text) to authenticated;
 
 -- ---------------------------------------------------------------- dashboard + review snapshot
 create or replace function public.dashboard_data(p_owner text) returns jsonb
@@ -431,15 +619,18 @@ revoke execute on function public.dashboard_data(text), public.build_snapshot(te
 -- A row merges into an existing contact when the email matches and the organizations agree (or one is blank),
 -- or, with no email, when name + organization match. Merging fills empty fields, adds the import label to Tags
 -- and appends new details to Notes, so nothing already there is overwritten. Writes one activity line per import.
-create or replace function public.import_contacts(p_rows jsonb, p_label text default null, p_by text default null)
+drop function if exists public.import_contacts(jsonb, text, text);
+create or replace function public.import_contacts(p_rows jsonb, p_label text default null, p_by text default null, p_workspace uuid default null)
 returns jsonb language plpgsql volatile security definer set search_path = public as $$
 declare
+  v_ws uuid := case when auth.uid() is null then p_workspace else staff_ws() end;
   r jsonb; v_id bigint; v_email text; v_name text; v_org text; v_notes text; v_tags text;
   n_new int := 0; n_merged int := 0; n_skipped int := 0;
   who text := case when auth.uid() is null then coalesce(nullif(trim(p_by), ''), 'system') else member_name() end;
   lbl text := nullif(trim(p_label), '');
 begin
-  if auth.uid() is not null and not is_member() then raise exception 'Only team members can import contacts.'; end if;
+  if auth.uid() is not null and staff_ws() is null then raise exception 'Only team members can import contacts.'; end if;
+  if v_ws is null then raise exception 'Pass p_workspace (the workspace id) when importing with the service key.'; end if;
   if jsonb_typeof(p_rows) <> 'array' then raise exception 'Expected a list of contacts.'; end if;
   if jsonb_array_length(p_rows) > 5000 then raise exception 'Import at most 5,000 rows at a time.'; end if;
   perform set_config('pulse.bulk', 'on', true);
@@ -453,16 +644,16 @@ begin
     v_id := null;
     if v_email is not null then
       select id into v_id from contacts
-       where lower(email) = v_email and (organization is null or organization = '' or v_org is null or lower(organization) = lower(v_org))
+       where workspace_id = v_ws and lower(email) = v_email and (organization is null or organization = '' or v_org is null or lower(organization) = lower(v_org))
        order by id limit 1;
     else
       select id into v_id from contacts
-       where lower(coalesce(name, '')) = lower(coalesce(v_name, '')) and lower(coalesce(organization, '')) = lower(coalesce(v_org, ''))
+       where workspace_id = v_ws and lower(coalesce(name, '')) = lower(coalesce(v_name, '')) and lower(coalesce(organization, '')) = lower(coalesce(v_org, ''))
        order by id limit 1;
     end if;
     if v_id is null then
-      insert into contacts (name, organization, role, email, phone, category, status, owner, location, linkedin, tags, notes, source, updated_by)
-      values (v_name, v_org, nullif(trim(r ->> 'role'), ''), v_email, nullif(trim(r ->> 'phone'), ''),
+      insert into contacts (workspace_id, name, organization, role, email, phone, category, status, owner, location, linkedin, tags, notes, source, updated_by)
+      values (v_ws, v_name, v_org, nullif(trim(r ->> 'role'), ''), v_email, nullif(trim(r ->> 'phone'), ''),
               coalesce(nullif(trim(r ->> 'category'), ''), 'Other'), coalesce(nullif(trim(r ->> 'status'), ''), 'To Contact'),
               nullif(trim(r ->> 'owner'), ''), nullif(trim(r ->> 'location'), ''), nullif(trim(r ->> 'linkedin'), ''),
               nullif(v_tags, ''), v_notes, coalesce(nullif(trim(r ->> 'source'), ''), lbl, 'Import'), who);
@@ -482,19 +673,19 @@ begin
         notes = case when v_notes is null or coalesce(c.notes, '') ilike '%' || v_notes || '%' then c.notes
                      else concat_ws(E'\n', nullif(c.notes, ''), 'From ' || coalesce(lbl, 'import') || ': ' || v_notes) end,
         updated_by = who
-      where c.id = v_id;
+      where c.id = v_id and c.workspace_id = v_ws;
       n_merged := n_merged + 1;
     end if;
   end loop;
   perform set_config('pulse.bulk', 'off', true);
-  insert into activity (user_name, entity, action, summary)
-    values (who, 'contacts', 'import', format('Imported %s: %s new contact%s, %s matched existing contact%s',
+  insert into activity (workspace_id, user_name, entity, action, summary)
+    values (v_ws, who, 'contacts', 'import', format('Imported %s: %s new contact%s, %s matched existing contact%s',
             coalesce(lbl, 'a contact list'), n_new, case when n_new = 1 then '' else 's' end,
             n_merged, case when n_merged = 1 then '' else 's' end));
   return jsonb_build_object('added', n_new, 'merged', n_merged, 'skipped', n_skipped);
 end $$;
-revoke execute on function public.import_contacts(jsonb, text, text) from anon, public;
-grant execute on function public.import_contacts(jsonb, text, text) to authenticated;
+revoke execute on function public.import_contacts(jsonb, text, text, uuid) from anon, public;
+grant execute on function public.import_contacts(jsonb, text, text, uuid) to authenticated;
 
 -- ---------------------------------------------------------------- keep id counters ahead of imported rows
 -- Rows loaded with explicit ids (Table Editor CSV import) don't advance the id counters; this realigns them.
@@ -542,6 +733,11 @@ create table if not exists public.ticket_events (
   ts timestamptz not null default now(), user_id uuid, user_name text,
   kind text not null, body text, from_status text, to_status text
 );
+select public.add_workspace_wall(t) from unnest(array['assets', 'tickets', 'ticket_events']) t;
+-- request numbers count up per workspace (REQ-0001, REQ-0002 …); older requests keep their id as the number
+alter table public.tickets add column if not exists number int;
+update public.tickets set number = id where number is null;
+create unique index if not exists ux_tickets_number on public.tickets (workspace_id, number);
 create index if not exists ix_tickets_requester on public.tickets (requester_id, status);
 create index if not exists ix_tickets_approver on public.tickets (approver_id, status);
 create index if not exists ix_tickets_assignee on public.tickets (assignee_id, status);
@@ -553,18 +749,18 @@ alter table public.ticket_events enable row level security;
 alter table public.assets enable row level security;
 drop policy if exists desk_read on public.tickets;
 create policy desk_read on public.tickets for select to authenticated using (
-  is_member() and (requester_id = auth.uid() or approver_id = auth.uid() or assignee_id = auth.uid() or is_admin()));
+  workspace_id = ws() and (requester_id = auth.uid() or approver_id = auth.uid() or assignee_id = auth.uid() or is_admin()));
 drop policy if exists desk_read on public.ticket_events;
 create policy desk_read on public.ticket_events for select to authenticated using (
   exists (select 1 from public.tickets t where t.id = ticket_id));
 drop policy if exists assets_read on public.assets;
-create policy assets_read on public.assets for select to authenticated using (is_member() and (is_admin() or assigned_to = auth.uid()));
+create policy assets_read on public.assets for select to authenticated using (workspace_id = ws() and (is_admin() or assigned_to = auth.uid()));
 drop policy if exists assets_admin_insert on public.assets;
-create policy assets_admin_insert on public.assets for insert to authenticated with check (is_admin());
+create policy assets_admin_insert on public.assets for insert to authenticated with check (is_admin() and workspace_id = ws());
 drop policy if exists assets_admin_update on public.assets;
-create policy assets_admin_update on public.assets for update to authenticated using (is_admin()) with check (is_admin());
+create policy assets_admin_update on public.assets for update to authenticated using (is_admin() and workspace_id = ws()) with check (is_admin() and workspace_id = ws());
 drop policy if exists assets_admin_delete on public.assets;
-create policy assets_admin_delete on public.assets for delete to authenticated using (is_admin());
+create policy assets_admin_delete on public.assets for delete to authenticated using (is_admin() and workspace_id = ws());
 revoke all on public.tickets, public.ticket_events, public.assets from anon;
 revoke insert, update, delete on public.tickets, public.ticket_events from authenticated;
 grant select on public.tickets, public.ticket_events to authenticated;
@@ -574,6 +770,9 @@ grant select, insert, update, delete on public.assets to authenticated;
 create or replace function public.asset_sync() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
+  if new.assigned_to is not null and not exists (select 1 from profiles where id = new.assigned_to and workspace_id = new.workspace_id) then
+    raise exception 'Assign assets to someone on your own team.';
+  end if;
   if tg_op = 'INSERT' or new.assigned_to is distinct from old.assigned_to then
     new.assigned_since := case when new.assigned_to is null then null else coalesce(
       case when tg_op = 'INSERT' then new.assigned_since end, current_date) end;
@@ -605,9 +804,9 @@ create or replace function public.desk_pick_approver(p_requester uuid, p_choice 
 language plpgsql stable security definer set search_path = public as $$
 declare v uuid; other_admin boolean;
 begin
-  other_admin := exists (select 1 from profiles where active and role = 'admin' and id <> p_requester);
+  other_admin := exists (select 1 from profiles where workspace_id = ws() and active and role = 'admin' and id <> p_requester);
   if p_choice is not null then
-    if not exists (select 1 from profiles where id = p_choice and active) then
+    if not exists (select 1 from profiles where id = p_choice and active and workspace_id = ws() and role <> 'contractor') then
       raise exception 'The approver you picked isn''t an active team member.';
     end if;
     if p_choice = p_requester and (other_admin or not exists (select 1 from profiles where id = p_requester and role = 'admin')) then
@@ -615,9 +814,9 @@ begin
     end if;
     return p_choice;
   end if;
-  select id into v from profiles where active and role = 'admin' and id <> p_requester order by created_at limit 1;
+  select id into v from profiles where workspace_id = ws() and active and role = 'admin' and id <> p_requester order by created_at limit 1;
   if v is null and exists (select 1 from profiles where id = p_requester and role = 'admin') then v := p_requester; end if;
-  if v is null then raise exception 'There''s no admin to approve this yet. Ask an admin to join Pulse first.'; end if;
+  if v is null then raise exception 'There''s no admin to approve this yet. Ask an admin to join first.'; end if;
   return v;
 end $$;
 
@@ -636,7 +835,7 @@ begin
   if v_type in ('Asset problem', 'Return an asset') and v_asset is null then raise exception 'Pick the asset this is about.'; end if;
   if v_asset is not null then
     select coalesce(nullif(tag, '') || ' · ', '') || name into v_label from assets
-     where id = v_asset and (assigned_to = auth.uid() or is_admin());
+     where id = v_asset and workspace_id = ws() and (assigned_to = auth.uid() or is_admin());
     if v_label is null then raise exception 'That asset isn''t assigned to you.'; end if;
   end if;
   if v_type in ('Time off', 'Travel') and v_start is null then raise exception 'Add the start date.'; end if;
@@ -645,9 +844,11 @@ begin
   v_needs := desk_needs_approval(v_type) or (v_type = 'Other' and nullif(p ->> 'approver_id', '') is not null);
   if v_needs then v_appr := desk_pick_approver(auth.uid(), nullif(p ->> 'approver_id', '')::uuid); end if;
   v_status := case when v_needs then 'Pending approval' else 'Open' end;
-  insert into tickets (type, title, description, status, priority, requester_id, approver_id, asset_id, asset_label,
+  perform pg_advisory_xact_lock(hashtext('tickets:' || ws()::text));
+  insert into tickets (number, type, title, description, status, priority, requester_id, approver_id, asset_id, asset_label,
                        amount, start_date, end_date, reference, needed_by)
-  values (v_type, v_title, nullif(trim(p ->> 'description'), ''), v_status,
+  values ((select coalesce(max(number), 0) + 1 from tickets where workspace_id = ws()),
+          v_type, v_title, nullif(trim(p ->> 'description'), ''), v_status,
           coalesce(nullif(p ->> 'priority', ''), 'Normal'), auth.uid(), v_appr, v_asset, v_label,
           v_amount, v_start, v_end, nullif(trim(p ->> 'reference'), ''), nullif(p ->> 'needed_by', '')::date)
   returning id into v_id;
@@ -660,7 +861,7 @@ create or replace function public.desk_update(p_id bigint, p jsonb) returns void
 language plpgsql volatile security definer set search_path = public as $$
 declare t tickets; changed text[] := '{}'; v_appr uuid;
 begin
-  select * into t from tickets where id = p_id;
+  select * into t from tickets where id = p_id and workspace_id = ws();
   if not found then raise exception 'Request not found.'; end if;
   if not coalesce(t.requester_id = auth.uid() or is_admin(), false) then raise exception 'Only the requester or an admin can edit this.'; end if;
   if t.status not in ('Pending approval', 'Open') then raise exception 'This request can''t be edited any more. Add a comment instead.'; end if;
@@ -700,7 +901,7 @@ create or replace function public.desk_decide(p_id bigint, p_approve boolean, p_
 language plpgsql volatile security definer set search_path = public as $$
 declare t tickets; v_to text := case when p_approve then 'Approved' else 'Rejected' end;
 begin
-  select * into t from tickets where id = p_id for update;
+  select * into t from tickets where id = p_id and workspace_id = ws() for update;
   if not found then raise exception 'Request not found.'; end if;
   if t.approver_id is distinct from auth.uid() or not is_member() then raise exception 'Only the approver can decide on this request.'; end if;
   if t.status <> 'Pending approval' then raise exception 'This request has already been decided.'; end if;
@@ -714,7 +915,7 @@ create or replace function public.desk_set_status(p_id bigint, p_status text, p_
 language plpgsql volatile security definer set search_path = public as $$
 declare t tickets; v_to text := p_status; v_worker boolean;
 begin
-  select * into t from tickets where id = p_id for update;
+  select * into t from tickets where id = p_id and workspace_id = ws() for update;
   if not found then raise exception 'Request not found.'; end if;
   v_worker := is_admin() or coalesce(t.assignee_id = auth.uid(), false);
   if p_status = 'Cancelled' then
@@ -754,9 +955,9 @@ language plpgsql volatile security definer set search_path = public as $$
 declare t tickets;
 begin
   if not is_admin() then raise exception 'Only admins can assign requests.'; end if;
-  select * into t from tickets where id = p_id;
+  select * into t from tickets where id = p_id and workspace_id = ws();
   if not found then raise exception 'Request not found.'; end if;
-  if p_assignee is not null and not exists (select 1 from profiles where id = p_assignee and active) then
+  if p_assignee is not null and not exists (select 1 from profiles where id = p_assignee and active and workspace_id = ws()) then
     raise exception 'Pick an active team member.';
   end if;
   if p_assignee is not distinct from t.assignee_id then return; end if;
@@ -769,7 +970,7 @@ language plpgsql volatile security definer set search_path = public as $$
 declare t tickets;
 begin
   if nullif(trim(p_body), '') is null then raise exception 'Write a comment first.'; end if;
-  select * into t from tickets where id = p_id;
+  select * into t from tickets where id = p_id and workspace_id = ws();
   if not found or not is_member() or not coalesce(t.requester_id = auth.uid() or t.approver_id = auth.uid()
      or t.assignee_id = auth.uid() or is_admin(), false) then raise exception 'Request not found.'; end if;
   perform desk_log(p_id, 'comment', p_body);
@@ -792,3 +993,412 @@ revoke execute on function public.desk_submit(jsonb), public.desk_update(bigint,
 grant execute on function public.desk_submit(jsonb), public.desk_update(bigint, jsonb), public.desk_decide(bigint, boolean, text),
   public.desk_set_status(bigint, text, text), public.desk_assign(bigint, uuid), public.desk_comment(bigint, text),
   public.desk_counts() to authenticated;
+
+-- =====================================================================
+-- Timecards: projects, daily hours, weekly timesheets that are submitted and approved
+--   * Everyone logs their own hours. Contractors only see the projects they're assigned to;
+--     staff see every project unless it is limited to its assigned people.
+--   * A week is Draft → Submitted → Approved (or Rejected, which reopens it for edits).
+--     Hours can't change while a week is Submitted or Approved.
+--   * Admins approve timesheets, and so does a project's approver for weeks with hours on it.
+-- =====================================================================
+create table if not exists public.projects (
+  id bigint generated by default as identity primary key,
+  workspace_id uuid not null default public.ws_default() references public.workspaces (id) on delete cascade,
+  name text not null, code text, client text,
+  billable boolean not null default true, rate numeric, budget_hours numeric,
+  status text not null default 'Active' check (status in ('Active', 'Paused', 'Closed')),
+  limited boolean not null default false,          -- true: only assigned people can log time
+  approver_id uuid references public.profiles (id) on delete set null,
+  opportunity_id bigint, notes text,
+  created_at timestamptz default now(), updated_at timestamptz default now(), updated_by text
+);
+create table if not exists public.project_people (
+  workspace_id uuid not null default public.ws_default() references public.workspaces (id) on delete cascade,
+  project_id bigint not null references public.projects (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  rate numeric,
+  primary key (project_id, user_id)
+);
+create table if not exists public.timesheets (
+  workspace_id uuid not null default public.ws_default() references public.workspaces (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  week_start date not null check (extract(isodow from week_start) = 1),
+  status text not null default 'Draft' check (status in ('Draft', 'Submitted', 'Approved', 'Rejected')),
+  note text, submitted_at timestamptz, decided_by uuid, decided_at timestamptz, decision_note text,
+  primary key (user_id, week_start)
+);
+create table if not exists public.time_entries (
+  id bigint generated by default as identity primary key,
+  workspace_id uuid not null default public.ws_default() references public.workspaces (id) on delete cascade,
+  user_id uuid not null default auth.uid() references public.profiles (id) on delete cascade,
+  project_id bigint not null references public.projects (id) on delete cascade,
+  work_date date not null,
+  hours numeric(5, 2) not null check (hours > 0 and hours <= 24),
+  note text,
+  created_at timestamptz default now(), updated_at timestamptz default now(),
+  unique (user_id, project_id, work_date)
+);
+create index if not exists ix_projects_ws on public.projects (workspace_id, status);
+create index if not exists ix_time_user on public.time_entries (user_id, work_date);
+create index if not exists ix_time_project on public.time_entries (project_id, work_date);
+create index if not exists ix_timesheets_ws on public.timesheets (workspace_id, status, week_start);
+
+create or replace function public.week_of(d date) returns date language sql immutable as $$
+  select d - (extract(isodow from d)::int - 1) $$;
+
+-- small checks used by the security rules (run as owner so the rules don't loop through each other)
+create or replace function public.on_project(p_project bigint) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from project_people where project_id = p_project and user_id = auth.uid()) $$;
+create or replace function public.approves_project(p_project bigint) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from projects where id = p_project and approver_id = auth.uid() and workspace_id = ws()) $$;
+create or replace function public.in_my_ws(p_user uuid, p_project bigint) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from profiles where id = p_user and workspace_id = ws())
+     and exists (select 1 from projects where id = p_project and workspace_id = ws()) $$;
+
+-- can the signed-in person log time on this project?
+create or replace function public.can_log(p_project bigint) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from projects p where p.id = p_project and p.workspace_id = ws() and p.status = 'Active'
+                 and ((not p.limited and staff_ws() is not null)
+                      or exists (select 1 from project_people pp where pp.project_id = p.id and pp.user_id = auth.uid())))
+$$;
+create or replace function public.can_approve_week(p_user uuid, p_week date) returns boolean
+language sql stable security definer set search_path = public as $$
+  select is_admin() or exists (select 1 from time_entries e join projects p on p.id = e.project_id
+      where e.user_id = p_user and week_of(e.work_date) = p_week and p.approver_id = auth.uid() and p.workspace_id = ws())
+$$;
+
+-- hours can only change in your own Draft or Rejected weeks, on projects you can log to
+create or replace function public.time_guard() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare r time_entries := case when tg_op = 'DELETE' then old else new end; st text;
+begin
+  if auth.uid() is null then return r; end if;   -- loader scripts
+  if r.user_id <> auth.uid() then raise exception 'You can only change your own hours.'; end if;
+  select status into st from timesheets where user_id = r.user_id and week_start = week_of(r.work_date);
+  if st in ('Submitted', 'Approved') then raise exception 'That week is %. Ask an approver to reopen it.', lower(st); end if;
+  if tg_op = 'UPDATE' and week_of(old.work_date) <> week_of(new.work_date) then raise exception 'Move hours within the same week.'; end if;
+  if tg_op <> 'DELETE' then
+    if not can_log(r.project_id) then raise exception 'You aren''t on that project, or it''s closed.'; end if;
+    new.updated_at := now();
+  end if;
+  return r;
+end $$;
+drop trigger if exists guard on public.time_entries;
+create trigger guard before insert or update or delete on public.time_entries for each row execute function public.time_guard();
+drop trigger if exists stamp on public.projects;
+create trigger stamp before insert or update on public.projects for each row execute function public.stamp_row();
+
+alter table public.projects enable row level security;
+alter table public.project_people enable row level security;
+alter table public.timesheets enable row level security;
+alter table public.time_entries enable row level security;
+drop policy if exists tc_read on public.projects;
+create policy tc_read on public.projects for select to authenticated using (workspace_id = ws() and (staff_ws() is not null or on_project(id)));
+drop policy if exists tc_admin on public.projects;
+create policy tc_admin on public.projects for all to authenticated using (is_admin() and workspace_id = ws()) with check (is_admin() and workspace_id = ws());
+drop policy if exists tc_read on public.project_people;
+create policy tc_read on public.project_people for select to authenticated using (workspace_id = ws() and (staff_ws() is not null or user_id = auth.uid()));
+drop policy if exists tc_admin on public.project_people;
+create policy tc_admin on public.project_people for all to authenticated using (is_admin() and workspace_id = ws())
+  with check (is_admin() and workspace_id = ws() and in_my_ws(user_id, project_id));
+drop policy if exists tc_read on public.timesheets;
+create policy tc_read on public.timesheets for select to authenticated using (workspace_id = ws() and (user_id = auth.uid() or can_approve_week(user_id, week_start)));
+drop policy if exists tc_read on public.time_entries;
+create policy tc_read on public.time_entries for select to authenticated using (workspace_id = ws() and (user_id = auth.uid() or is_admin()
+  or approves_project(project_id)));
+drop policy if exists tc_own on public.time_entries;
+create policy tc_own on public.time_entries for all to authenticated using (workspace_id = ws() and user_id = auth.uid())
+  with check (workspace_id = ws() and user_id = auth.uid());
+revoke all on public.projects, public.project_people, public.timesheets, public.time_entries from anon;
+revoke insert, update, delete on public.timesheets from authenticated;
+grant select on public.timesheets to authenticated;
+grant select, insert, update, delete on public.projects, public.project_people, public.time_entries to authenticated;
+
+create or replace function public.ts_submit(p_week date, p_note text default null) returns void
+language plpgsql volatile security definer set search_path = public as $$
+declare st text;
+begin
+  if ws() is null then raise exception 'Join a workspace first.'; end if;
+  if extract(isodow from p_week) <> 1 then raise exception 'Weeks start on Monday.'; end if;
+  if not exists (select 1 from time_entries where user_id = auth.uid() and week_of(work_date) = p_week) then
+    raise exception 'Add some hours before submitting.';
+  end if;
+  select status into st from timesheets where user_id = auth.uid() and week_start = p_week;
+  if st in ('Submitted', 'Approved') then raise exception 'This week is already %.', lower(st); end if;
+  insert into timesheets (workspace_id, user_id, week_start, status, note, submitted_at)
+  values (ws(), auth.uid(), p_week, 'Submitted', nullif(trim(p_note), ''), now())
+  on conflict (user_id, week_start) do update set status = 'Submitted', note = excluded.note, submitted_at = now(),
+    decided_by = null, decided_at = null, decision_note = null;
+end $$;
+
+create or replace function public.ts_decide(p_user uuid, p_week date, p_approve boolean, p_note text default null) returns void
+language plpgsql volatile security definer set search_path = public as $$
+declare t timesheets;
+begin
+  select * into t from timesheets where user_id = p_user and week_start = p_week and workspace_id = ws() for update;
+  if not found then raise exception 'Timesheet not found.'; end if;
+  if not can_approve_week(p_user, p_week) then raise exception 'You can''t approve this timesheet.'; end if;
+  if p_user = auth.uid() and exists (select 1 from profiles where workspace_id = ws() and role = 'admin' and active and id <> auth.uid()) then
+    raise exception 'Ask another admin to approve your own timesheet.';
+  end if;
+  if t.status <> 'Submitted' then raise exception 'This timesheet isn''t waiting for approval.'; end if;
+  if not p_approve and nullif(trim(p_note), '') is null then raise exception 'Add a reason so they know what to fix.'; end if;
+  update timesheets set status = case when p_approve then 'Approved' else 'Rejected' end, decided_by = auth.uid(),
+         decided_at = now(), decision_note = nullif(trim(p_note), '') where user_id = p_user and week_start = p_week;
+end $$;
+
+-- approvers (or the person, while it's only Submitted) can pull a week back to Draft
+create or replace function public.ts_reopen(p_user uuid, p_week date) returns void
+language plpgsql volatile security definer set search_path = public as $$
+declare t timesheets;
+begin
+  select * into t from timesheets where user_id = p_user and week_start = p_week and workspace_id = ws();
+  if not found then raise exception 'Timesheet not found.'; end if;
+  if not (can_approve_week(p_user, p_week) or (p_user = auth.uid() and t.status = 'Submitted')) then
+    raise exception 'Only an approver can reopen this week.';
+  end if;
+  update timesheets set status = 'Draft', decided_by = null, decided_at = null, decision_note = null
+   where user_id = p_user and week_start = p_week;
+end $$;
+
+-- hours by project and person between two dates (what the caller is allowed to see)
+create or replace function public.ts_report(p_from date, p_to date) returns jsonb
+language sql stable security invoker set search_path = public as $$
+  select coalesce(jsonb_agg(x order by x.project, x.person), '[]') from (
+    select p.id project_id, p.name project, p.client, p.billable, coalesce(pp.rate, p.rate) rate, pr.id user_id, pr.display_name person,
+           sum(e.hours) hours, sum(e.hours) filter (where ts.status = 'Approved') approved_hours,
+           sum(e.hours) * coalesce(pp.rate, p.rate) amount
+      from time_entries e join projects p on p.id = e.project_id join profiles pr on pr.id = e.user_id
+      left join project_people pp on pp.project_id = p.id and pp.user_id = e.user_id
+      left join timesheets ts on ts.user_id = e.user_id and ts.week_start = week_of(e.work_date)
+     where e.work_date between p_from and p_to
+     group by p.id, p.name, p.client, p.billable, coalesce(pp.rate, p.rate), pr.id, pr.display_name) x $$;
+
+revoke execute on function public.ts_submit(date, text), public.ts_decide(uuid, date, boolean, text), public.ts_reopen(uuid, date),
+  public.ts_report(date, date), public.can_log(bigint), public.can_approve_week(uuid, date),
+  public.on_project(bigint), public.approves_project(bigint), public.in_my_ws(uuid, bigint) from anon, public;
+grant execute on function public.ts_submit(date, text), public.ts_decide(uuid, date, boolean, text), public.ts_reopen(uuid, date),
+  public.ts_report(date, date), public.can_log(bigint), public.can_approve_week(uuid, date),
+  public.on_project(bigint), public.approves_project(bigint), public.in_my_ws(uuid, bigint) to authenticated;
+
+-- =====================================================================
+-- Onboarding: contractors, consultants and new hires, each with a checklist
+--   * Staff see everyone being onboarded; admins and the record's owner make changes.
+--   * The person themselves sees their own record once they join with the contractor code
+--     (matched by email) and can tick off the items marked for them.
+-- =====================================================================
+create table if not exists public.onboardings (
+  id bigint generated by default as identity primary key,
+  workspace_id uuid not null default public.ws_default() references public.workspaces (id) on delete cascade,
+  name text not null, email text, phone text,
+  kind text not null default 'Contractor' check (kind in ('Contractor', 'Consultant', 'Employee', 'Intern', 'Advisor')),
+  firm text, role_title text,
+  start_date date, end_date date, rate numeric, rate_unit text default 'hour' check (rate_unit in ('hour', 'day', 'month', 'fixed', 'year')),
+  status text not null default 'Planned' check (status in ('Planned', 'In progress', 'Active', 'Offboarding', 'Offboarded')),
+  owner_id uuid references public.profiles (id) on delete set null,
+  user_id uuid references public.profiles (id) on delete set null,
+  checklist jsonb not null default '[]',   -- [{id, text, who: 'us'|'them', done, done_at, done_by, link}]
+  notes text,
+  created_at timestamptz default now(), updated_at timestamptz default now(), updated_by text
+);
+create index if not exists ix_onb_ws on public.onboardings (workspace_id, status);
+create unique index if not exists ux_onb_email on public.onboardings (workspace_id, lower(email)) where email is not null and status <> 'Offboarded';
+drop trigger if exists stamp on public.onboardings;
+create trigger stamp before insert or update on public.onboardings for each row execute function public.stamp_row();
+alter table public.onboardings enable row level security;
+drop policy if exists onb_read on public.onboardings;
+create policy onb_read on public.onboardings for select to authenticated using (workspace_id = ws() and (staff_ws() is not null or user_id = auth.uid()));
+drop policy if exists onb_write on public.onboardings;
+create policy onb_write on public.onboardings for insert to authenticated with check (workspace_id = staff_ws());
+drop policy if exists onb_update on public.onboardings;
+create policy onb_update on public.onboardings for update to authenticated
+  using (workspace_id = ws() and (is_admin() or owner_id = auth.uid())) with check (workspace_id = ws());
+drop policy if exists onb_delete on public.onboardings;
+create policy onb_delete on public.onboardings for delete to authenticated using (workspace_id = ws() and is_admin());
+revoke all on public.onboardings from anon;
+grant select, insert, update, delete on public.onboardings to authenticated;
+
+-- the person being onboarded ticks their own items
+create or replace function public.onb_tick(p_id bigint, p_item text, p_done boolean) returns jsonb
+language plpgsql volatile security definer set search_path = public as $$
+declare o onboardings; v jsonb;
+begin
+  select * into o from onboardings where id = p_id and workspace_id = ws();
+  if not found then raise exception 'Not found.'; end if;
+  if not (is_admin() or o.owner_id = auth.uid() or (o.user_id = auth.uid() and exists (
+      select 1 from jsonb_array_elements(o.checklist) i where i ->> 'id' = p_item and i ->> 'who' = 'them'))) then
+    raise exception 'Only the owner or an admin can tick this item.';
+  end if;
+  select jsonb_agg(case when i ->> 'id' = p_item then i || jsonb_build_object('done', p_done,
+           'done_at', case when p_done then now() end, 'done_by', case when p_done then member_name() end) else i end)
+    into v from jsonb_array_elements(o.checklist) i;
+  update onboardings set checklist = coalesce(v, '[]') where id = p_id;
+  return v;
+end $$;
+revoke execute on function public.onb_tick(bigint, text, boolean) from anon, public;
+grant execute on function public.onb_tick(bigint, text, boolean) to authenticated;
+
+-- =====================================================================
+-- Scheduler: each person connects their Google or Outlook calendar; the team sees free/busy
+--   * Calendar tokens live in calendar_accounts and are NEVER readable from the browser:
+--     only the server function (supabase/functions/calendar, service key) reads or writes them.
+--   * busy_blocks hold start/end times only (no titles), refreshed by the function, so teammates
+--     can find a time without seeing each other's meeting details.
+--   * meetings booked through Pulse are visible to the organizer and the invited teammates.
+-- =====================================================================
+create table if not exists public.calendar_accounts (
+  id bigint generated by default as identity primary key,
+  workspace_id uuid not null references public.workspaces (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  provider text not null check (provider in ('google', 'microsoft')),
+  email text, status text not null default 'connected' check (status in ('connected', 'needs_reconnect')),
+  refresh_token text, access_token text, token_expires_at timestamptz,
+  last_sync_at timestamptz, last_error text,
+  created_at timestamptz not null default now(),
+  unique (user_id, provider)
+);
+create table if not exists public.busy_blocks (
+  id bigint generated by default as identity primary key,
+  workspace_id uuid not null references public.workspaces (id) on delete cascade,
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  provider text not null, start_at timestamptz not null, end_at timestamptz not null
+);
+create index if not exists ix_busy_user on public.busy_blocks (user_id, start_at);
+create index if not exists ix_busy_ws on public.busy_blocks (workspace_id, start_at);
+create table if not exists public.meetings (
+  id bigint generated by default as identity primary key,
+  workspace_id uuid not null default public.ws_default() references public.workspaces (id) on delete cascade,
+  organizer_id uuid not null references public.profiles (id) on delete cascade,
+  title text not null, description text, start_at timestamptz not null, end_at timestamptz not null,
+  attendee_ids uuid[] not null default '{}', guest_emails text[] not null default '{}',
+  provider text, provider_event_id text, join_url text,
+  status text not null default 'Booked' check (status in ('Booked', 'Cancelled')),
+  created_at timestamptz not null default now()
+);
+create index if not exists ix_meetings_ws on public.meetings (workspace_id, start_at);
+alter table public.calendar_accounts enable row level security;
+alter table public.busy_blocks enable row level security;
+alter table public.meetings enable row level security;
+drop policy if exists own_read on public.calendar_accounts;
+create policy own_read on public.calendar_accounts for select to authenticated using (workspace_id = ws() and (user_id = auth.uid() or is_admin()));
+revoke all on public.calendar_accounts from anon, authenticated;
+grant select (id, workspace_id, user_id, provider, email, status, last_sync_at, last_error, created_at) on public.calendar_accounts to authenticated;
+drop policy if exists team_read on public.busy_blocks;
+create policy team_read on public.busy_blocks for select to authenticated using (workspace_id = ws());
+revoke all on public.busy_blocks from anon, authenticated;
+grant select on public.busy_blocks to authenticated;
+drop policy if exists mtg_read on public.meetings;
+create policy mtg_read on public.meetings for select to authenticated using (workspace_id = ws() and (organizer_id = auth.uid() or auth.uid() = any (attendee_ids) or is_admin()));
+revoke all on public.meetings from anon, authenticated;
+grant select on public.meetings to authenticated;
+
+-- who is connected (no tokens): the team calendar shows who has a calendar linked
+create or replace function public.calendar_status() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('user_id', user_id, 'provider', provider, 'status', status, 'last_sync_at', last_sync_at)), '[]')
+    from calendar_accounts where workspace_id = ws() $$;
+revoke execute on function public.calendar_status() from anon, public;
+grant execute on function public.calendar_status() to authenticated;
+
+-- =====================================================================
+-- Chief of Staff: an AI assistant (Claude) that reads what the signed-in person can see and
+-- recommends what to do. The server function (supabase/functions/chief) calls chief_context()
+-- AS THE PERSON, so row-level security limits it to their own workspace and permissions.
+-- Suggestions only happen when the person clicks to accept them.
+-- =====================================================================
+create table if not exists public.reminders (
+  id bigint generated by default as identity primary key,
+  workspace_id uuid not null default public.ws_default() references public.workspaces (id) on delete cascade,
+  user_id uuid not null default auth.uid() references public.profiles (id) on delete cascade,
+  text text not null, remind_at timestamptz not null, link text,
+  done boolean not null default false, from_chief boolean not null default false,
+  created_at timestamptz not null default now()
+);
+create index if not exists ix_reminders_user on public.reminders (user_id, done, remind_at);
+create table if not exists public.chief_briefs (
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  workspace_id uuid not null references public.workspaces (id) on delete cascade,
+  brief_date date not null, content jsonb not null, created_at timestamptz not null default now(),
+  primary key (user_id, brief_date)
+);
+create table if not exists public.chief_usage (
+  workspace_id uuid not null references public.workspaces (id) on delete cascade,
+  day date not null default current_date, calls int not null default 0,
+  primary key (workspace_id, day)
+);
+alter table public.reminders enable row level security;
+alter table public.chief_briefs enable row level security;
+alter table public.chief_usage enable row level security;
+drop policy if exists own_all on public.reminders;
+create policy own_all on public.reminders for all to authenticated using (workspace_id = ws() and user_id = auth.uid())
+  with check (workspace_id = ws() and user_id = auth.uid());
+drop policy if exists own_read on public.chief_briefs;
+create policy own_read on public.chief_briefs for select to authenticated using (user_id = auth.uid() and workspace_id = ws());
+revoke all on public.reminders, public.chief_briefs, public.chief_usage from anon;
+revoke insert, update, delete on public.chief_briefs, public.chief_usage from authenticated;
+revoke select on public.chief_usage from authenticated;
+grant select, insert, update, delete on public.reminders to authenticated;
+grant select on public.chief_briefs to authenticated;
+
+-- Everything the assistant needs for one person's day, limited to what that person may see.
+create or replace function public.chief_context(p_tz text default 'America/New_York') returns jsonb
+language plpgsql stable security invoker set search_path = public as $$
+declare
+  t date := (now() at time zone coalesce(nullif(p_tz, ''), 'UTC'))::date;
+  me text := member_name(); wk date := week_of(t); staff boolean := staff_ws() is not null;
+begin
+  if ws() is null then raise exception 'Join a workspace first.'; end if;
+  return jsonb_build_object(
+    'today', t, 'weekday', to_char(t, 'FMDay'), 'timezone', p_tz,
+    'me', (select jsonb_build_object('name', display_name, 'first_name', me, 'role', role) from profiles where id = auth.uid()),
+    'workspace', (select name from workspaces where id = ws()),
+    'team', (select coalesce(jsonb_agg(jsonb_build_object('name', display_name, 'role', role) order by display_name), '[]') from profiles where workspace_id = ws() and active),
+    'my_actions', case when staff then coalesce((select jsonb_agg(jsonb_build_object('id', id, 'text', text, 'due', due_date, 'linked', linked_type) order by due_date nulls last)
+        from actions where status = 'Open' and lower(coalesce(owner, '')) = lower(me)), '[]') end,
+    'team_overdue_actions', case when staff then coalesce((select jsonb_agg(jsonb_build_object('text', text, 'owner', owner, 'due', due_date) order by due_date)
+        from (select * from actions where status = 'Open' and due_date < t order by due_date limit 15) a), '[]') end,
+    'deadlines_14d', case when staff then coalesce((select jsonb_agg(x order by x.deadline) from (
+        select 'opportunity' kind, id, title name, agency org, deadline, stage status, owner, priority from opportunities
+         where stage in ('Identified', 'Qualifying', 'Pursuing', 'Submitted') and deadline between t and t + 14
+        union all select 'funding', id, name, organization, deadline, status, owner, null from funding
+         where status in ('Identified', 'Pursuing', 'Submitted') and deadline between t and t + 14) x), '[]') end,
+    'stale_pipeline', case when staff then (select count(*) from opportunities where stage in ('Identified', 'Qualifying', 'Pursuing') and deadline < t) end,
+    'my_followups', case when staff then coalesce((select jsonb_agg(x order by x.next_step_date) from (
+        select id, name, organization, next_step, next_step_date from contacts where next_step_date <= t + 3
+           and lower(coalesce(owner, '')) = lower(me) and coalesce(status, '') not in ('Do Not Contact', 'Dormant')
+         order by next_step_date limit 25) x), '[]') end,
+    'approvals_waiting', jsonb_build_object(
+        'requests', coalesce((select jsonb_agg(jsonb_build_object('number', number, 'type', type, 'title', title, 'since', created_at::date))
+            from tickets where approver_id = auth.uid() and status = 'Pending approval'), '[]'),
+        'timesheets', (select count(*) from timesheets where status = 'Submitted' and user_id <> auth.uid())),
+    'my_open_requests', coalesce((select jsonb_agg(jsonb_build_object('number', number, 'title', title, 'status', status))
+        from tickets where requester_id = auth.uid() and status not in ('Done', 'Rejected', 'Cancelled')), '[]'),
+    'my_time', jsonb_build_object(
+        'hours_this_week', (select coalesce(sum(hours), 0) from time_entries where user_id = auth.uid() and work_date >= wk),
+        'last_week_status', coalesce((select status from timesheets where user_id = auth.uid() and week_start = wk - 7), 'Not submitted'),
+        'logs_time', exists (select 1 from time_entries where user_id = auth.uid() and work_date >= wk - 35)),
+    'onboarding', case when staff then coalesce((select jsonb_agg(jsonb_build_object('name', name, 'kind', kind, 'start', start_date, 'status', status,
+          'my_open_items', (select count(*) from jsonb_array_elements(checklist) i where not coalesce((i ->> 'done')::boolean, false) and i ->> 'who' = 'us')))
+        from onboardings where status in ('Planned', 'In progress', 'Offboarding') and (owner_id = auth.uid() or is_admin())), '[]')
+      else coalesce((select jsonb_agg(i ->> 'text') from onboardings o, jsonb_array_elements(o.checklist) i
+        where o.user_id = auth.uid() and i ->> 'who' = 'them' and not coalesce((i ->> 'done')::boolean, false)), '[]') end,
+    'meetings_next_2_days', coalesce((select jsonb_agg(jsonb_build_object('title', title, 'start', start_at, 'end', end_at,
+          'with', (select string_agg(display_name, ', ') from profiles where id = any (m.attendee_ids))) order by start_at)
+        from meetings m where status = 'Booked' and start_at >= now() - interval '1 hour' and start_at < (t + 2)::timestamp at time zone p_tz
+          and (organizer_id = auth.uid() or auth.uid() = any (attendee_ids))), '[]'),
+    'busy_today', coalesce((select jsonb_agg(jsonb_build_object('start', start_at, 'end', end_at) order by start_at) from busy_blocks
+        where user_id = auth.uid() and start_at < (t + 1)::timestamp at time zone p_tz and end_at > t::timestamp at time zone p_tz), '[]'),
+    'calendar_connected', exists (select 1 from calendar_accounts where user_id = auth.uid()),
+    'reminders_due', coalesce((select jsonb_agg(jsonb_build_object('id', id, 'text', text, 'at', remind_at) order by remind_at)
+        from reminders where user_id = auth.uid() and not done and remind_at < (t + 2)::timestamp at time zone p_tz), '[]'),
+    'reviews', case when staff then coalesce((select jsonb_object_agg(cadence, last) from (select cadence, max(review_date) last from reviews group by cadence) r), '{}') end,
+    'recent_activity', case when staff then coalesce((select jsonb_agg(a.summary order by a.ts desc) from (select summary, ts from activity
+        where ts > now() - interval '2 days' order by ts desc limit 15) a), '[]') end);
+end $$;
+revoke execute on function public.chief_context(text) from anon, public;
+grant execute on function public.chief_context(text) to authenticated;

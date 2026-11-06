@@ -1,4 +1,5 @@
-/* Fields, option lists, owners, review windows and agendas. Edit here to change the app. */
+/* Pulse — fields, option lists and review windows shared by every workspace.
+   Each workspace's own lists come from its starter pack (packs.js) and Workspace settings. */
 window.PULSE_SCHEMA = {
  "entities": {
   "opportunities": {
@@ -29,20 +30,19 @@ window.PULSE_SCHEMA = {
      "type": "select",
      "label": "Type",
      "options": [
-      "Federal Contract",
-      "Consulting",
-      "Subcontract",
-      "Forecast",
-      "Water Credit Project",
-      "State/Local",
-      "International",
+      "New customer",
+      "Expansion",
+      "Pilot",
+      "Partnership",
+      "Contract",
+      "Grant-funded project",
       "Other"
      ]
     },
     {
      "name": "agency",
      "type": "text",
-     "label": "Agency / Client",
+     "label": "Client / Agency",
      "options": null
     },
     {
@@ -106,12 +106,7 @@ window.PULSE_SCHEMA = {
      "name": "owner",
      "type": "select",
      "label": "Owner",
-     "options": [
-      "Barasa",
-      "Sohaib",
-      "Robert",
-      "Beckee"
-     ]
+     "options": []
     },
     {
      "name": "naics",
@@ -199,14 +194,12 @@ window.PULSE_SCHEMA = {
       "Grant",
       "Accelerator",
       "Pitch Competition",
-      "Fellowship",
+      "Angel",
       "VC",
       "Seed Round",
       "Loan",
-      "Award",
-      "Incubator",
       "SBIR/STTR",
-      "Resources",
+      "Award",
       "Other"
      ]
     },
@@ -254,12 +247,7 @@ window.PULSE_SCHEMA = {
      "name": "owner",
      "type": "select",
      "label": "Owner",
-     "options": [
-      "Barasa",
-      "Sohaib",
-      "Robert",
-      "Beckee"
-     ]
+     "options": []
     },
     {
      "name": "region",
@@ -357,16 +345,14 @@ window.PULSE_SCHEMA = {
      "type": "select",
      "label": "Category",
      "options": [
-      "Government",
-      "Corporate",
-      "Corporate Prospect",
+      "Customer",
+      "Prospect",
       "Investor",
-      "Prime Contractor",
       "Partner",
-      "NGO",
-      "Utility",
-      "Expert",
-      "Academic",
+      "Advisor",
+      "Vendor",
+      "Government",
+      "Media",
       "Mailing List",
       "Other"
      ]
@@ -389,12 +375,7 @@ window.PULSE_SCHEMA = {
      "name": "owner",
      "type": "select",
      "label": "Owner",
-     "options": [
-      "Barasa",
-      "Sohaib",
-      "Robert",
-      "Beckee"
-     ]
+     "options": []
     },
     {
      "name": "last_touch",
@@ -471,13 +452,10 @@ window.PULSE_SCHEMA = {
      "type": "select",
      "label": "Category",
      "options": [
-      "Bid Board",
-      "Forecast Portal",
+      "Tools",
+      "Templates",
+      "Programs",
       "Events",
-      "Registration",
-      "Below-SAT Strategy",
-      "District Office",
-      "Feasibility Program",
       "Training",
       "Other"
      ]
@@ -532,12 +510,7 @@ window.PULSE_SCHEMA = {
      "name": "owner",
      "type": "select",
      "label": "Owner",
-     "options": [
-      "Barasa",
-      "Sohaib",
-      "Robert",
-      "Beckee"
-     ]
+     "options": []
     },
     {
      "name": "due_date",
@@ -606,40 +579,34 @@ window.PULSE_SCHEMA = {
  },
  "agendas": {
   "daily": [
-   "Yesterday: what moved (submissions, replies, calls)",
+   "Yesterday: what moved",
    "Today: top 3 priorities per person",
    "Deadlines in the next 7 days",
-   "Blockers / asks"
+   "Blockers and asks"
   ],
   "weekly": [
-   "Last week's action items \u2014 close out",
-   "Submissions and decisions this week",
-   "Deadlines in the next 30 days \u2014 go / no-go",
-   "Outreach and follow-ups due",
+   "Last week's action items: close out",
+   "Deals and applications that moved",
+   "Deadlines in the next 30 days",
+   "Follow-ups due",
    "New opportunities to qualify"
   ],
   "monthly": [
    "Pipeline by stage and value",
-   "Wins, losses, lessons learned",
-   "Funding: submitted, pending decisions, upcoming",
-   "Partner / subcontractor relationships",
-   "Professional development (FE/PE, CFM, PMP, GSA MAS)",
+   "Wins, losses and lessons",
+   "Funding: submitted, pending, upcoming",
+   "Key relationships",
    "Next month's targets"
   ],
   "quarterly": [
-   "Quarter results vs goals (submissions, win rate, $ won, $ raised)",
+   "Results vs goals (revenue, win rate, money raised)",
    "Performance by owner",
-   "Strategy: agencies, NAICS, markets \u2014 keep / add / drop",
+   "Strategy: markets and customers to keep, add or drop",
    "Fundraise and investor pipeline",
    "Goals for next quarter"
   ]
  },
- "owners": [
-  "Barasa",
-  "Sohaib",
-  "Robert",
-  "Beckee"
- ],
+ "owners": [],
  "active": {
   "opportunities": [
    "Identified",

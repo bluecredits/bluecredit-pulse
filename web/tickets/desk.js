@@ -1,4 +1,4 @@
-/* BlueCredit Pulse · Tickets — My requests, My approvals, My assets.
+/* Pulse · Tickets — My requests, My approvals, My assets.
    Loaded after ../core.js; uses its helpers ($, esc, db, sb, S, toast, pill, short, ago, money, openDrawer…)
    at call time. Every change to a request goes through the desk_* database functions, which enforce
    who may do what; this file only decides which buttons to show. */
@@ -6,11 +6,11 @@
 
 const DESK_TYPES = [
   { type: "IT support", icon: "wrench", blurb: "Something isn't working: email, VPN, software, printer.", asset: "optional", title: "What's not working?" },
-  { type: "New equipment", icon: "computer", blurb: "A laptop, phone, monitor or field gear you need.", approval: true, ref: "What do you need?", needed: true, title: "e.g. Laptop for field modeling" },
-  { type: "Purchase or expense", icon: "banknotes", blurb: "Buy something, or get paid back for something you bought.", approval: true, amount: "Amount (USD)", ref: "Vendor", needed: true, title: "e.g. ArcGIS Pro annual license" },
+  { type: "New equipment", icon: "computer", blurb: "A laptop, phone, monitor or other gear you need.", approval: true, ref: "What do you need?", needed: true, title: "e.g. Laptop for the new analyst" },
+  { type: "Purchase or expense", icon: "banknotes", blurb: "Buy something, or get paid back for something you bought.", approval: true, amount: "Amount (USD)", ref: "Vendor", needed: true, title: "e.g. Design software annual license" },
   { type: "Time off", icon: "sun", blurb: "Vacation, a sick day or personal leave.", approval: true, dates: true, title: "e.g. Thanksgiving week" },
-  { type: "Travel", icon: "globe", blurb: "Client visits, conferences or site work.", approval: true, dates: true, amount: "Estimated cost (USD)", ref: "Destination", title: "e.g. AWWA ACE, Washington DC" },
-  { type: "Access or account", icon: "key", blurb: "Access to a system, shared drive or tool.", approval: true, ref: "System or account", needed: true, title: "e.g. Access to the SAM.gov account" },
+  { type: "Travel", icon: "globe", blurb: "Client visits, conferences or site work.", approval: true, dates: true, amount: "Estimated cost (USD)", ref: "Destination", title: "e.g. Industry conference, Chicago" },
+  { type: "Access or account", icon: "key", blurb: "Access to a system, shared drive or tool.", approval: true, ref: "System or account", needed: true, title: "e.g. Access to the shared finance drive" },
   { type: "Asset problem", icon: "alert", blurb: "Something is wrong with equipment assigned to you.", asset: "required", title: "e.g. Screen flickers" },
   { type: "Return an asset", icon: "return", blurb: "Hand back equipment you no longer need.", asset: "required", title: "e.g. Returning old phone" },
   { type: "Other", icon: "chat", blurb: "Anything else. Pick an approver if it needs sign-off.", optionalApproval: true, title: "What do you need?" },
@@ -99,7 +99,7 @@ async function loadRequests() {
   const who = tab !== "mine";
   $("#reqList").innerHTML = rows.length ? `<div class="table-wrap"><table><thead><tr><th>Request</th><th>Type</th>${who ? "<th>Requested by</th>" : ""}<th>Status</th>
       <th>${tab === "work" ? "Assigned to" : "Approver"}</th><th>Updated</th></tr></thead><tbody>
-    ${rows.map((t) => `<tr data-ticket="${t.id}" tabindex="0"><td class="wrap"><span class="tno">${ticketNo(t.id)}</span><span class="clip" style="font-weight:600">${esc(t.title)}</span></td>
+    ${rows.map((t) => `<tr data-ticket="${t.id}" tabindex="0"><td class="wrap"><span class="tno">${ticketNo(t.number ?? t.id)}</span><span class="clip" style="font-weight:600">${esc(t.title)}</span></td>
       <td><span class="type-chip">${icon(DESK_TYPE[t.type]?.icon || "chat", "ic sm")}${esc(t.type)}</span></td>
       ${who ? `<td>${esc(personName(t.requester_id))}</td>` : ""}<td>${pill(t.status)}${t.priority === "High" || t.priority === "Urgent" ? ` <span class="pill s-high">${t.priority}</span>` : ""}</td>
       <td>${esc(tab === "work" ? personName(t.assignee_id, "Unassigned") : t.approver_id ? personName(t.approver_id) : "No approval needed")}</td>
@@ -160,7 +160,7 @@ async function openNewRequest(preset = {}) {
     try {
       const id = await db.rpc("desk_submit", { p: { ...data, type: cfg.type } });
       const appr = data.approver_id ? personName(data.approver_id) : "";
-      toast(appr ? `${ticketNo(id)} sent to ${appr.split(" ")[0]} for approval` : `${ticketNo(id)} submitted`);
+      toast(appr ? `Request sent to ${appr.split(" ")[0]} for approval` : `Request submitted`);
       await refreshDeskBadges();
       const onReq = !location.hash || location.hash.startsWith("#/requests");
       if (onReq) { DESK.reqTab = "mine"; await DeskRequests(); } else location.hash = "#/requests";
@@ -196,7 +196,7 @@ async function openTicket(id, onChange) {
     ["Approver", t.approver_id ? esc(personName(t.approver_id)) : `<span class="muted">No approval needed</span>`],
     ["Assigned to", t.assignee_id ? esc(personName(t.assignee_id)) : `<span class="muted">${isAdmin() ? "Unassigned (admins)" : "The admin team"}</span>`],
     ...deskFacts(t), ["Submitted", `${short(t.created_at.slice(0, 10))} · ${ago(t.created_at)}`]];
-  $("#drawerTitle").textContent = ticketNo(t.id);
+  $("#drawerTitle").textContent = ticketNo(t.number ?? t.id);
   $("#drawerBody").innerHTML = `
     <div class="ticket-head">${icon(cfg.icon)}<div><h3 class="ticket-title">${esc(t.title)}</h3>
       <div class="ticket-pills">${pill(t.status)} <span class="type-chip">${esc(t.type)}</span>${t.priority !== "Normal" ? ` <span class="pill ${["High", "Urgent"].includes(t.priority) ? "s-high" : ""}">${esc(t.priority)}</span>` : ""}</div></div></div>
@@ -257,7 +257,7 @@ function eventLi(e) {
 }
 function editTicket(t, onChange) {
   const cfg = DESK_TYPE[t.type] || {};
-  $("#drawerTitle").textContent = `Edit ${ticketNo(t.id)}`;
+  $("#drawerTitle").textContent = `Edit ${ticketNo(t.number ?? t.id)}`;
   $("#drawerBody").innerHTML = `<form class="form" id="edForm">
       <label class="full">Title<input name="title" value="${esc(t.title)}" required maxlength="140"></label>
       ${cfg.dates ? `<label>Start date<input type="date" name="start_date" value="${esc(t.start_date || "")}" required></label><label>End date<input type="date" name="end_date" value="${esc(t.end_date || "")}"></label>` : ""}
@@ -295,7 +295,7 @@ async function DeskApprovals() {
   if (!rows.length) { L.innerHTML = `<div class="panel empty">${DESK.apprTab === "waiting" ? "You're all caught up. Nothing is waiting for your approval." : "You haven't decided on any requests yet."}</div>`; return; }
   if (DESK.apprTab === "decided") {
     L.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Request</th><th>From</th><th>Decision</th><th>Now</th><th>Decided</th></tr></thead><tbody>
-      ${rows.map((t) => `<tr data-ticket="${t.id}" tabindex="0"><td class="wrap"><span class="tno">${ticketNo(t.id)}</span><span class="clip" style="font-weight:600">${esc(t.title)}</span></td>
+      ${rows.map((t) => `<tr data-ticket="${t.id}" tabindex="0"><td class="wrap"><span class="tno">${ticketNo(t.number ?? t.id)}</span><span class="clip" style="font-weight:600">${esc(t.title)}</span></td>
         <td>${esc(personName(t.requester_id))}</td><td>${pill(t.status === "Rejected" ? "Rejected" : "Approved")}</td><td>${pill(t.status)}</td><td class="date">${short(t.decided_at.slice(0, 10))}</td></tr>`).join("")}</tbody></table></div>`;
     wireTicketRows(L, DeskApprovals);
     return;
@@ -303,7 +303,7 @@ async function DeskApprovals() {
   L.innerHTML = `<div class="appr-grid">${rows.map((t) => {
     const cfg = DESK_TYPE[t.type] || { icon: "chat" };
     return `<article class="appr-card" data-ticket="${t.id}">
-      <header>${icon(cfg.icon)}<div><span class="tno">${ticketNo(t.id)} · ${esc(t.type)}</span><h3>${esc(t.title)}</h3>
+      <header>${icon(cfg.icon)}<div><span class="tno">${ticketNo(t.number ?? t.id)} · ${esc(t.type)}</span><h3>${esc(t.title)}</h3>
         <span class="muted">From ${esc(personName(t.requester_id))} · ${ago(t.created_at)}${t.priority !== "Normal" ? ` · <b>${esc(t.priority)}</b>` : ""}</span></div></header>
       ${deskFacts(t).length ? `<dl class="facts compact">${deskFacts(t).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>` : ""}
       ${t.description ? `<p class="appr-desc">${esc(t.description)}</p>` : ""}
@@ -320,7 +320,7 @@ async function DeskApprovals() {
     b.disabled = true;
     try {
       await db.rpc("desk_decide", { p_id: id, p_approve: b.hasAttribute("data-approve"), p_note: ta.value });
-      toast(b.hasAttribute("data-approve") ? `${ticketNo(id)} approved` : `${ticketNo(id)} rejected`);
+      toast(b.hasAttribute("data-approve") ? "Approved" : "Rejected");
       DeskApprovals();
     } catch (err) { toast(err.message); b.disabled = false; }
   });
@@ -425,7 +425,7 @@ async function openAsset(id) {
     ${a.assigned_since ? `<p class="meta-box">With ${esc(personName(a.assigned_to))} since ${short(a.assigned_since)}${a.updated_by ? ` · last updated by ${esc(a.updated_by)} ${ago(a.updated_at)}` : ""}</p>` : ""}
     <div class="form-foot">${admin ? `<button class="btn primary" id="aSave">${id ? "Save changes" : "Add asset"}</button><button class="btn" data-close>Cancel</button><span class="spacer"></span>${id ? `<button class="btn danger" id="aDel">Delete</button>` : ""}`
       : `<button class="btn" id="aProblem">Report a problem</button><button class="btn" id="aReturn">Return it</button>`}</div>
-    ${related.length ? `<section class="history"><h3>Requests about this asset</h3><ul class="list">${related.map((r) => `<li><a href="#" data-ticket="${r.id}">${ticketNo(r.id)} · ${esc(r.title)}</a><span class="meta">${pill(r.status)}</span></li>`).join("")}</ul></section>` : ""}`;
+    ${related.length ? `<section class="history"><h3>Requests about this asset</h3><ul class="list">${related.map((r) => `<li><a href="#" data-ticket="${r.id}">${ticketNo(r.number ?? r.id)} · ${esc(r.title)}</a><span class="meta">${pill(r.status)}</span></li>`).join("")}</ul></section>` : ""}`;
   openDrawer();
   $("#drawerBody").querySelectorAll("[data-ticket]").forEach((l) => l.addEventListener("click", (e) => { e.preventDefault(); openTicket(+l.dataset.ticket, loadAssets); }));
   $("#aProblem")?.addEventListener("click", () => openNewRequest({ type: "Asset problem", asset_id: id }));

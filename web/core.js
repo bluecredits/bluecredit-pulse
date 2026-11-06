@@ -1,4 +1,4 @@
-/* BlueCredit Pulse — shared core for every app in the workspace (landing page, Business Review, Tickets).
+/* Pulse — shared core for every app (landing page, Business Review, Contacts, Funding, Tickets, Admin).
    One Supabase project and one set of accounts: signing in on the landing page signs you in everywhere,
    because all apps live on the same site. No build step. */
 "use strict";
@@ -6,7 +6,7 @@ const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const CFG = window.PULSE_CONFIG || {};
-const S = { user: null, profile: null, team: [] };
+const S = { user: null, profile: null, team: [], workspace: null };
 const today = () => new Date().toLocaleDateString("en-CA");
 const addDays = (iso, n) => { const d = new Date(iso + "T12:00:00"); d.setDate(d.getDate() + n); return d.toLocaleDateString("en-CA"); };
 const daysUntil = (iso) => Math.round((new Date(iso + "T12:00:00") - new Date(today() + "T12:00:00")) / 864e5);
@@ -29,6 +29,35 @@ function must({ data, error, count }) {
   return count === undefined || count === null ? data : { data, count };
 }
 const db = { async rpc(fn, args) { return must(await sb.rpc(fn, args)); } };
+// Server functions (calendar, chief). Where they run is set in config.js (functionsUrl); default: Supabase Edge Functions.
+const FN_URL = () => (CFG.functionsUrl || (CFG.supabaseUrl || "").replace(/\/$/, "") + "/functions/v1").replace(/\/$/, "");
+async function callFn(name, body) {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { authLost(); throw new Error("Sign in first."); }
+  let r;
+  try {
+    r = await fetch(`${FN_URL()}/${name}`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}`, apikey: CFG.supabaseAnonKey }, body: JSON.stringify(body) });
+  } catch { throw Object.assign(new Error("Couldn't reach the server. It may not be set up yet."), { setup: true }); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(j.error || `The server answered ${r.status}.`), { status: r.status, setup: r.status === 404 || r.status === 503 });
+  return j;
+}
+// tiny, safe markdown for assistant answers: headings, lists, bold, italics, code and https links
+function md(src) {
+  const inline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<i>$2</i>").replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\[([^\]]+)\]\((https:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  const out = []; let list = null;
+  const close = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  for (const line of String(src || "").split("\n")) {
+    let m;
+    if ((m = line.match(/^#{1,3}\s+(.*)/))) { close(); out.push(`<h3>${inline(m[1])}</h3>`); }
+    else if ((m = line.match(/^\s*\d+[.)]\s+(.*)/))) { if (list !== "ol") { close(); out.push("<ol>"); list = "ol"; } out.push(`<li>${inline(m[1])}</li>`); }
+    else if ((m = line.match(/^\s*[-*•]\s+(.*)/))) { if (list !== "ul") { close(); out.push("<ul>"); list = "ul"; } out.push(`<li>${inline(m[1])}</li>`); }
+    else if (!line.trim()) close();
+    else { close(); out.push(`<p>${inline(line)}</p>`); }
+  }
+  close(); return out.join("");
+}
 
 /* ---------------- shared sign-in guard: apps send people to the landing page to sign in */
 const HUB = window.PULSE_HUB || "../";
@@ -46,8 +75,25 @@ async function requireMember() {
   const prof = must(await sb.from("profiles").select("*").eq("id", user.id).maybeSingle());
   if (!prof || !prof.active) { goSignIn(); return null; }
   S.user = user; S.profile = prof;
+  await loadWorkspace();
   if (!S.team.length) S.team = must(await sb.from("profiles").select("*").order("display_name"));
   return { user, profile: prof };
+}
+// The company this person belongs to: name, logo, starter pack and saved settings. Shows it in the top bar.
+const WS_COLS = "id, name, logo_url, template, config, plan, created_at";
+async function loadWorkspace() {
+  S.workspace = must(await sb.from("workspaces").select(WS_COLS).maybeSingle());
+  applyBrand();
+  return S.workspace;
+}
+function applyBrand() {
+  const w = S.workspace; if (!w) return;
+  $$("[data-ws-name]").forEach((e) => (e.textContent = w.name));
+  $$("[data-ws-logo]").forEach((e) => {
+    e.innerHTML = w.logo_url ? `<img src="${esc(w.logo_url)}" alt="">` : esc(w.name.split(/\s+/).map((x) => x[0]).slice(0, 2).join("").toUpperCase());
+  });
+  const app = document.title.split(" · ")[0];
+  document.title = (app && app !== "Pulse" ? app + " · " : "") + w.name + " · Pulse";
 }
 function setWho(name) {
   $$("#whoami").forEach((e) => (e.textContent = name));

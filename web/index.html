@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>BlueCredit Pulse</title>
+<title>Pulse</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">
@@ -15,11 +15,13 @@
 <script src="./icons.js"></script>
 <div id="login" class="login" hidden>
   <div class="login-card">
-    <div class="wordmark" aria-label="BlueCredit Pulse"><span class="b">Blue</span><span class="c">Credit</span><span class="p">Pulse</span></div>
-    <p class="muted" style="margin:-6px 0 4px">BlueCredit's workspace for business reviews, tickets and other team tools.</p>
+    <div class="wordmark" aria-label="Pulse"><span class="p">Pulse</span></div>
+    <p class="by-line">by BlueCredit</p>
+    <p class="muted" style="margin:-6px 0 4px">Your team's workspace for business reviews, contacts, funding, timecards, scheduling and requests.</p>
     <div class="auth-tabs" role="tablist" id="authTabs">
       <button role="tab" data-mode="signin" aria-selected="true">Sign in</button>
       <button role="tab" data-mode="join" aria-selected="false">Join with code</button>
+      <button role="tab" data-mode="create" aria-selected="false">Start a workspace</button>
     </div>
 
     <form id="signinForm" class="auth-form" data-mode="signin">
@@ -31,11 +33,31 @@
 
     <form id="joinForm" class="auth-form" data-mode="join" hidden>
       <p class="muted">Ask your admin for the company code. You only need it once.</p>
-      <label>Company code<input name="code" autocomplete="off" placeholder="BLUE-XXXX-XXXX" required></label>
-      <label>Your name<input name="name" autocomplete="name" placeholder="Barasa Wangusi" required></label>
+      <label>Company code<input name="code" autocomplete="off" placeholder="ACME-XXXX-XXXX" required></label>
+      <label>Your name<input name="name" autocomplete="name" placeholder="Jane Smith" required></label>
       <label>Work email<input name="email" type="email" autocomplete="email" required></label>
       <label>Choose a password<input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
       <button class="btn primary" type="submit">Join the team</button>
+    </form>
+
+    <form id="createForm" class="auth-form" data-mode="create" hidden>
+      <p class="muted">Set up a private workspace for your company. You'll be its admin and get a code to invite your team.</p>
+      <label>Company name<input name="company" autocomplete="organization" placeholder="Acme Robotics" maxlength="80" required></label>
+      <label>Start with<select name="template" class="pack-select"></select></label>
+      <label>Your name<input name="name" autocomplete="name" placeholder="Jane Smith" required></label>
+      <label>Work email<input name="email" type="email" autocomplete="email" required></label>
+      <label>Choose a password<input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+      <button class="btn primary" type="submit">Create workspace</button>
+      <p class="muted small">You can rename lists, add your logo and change everything later.</p>
+    </form>
+
+    <form id="finishCreateForm" class="auth-form" data-mode="finishcreate" hidden>
+      <p class="muted">You're signed in. Name your company to finish setting up its workspace.</p>
+      <label>Company name<input name="company" autocomplete="organization" maxlength="80" required></label>
+      <label>Start with<select name="template" class="pack-select"></select></label>
+      <label>Your name<input name="name" autocomplete="name" required></label>
+      <button class="btn primary" type="submit">Create workspace</button>
+      <button class="link" type="button" data-goto="finish">Join an existing workspace instead</button>
     </form>
 
     <form id="finishForm" class="auth-form" data-mode="finish" hidden>
@@ -43,6 +65,7 @@
       <label>Company code<input name="code" autocomplete="off" required></label>
       <label>Your name<input name="name" autocomplete="name" required></label>
       <button class="btn primary" type="submit">Finish joining</button>
+      <button class="link" type="button" data-goto="finishcreate">Start a new workspace instead</button>
       <button class="link" type="button" data-signout>Use a different account</button>
     </form>
 
@@ -63,7 +86,8 @@
 </div>
 
 <header class="topbar" id="topbar" hidden>
-  <a class="wordmark" href="./"><span class="b">Blue</span><span class="c">Credit</span><span class="p">Pulse</span></a>
+  <a class="wordmark" href="./"><span class="p">Pulse</span></a>
+  <span class="ws-chip"><span class="ws-logo" data-ws-logo></span><span class="ws-name" data-ws-name></span></span>
   <span class="spacer"></span>
   <div class="user"><span id="whoami"></span><div class="avatar" id="avatar"></div></div>
   <button class="btn small" data-signout>Sign out</button>
@@ -75,6 +99,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script>window.PULSE_HUB = "./";</script>
 <script src="./config.js"></script>
+<script src="./packs.js"></script>
 <script src="./core.js"></script>
 <script src="./hub.js"></script>
 </body>

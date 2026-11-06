@@ -1,0 +1,9 @@
+[Unit]
+Description=Pulse: refresh everyone's calendar free/busy times
+After=pulse-calendar.service
+
+[Service]
+Type=oneshot
+User=bcpulse
+EnvironmentFile=/etc/bluecredit-pulse/pulse.env
+ExecStart=/bin/sh -c 'curl -fsS -m 120 -X POST http://127.0.0.1:8091/ -H "content-type: application/json" -H "x-cron-secret: $CRON_SECRET" -d "{\\"action\\":\\"sync_all\\"}"'

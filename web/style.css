@@ -489,3 +489,18 @@ label.inline input { width: auto; }
 .people-pick { border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; display: grid; gap: 6px; }
 .pp-row { display: grid; grid-template-columns: 1fr 110px; gap: 10px; align-items: center; }
 .drawer .form-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+
+/* ---------- onboarding */
+.ob-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px 16px; margin-bottom: 14px; }
+.ob-facts > div span { display: block; font-size: 12px; color: var(--muted); } .ob-facts > div b { font-weight: 600; font-size: 14px; }
+.ck-h { font-size: 15px; margin: 16px 0 8px; }
+.checklist { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.checklist .ck { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 10px; }
+.checklist .ck:hover { background: var(--blue-0); }
+.checklist .ck.done span:not(.pill):not(.meta) { color: var(--muted); text-decoration: line-through; }
+.checklist .meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip-check { display: inline-flex; gap: 6px; align-items: center; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; }
+.chip-check input { width: auto; }
+.tpl-row { display: grid; grid-template-columns: 2fr 140px 1.4fr auto; gap: 8px; margin-bottom: 8px; }
+@media (max-width: 760px) { .tpl-row { grid-template-columns: 1fr 1fr; } .tpl-row [data-t="text"] { grid-column: span 2; } }

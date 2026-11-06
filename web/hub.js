@@ -8,6 +8,7 @@ const APPS = [
   { key: "contacts", staff: true, name: "Contacts", icon: "users", href: "./contacts/", blurb: "Customers, investors, partners and the mailing list; import and follow up." },
   { key: "funding", staff: true, name: "Funding", icon: "banknotes", href: "./funding/", blurb: "Grant and loan applications in progress, plus the catalog of funding programs." },
   { key: "timecards", name: "Timecards", icon: "timer", href: "./timecards/", blurb: "Log hours by project each week; approve timesheets; hours and amounts by project." },
+  { key: "onboarding", name: "Onboarding", icon: "user-plus", href: "./onboarding/", blurb: "Bring on contractors, consultants and new hires with a checklist; offboard them cleanly." },
   { key: "tickets", name: "Tickets", icon: "ticket", href: "./tickets/", blurb: "Ask for equipment, purchases, time off or IT help; approve requests; see your assets." },
 ];
 
@@ -88,6 +89,15 @@ function deskStats(stat) {
 const hstat = (n, label, href, alert) => `<span class="hub-stat ${alert && n ? "alert" : ""}" data-href="${href}"><b>${(+n || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}</b> ${label}</span>`;
 const fill = (key, html) => { const el = $("#stats-" + key); if (el) el.innerHTML = html; };
 function loadAppStats() {
+  sb.from("onboardings").select("status, checklist, user_id").then(({ data, error }) => {
+    if (error) return fill("onboarding", "");
+    if (S.profile.role === "contractor") {
+      const mine = (data || []).filter((o) => o.user_id === S.user.id).flatMap((o) => o.checklist || []).filter((i) => i.who === "them");
+      return fill("onboarding", hstat(mine.filter((i) => !i.done).length, "of your checklist items left", "./onboarding/#/mine", true));
+    }
+    const on = (data || []).filter((o) => ["Planned", "In progress"].includes(o.status)).length, off = (data || []).filter((o) => o.status === "Offboarding").length;
+    fill("onboarding", hstat(on, "being onboarded", "./onboarding/") + (off ? hstat(off, "offboarding", "./onboarding/", true) : ""));
+  });
   const d = new Date(), wk = new Date(d); wk.setDate(d.getDate() - ((d.getDay() + 6) % 7)); const w = wk.toLocaleDateString("en-CA");
   Promise.all([sb.from("time_entries").select("hours").eq("user_id", S.user.id).gte("work_date", w),
                sb.from("timesheets").select("user_id, status").eq("status", "Submitted")]).then(([a, b]) => {

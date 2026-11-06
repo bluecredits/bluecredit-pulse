@@ -1,0 +1,23 @@
+[Unit]
+Description=Pulse calendar connector (Google/Outlook free-busy and booking)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=bcpulse
+Group=bcpulse
+EnvironmentFile=/etc/bluecredit-pulse/pulse.env
+Environment=PORT=8091 HOST=127.0.0.1 DENO_DIR=/opt/bluecredit-pulse/.deno
+ExecStart=/usr/local/bin/deno run --allow-net --allow-env --cached-only /opt/bluecredit-pulse/functions/calendar/index.ts
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadOnlyPaths=/opt/bluecredit-pulse/functions
+ReadWritePaths=/opt/bluecredit-pulse/.deno
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

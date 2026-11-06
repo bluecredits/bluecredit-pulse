@@ -29,6 +29,35 @@ function must({ data, error, count }) {
   return count === undefined || count === null ? data : { data, count };
 }
 const db = { async rpc(fn, args) { return must(await sb.rpc(fn, args)); } };
+// Server functions (calendar, chief). Where they run is set in config.js (functionsUrl); default: Supabase Edge Functions.
+const FN_URL = () => (CFG.functionsUrl || (CFG.supabaseUrl || "").replace(/\/$/, "") + "/functions/v1").replace(/\/$/, "");
+async function callFn(name, body) {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) { authLost(); throw new Error("Sign in first."); }
+  let r;
+  try {
+    r = await fetch(`${FN_URL()}/${name}`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${session.access_token}`, apikey: CFG.supabaseAnonKey }, body: JSON.stringify(body) });
+  } catch { throw Object.assign(new Error("Couldn't reach the server. It may not be set up yet."), { setup: true }); }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(j.error || `The server answered ${r.status}.`), { status: r.status, setup: r.status === 404 || r.status === 503 });
+  return j;
+}
+// tiny, safe markdown for assistant answers: headings, lists, bold, italics, code and https links
+function md(src) {
+  const inline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<i>$2</i>").replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\[([^\]]+)\]\((https:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  const out = []; let list = null;
+  const close = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  for (const line of String(src || "").split("\n")) {
+    let m;
+    if ((m = line.match(/^#{1,3}\s+(.*)/))) { close(); out.push(`<h3>${inline(m[1])}</h3>`); }
+    else if ((m = line.match(/^\s*\d+[.)]\s+(.*)/))) { if (list !== "ol") { close(); out.push("<ol>"); list = "ol"; } out.push(`<li>${inline(m[1])}</li>`); }
+    else if ((m = line.match(/^\s*[-*•]\s+(.*)/))) { if (list !== "ul") { close(); out.push("<ul>"); list = "ul"; } out.push(`<li>${inline(m[1])}</li>`); }
+    else if (!line.trim()) close();
+    else { close(); out.push(`<p>${inline(line)}</p>`); }
+  }
+  close(); return out.join("");
+}
 
 /* ---------------- shared sign-in guard: apps send people to the landing page to sign in */
 const HUB = window.PULSE_HUB || "../";

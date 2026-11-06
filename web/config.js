@@ -1,15 +1,15 @@
-/* Supabase connection for BlueCredit Pulse.
+/* Pulse — connection settings.
  *
- * Both values come from Supabase: Project Settings → API.
- *   supabaseUrl      "Project URL"
- *   supabaseAnonKey  the "anon" / "publishable" key
+ * supabaseUrl / supabaseAnonKey come from Supabase: Project Settings → API ("Project URL" and the
+ * "anon" / "publishable" key). They're safe in a public repo: the key can only do what the database's
+ * row-level security allows. NEVER put the service_role / secret key here.
  *
- * These are safe to commit to a public repo: the anon key can only do what the
- * database's row-level security allows, and every table is locked to members
- * who joined with the company code. NEVER put the service_role / secret key here.
+ * functionsUrl is where the calendar and Chief of Staff server functions run. Leave it commented to use
+ * Supabase Edge Functions; deploy/install.sh sets it to https://pulse.bluecredits.org/fn on the Contabo server.
  */
 window.PULSE_CONFIG = {
-  appName: "BlueCredit Pulse",
+  appName: "Pulse",
+  // functionsUrl: "https://pulse.bluecredits.org/fn",
   supabaseUrl: "https://dtnohwaxnnwqplmdtdeq.supabase.co",
   supabaseAnonKey: "sb_publishable_LSwFfqry2e6FfcEE_msnHw_dLzj910i",
 };

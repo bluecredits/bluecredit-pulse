@@ -9,7 +9,7 @@ the company's code, contractors and consultants with a separate contractor code.
 | `/review/` | **Business Review** | Opportunities, action items, and daily / weekly / monthly / quarterly reviews |
 | `/contacts/` | **Contacts** | Government POCs, primes, partners, investors, experts, mailing list; import and follow-ups |
 | `/funding/` | **Funding** | Grant and loan applications in progress, plus the funding catalog |
-| `/opportunities/` | **Opportunities** | Contracts (SAM.gov) and Grants (Grants.gov) tabs from saved searches checked on a schedule (default once a day); add a contract to the pipeline or a grant to Funding |
+| `/opportunities/` | **Opportunities** | Contracts (SAM.gov), Grants (Grants.gov) and Bid Match (MyBidMatch: federal, state, local, education) tabs from saved searches checked on a schedule (default once a day); add a contract to the pipeline or a grant to Funding |
 | `/timecards/` | **Timecards** | Weekly timesheets by project, approvals, hours and amounts by project |
 | `/onboarding/` | **Onboarding** | Contractors, consultants and new hires: checklist, invite, offboarding |
 | `/projects/` | **Projects** | Portfolio, schedule, task board, team, budget vs. actual, documents, risks, status reports, close-out |
@@ -68,6 +68,10 @@ then add a tile to `APPS` in `web/hub.js`.
   search2 API (no key). Grants searches filter by assistance listing (ALN prefixes), agency, status and keywords.
 - **Matches:** Contracts and Grants tabs, each New / Saved / Dismissed / Added. **Add to pipeline** creates a Business Review
   opportunity (stage Identified); **Add to Funding** creates a Funding record (type Grant, status Identified).
+- **Bid Match:** an admin pastes the private MyBidMatch link (`mybidmatch.outreachsystems.com/go?sub=…`, kept in Vault). Each check reads the
+  list of days, each new day's list and each new bid's page once, and sorts bids into Federal / State / Local / Education from the
+  buyer and the notice text. This is how Virginia eVA (VBO) bids come in. If MyBidMatch changes its page layout, the parser in
+  `fed_store_bm` needs updating.
 - **Setup:** in Supabase turn on the `pg_net` and `pg_cron` extensions (Vault is on by default), then run `supabase/schema.sql`;
   it creates the `pulse-federal` timer. Settings shows whether each piece is on.
 - **Not connected:** FedConnect has no public API (its contracts over $25K also post to SAM.gov); eVA's open data is yearly spend

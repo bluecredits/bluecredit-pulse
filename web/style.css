@@ -702,3 +702,10 @@ textarea.mono { font: 12.5px/1.5 ui-monospace, Menlo, monospace; }
 .tabs a { font: 600 13px var(--font-ui); color: var(--muted); padding: 7px 14px; border-radius: 999px; }
 .tabs a[aria-selected="true"] { background: #fff; color: var(--blue); box-shadow: var(--shadow-sm); }
 .tabs a:hover { color: var(--blue); }
+.fed-levels { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.fed-levels .chip { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 5px 12px; font: 600 12.5px var(--font-ui); color: var(--ink-2); cursor: pointer; }
+.fed-levels .chip span { color: var(--muted); font-weight: 500; margin-left: 2px; }
+.fed-levels .chip.on { background: var(--blue); border-color: var(--blue); color: #fff; } .fed-levels .chip.on span { color: #dbeafe; }
+.fed-sum { font-size: 13px; color: var(--ink-2); margin: 6px 0 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pill.lv-federal { background: #dbeafe; color: #1d4ed8; } .pill.lv-state { background: #ede9fe; color: #6d28d9; }
+.pill.lv-local { background: #dcfce7; color: #15803d; } .pill.lv-education { background: #fef3c7; color: #b45309; } .pill.lv-other { background: #f1f5f9; color: #475569; }

@@ -4,8 +4,9 @@
    searches and settings. */
 "use strict";
 
-const FD = { source: "SAM.gov", status: "New", search: "", q: "", sort: "posted" };
-const SRC = { "SAM.gov": { tab: "contracts", label: "Contracts", noun: "notices", site: "SAM.gov" }, "Grants.gov": { tab: "grants", label: "Grants", noun: "grants", site: "Grants.gov" } };
+const FD = { source: "SAM.gov", status: "New", search: "", q: "", sort: "posted", level: "" };
+const LEVELS = ["Federal", "State", "Local", "Education"];
+const SRC = { "SAM.gov": { tab: "contracts", label: "Contracts", noun: "notices", site: "SAM.gov" }, "Grants.gov": { tab: "grants", label: "Grants", noun: "grants", site: "Grants.gov" }, BidMatch: { tab: "bidmatch", label: "Bid Match", noun: "bids", site: "MyBidMatch" } };
 const icon = (name, cls = "ic") => `<svg class="${cls}"><use href="#i-${name}"/></svg>`;
 const isAdmin = () => S.profile?.role === "admin";
 
@@ -28,46 +29,64 @@ const setupNeeded = (e) => /fed_|schema cache|does not exist/i.test(e.message ||
 
 /* ================================================================ matches */
 async function Matches() {
-  const grants = FD.source === "Grants.gov", src = SRC[FD.source];
+  const grants = FD.source === "Grants.gov", bm = FD.source === "BidMatch", src = SRC[FD.source];
   const [allSearches, st, counts] = await Promise.all([must(await sb.from("fed_searches").select("id, name, active, source").order("name")), db.rpc("fed_status", {}), db.rpc("fed_counts", {})]);
   const searches = allSearches.filter((s) => s.source === FD.source);
   if (FD.search && !searches.some((s) => String(s.id) === FD.search)) FD.search = "";
   let rows = await db.rpc("fed_list", { p_source: FD.source, p_status: FD.status, p_search: FD.search ? +FD.search : null, p_sort: FD.sort });
-  if (FD.q) { const t = FD.q.toLowerCase(); rows = rows.filter((r) => [r.title, r.sol_number, r.agency, r.subtier, r.office, r.naics, (r.aln || []).join(" ")].join(" ").toLowerCase().includes(t)); }
+  const levelCounts = {}; if (bm) rows.forEach((r) => (levelCounts[r.level || "Other"] = (levelCounts[r.level || "Other"] || 0) + 1));
+  if (bm && FD.level) rows = rows.filter((r) => (r.level || "Other") === FD.level);
+  if (FD.q) { const t = FD.q.toLowerCase(); rows = rows.filter((r) => [r.title, r.sol_number, r.agency, r.subtier, r.office, r.naics, (r.aln || []).join(" "), r.summary].join(" ").toLowerCase().includes(t)); }
   const sname = Object.fromEntries(searches.map((s) => [s.id, s.name]));
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>${grants ? "Grants" : "Contracts"}</h1><p class="muted">${grants ? "Open and forecasted Grants.gov grants" : "New SAM.gov notices"} that match your searches. ${statusLine(st, grants)}</p></div>
-      <div class="actions-row"><button class="btn" id="runNow">${icon("return")}Check now</button><a class="btn primary" href="#/searches/new?${grants ? "grants" : "contracts"}">${icon("plus")}New search</a></div></div>
+    <div class="page-head"><div><h1>${src.label}</h1><p class="muted">${bm ? "Your MyBidMatch daily matches: federal, state, local and education bids." : (grants ? "Open and forecasted Grants.gov grants" : "New SAM.gov notices") + " that match your searches."} ${bm ? bmLine(st) : statusLine(st, grants)}</p></div>
+      <div class="actions-row"><button class="btn" id="runNow">${icon("return")}Check now</button>${bm ? `<a class="btn" href="#/settings">${icon("cog")}Bid Match link</a>` : `<a class="btn primary" href="#/searches/new?${grants ? "grants" : "contracts"}">${icon("plus")}New search</a>`}</div></div>
     <div class="tabs src-tabs">${Object.entries(SRC).map(([k, v]) => `<a href="#/${v.tab}" aria-selected="${k === FD.source}">${v.label}${counts.by_source?.[k] ? ` <span class="count">${counts.by_source[k]}</span>` : ""}</a>`).join("")}</div>
-    ${banner(st, searches, grants)}
+    ${bm ? bmBanner(st) : banner(st, searches, grants)}
+    ${bm ? `<div class="fed-levels">${["", ...LEVELS].map((l) => `<button class="chip ${FD.level === l ? "on" : ""}" data-lv="${l}">${l || "All"}${l ? ` <span>${levelCounts[l] || 0}</span>` : ""}</button>`).join("")}</div>` : ""}
     <div class="filters">
       <div class="tabs">${["New", "Saved", "Added", "Dismissed", "All"].map((k) => `<button data-st="${k}" aria-selected="${FD.status === k}">${k}</button>`).join("")}</div>
-      <select id="fSearch"><option value="">All searches</option>${searches.map((s) => `<option value="${s.id}" ${String(s.id) === FD.search ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select>
+      <select id="fSearch" ${bm ? "hidden" : ""}><option value="">All searches</option>${searches.map((s) => `<option value="${s.id}" ${String(s.id) === FD.search ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select>
       <select id="fSort"><option value="posted" ${FD.sort === "posted" ? "selected" : ""}>Newest first</option><option value="due" ${FD.sort === "due" ? "selected" : ""}>Due soonest</option></select>
-      <input id="fQ" type="search" placeholder="Filter by title, agency, ${grants ? "assistance listing" : "NAICS"}…" value="${esc(FD.q)}">
+      <input id="fQ" type="search" placeholder="Filter by title, agency, ${grants ? "assistance listing" : bm ? "text" : "NAICS"}…" value="${esc(FD.q)}">
     </div>
-    <div class="fed-list">${rows.map((r) => card(r, sname)).join("") || `<div class="empty">${FD.status === "New" ? "No new matches right now." : "Nothing here."}${searches.length ? "" : ` <a href="#/searches/new?${grants ? "grants" : "contracts"}">Create your first ${grants ? "grants" : "contracts"} search</a>.`}</div>`}</div>`;
+    <div class="fed-list">${rows.map((r) => card(r, sname)).join("") || `<div class="empty">${FD.status === "New" ? "No new matches right now." : "Nothing here."}${bm || searches.length ? "" : ` <a href="#/searches/new?${grants ? "grants" : "contracts"}">Create your first ${grants ? "grants" : "contracts"} search</a>.`}</div>`}</div>`;
   $$("[data-st]").forEach((b) => b.addEventListener("click", () => { FD.status = b.dataset.st; Matches(); }));
+  $$("[data-lv]").forEach((b) => b.addEventListener("click", () => { FD.level = b.dataset.lv; Matches(); }));
   $("#fSearch").addEventListener("change", (e) => { FD.search = e.target.value; Matches(); });
   $("#fSort").addEventListener("change", (e) => { FD.sort = e.target.value; Matches(); });
   $("#fQ").addEventListener("input", debounce((e) => { FD.q = e.target.value; Matches().then(() => { const i = $("#fQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 300));
   $("#runNow").addEventListener("click", runNow);
   $$("[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act, b.closest("[data-nid]").dataset.nid, b)));
+  rowsCache = Object.fromEntries(rows.map((r) => [r.notice_id, r]));
+}
+let rowsCache = {};
+function bmLine(st) {
+  if (!st.has_bidmatch) return "";
+  return st.bidmatch_fetch_at ? `Last read ${ago(st.bidmatch_fetch_at)}.` : "First read in progress.";
+}
+function bmBanner(st) {
+  const msgs = [];
+  if (!st.has_bidmatch) msgs.push(isAdmin() ? `Paste your MyBidMatch link in <a href="#/settings">Settings</a> (from any MyBidMatch email: “mybidmatch.outreachsystems.com/go?sub=…”).` : "An admin needs to add the MyBidMatch link in Settings.");
+  else if (!st.has_net || !st.timer) msgs.push(`Automatic checks are off: the database timer isn't set up yet.`);
+  if (st.bidmatch_error) msgs.push(esc(st.bidmatch_error));
+  return msgs.map((m) => `<div class="notice-bar">${icon("alert")}<div>${m}</div></div>`).join("");
 }
 function card(r, sname) {
-  const hits = (r.searches || []).map((id) => sname[id]).filter(Boolean), grant = r.source === "Grants.gov";
+  const hits = (r.searches || []).map((id) => sname[id]).filter(Boolean), grant = r.source === "Grants.gov", bmr = r.source === "BidMatch";
   const done = grant ? `<a class="btn small" href="../funding/#/funding/${r.funding_id}">${icon("check")}In Funding</a>` : `<a class="btn small" href="../review/#/opportunities/${r.opportunity_id}">${icon("check")}In pipeline</a>`;
   return `<article class="panel fed-card ${r.status === "Dismissed" ? "muted" : ""}" data-nid="${esc(r.notice_id)}">
     <div class="fed-main">
-      <div class="fed-top"><span class="pill ${r.notice_type === "Forecasted" ? "s-high" : ""}">${esc(r.notice_type || "Notice")}</span>${r.set_aside ? `<span class="pill s-won" title="${esc(r.set_aside)}">${esc(r.set_aside_code || "Set-aside")}</span>` : ""}
+      <div class="fed-top">${bmr ? `<span class="pill lv-${esc((r.level || "other").toLowerCase())}">${esc(r.level || "Other")}</span>` : ""}<span class="pill ${r.notice_type === "Forecasted" ? "s-high" : ""}">${esc(r.notice_type || "Notice")}</span>${r.set_aside ? `<span class="pill s-won" title="${esc(r.set_aside)}">${esc(r.set_aside_code || "Set-aside")}</span>` : ""}
         ${hits.map((h) => `<span class="fed-hit">${icon("search")}${esc(h)}</span>`).join("")}</div>
       <h3><a href="${esc(r.ui_link || "https://sam.gov/opp/" + r.notice_id + "/view")}" target="_blank" rel="noopener">${esc(r.title || "(untitled)")} <svg class="ic ext-ic"><use href="#i-external"/></svg></a></h3>
       <p class="muted small">${esc(grant ? [r.agency, r.subtier].filter(Boolean).join(" · ") : [r.agency, r.subtier, r.office].filter((x, i, a) => x && a.indexOf(x) === i).join(" · "))}</p>
+      ${bmr && r.summary ? `<p class="fed-sum">${esc(r.summary.replace(/^[A-Z0-9]{1,2} -{1,2} /, ""))}</p>` : ""}
       <dl class="fed-facts">
-        <div><dt>${grant ? "Opens" : "Posted"}</dt><dd>${short(r.posted_date) || "—"}</dd></div>
+        <div><dt>${grant ? "Opens" : bmr ? "Listed" : "Posted"}</dt><dd>${short(r.posted_date) || "—"}</dd></div>
         <div><dt>${grant ? "Closes" : "Due"}</dt><dd>${dueTxt(r.response_deadline)}</dd></div>
         ${grant ? `<div><dt>Assistance listing</dt><dd>${esc((r.aln || []).join(", ") || "—")}</dd></div><div><dt>Opportunity #</dt><dd>${esc(r.sol_number || "—")}</dd></div>`
-          : `<div><dt>NAICS</dt><dd>${esc(r.naics || "—")}</dd></div><div><dt>Sol. #</dt><dd>${esc(r.sol_number || "—")}</dd></div>`}
+          : `${bmr && !r.naics ? "" : `<div><dt>NAICS</dt><dd>${esc(r.naics || "—")}</dd></div>`}<div><dt>Sol. #</dt><dd>${esc(r.sol_number || "—")}</dd></div>`}
         ${r.state || r.city ? `<div><dt>Place</dt><dd>${esc([r.city, r.state].filter(Boolean).join(", "))}</dd></div>` : ""}
         ${r.awardee ? `<div><dt>Awarded</dt><dd>${esc(r.awardee)}${r.award_amount ? " · " + money(r.award_amount) : ""}</dd></div>` : ""}
       </dl>
@@ -88,7 +107,9 @@ async function act(what, nid, btn) {
       btn.closest(".fed-card").querySelector(".fed-actions").innerHTML = `<a class="btn small" href="../funding/#/funding/${id}">${icon("check")}In Funding</a>`;
     } else if (what === "add") {
       const kinds = workspaceSettings(S.workspace).lists["opportunities.kind"] || [];
-      const kind = kinds.find((k) => /federal/i.test(k)) || kinds.find((k) => /contract/i.test(k)) || "";
+      const lvl = FD.source === "BidMatch" ? (rowsCache[nid]?.level || "") : "Federal";
+      const kind = lvl === "Federal" ? kinds.find((k) => /federal/i.test(k)) || kinds.find((k) => /contract/i.test(k)) || ""
+        : kinds.find((k) => /state|local/i.test(k)) || kinds.find((k) => /contract/i.test(k)) || "";
       const id = await db.rpc("fed_add_to_opportunities", { p_notice: nid, p_kind: kind || null });
       toast("Added to the pipeline"); const c = btn.closest(".fed-card");
       c.querySelector(".fed-actions").innerHTML = `<a class="btn small" href="../review/#/opportunities/${id}">${icon("check")}In pipeline</a>`;
@@ -118,7 +139,7 @@ function banner(st, searches, grants) {
 }
 async function runNow() {
   const b = $("#runNow"); b.disabled = true;
-  try { await db.rpc("fed_run_now", {}); toast("Checking now; results arrive within a few minutes"); setTimeout(() => { if (/^#\/?(contracts|grants)?$/.test(location.hash)) Matches(); }, 90000); }
+  try { await db.rpc("fed_run_now", {}); toast("Checking now; results arrive within a few minutes"); setTimeout(() => { if (/^#\/?(contracts|grants|bidmatch)?$/.test(location.hash)) Matches(); }, 90000); }
   catch (e) { toast(e.message); }
   b.disabled = false;
 }
@@ -205,7 +226,7 @@ function editSearch(s, source) {
 /* ================================================================ settings */
 async function Settings() {
   const st = await db.rpc("fed_status", {});
-  const calls = must(await sb.from("fed_calls").select("created_at, source, page_offset, posted_from, posted_to, status, http_status, records, total, error").order("id", { ascending: false }).limit(12));
+  const calls = must(await sb.from("fed_calls").select("created_at, source, ref, page_offset, posted_from, posted_to, status, http_status, records, total, error").order("id", { ascending: false }).limit(12));
   const ok = (b) => (b ? `<span class="pill s-won">${icon("check")}On</span>` : `<span class="pill s-lost">Off</span>`);
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>Settings</h1><p class="muted">Where contracts and grants come from and how often Pulse checks.</p></div></div>
@@ -220,6 +241,13 @@ async function Settings() {
       <p>No key needed. When you have at least one active grants search, each check reads all open and forecasted grants (about 2–4 requests).
         ${st.grants_fetch_at ? `Last read ${ago(st.grants_fetch_at)}; ${st.grants} grants listed.` : "Not read yet."}</p>
       ${st.grants_error ? `<div class="notice-bar">${icon("alert")}<div>${esc(st.grants_error)}</div></div>` : ""}
+    </section>
+    <section class="panel"><h2>MyBidMatch</h2>
+      ${st.has_bidmatch ? `<p>Linked (${esc(st.bidmatch_hint)}). ${st.bidmatch_fetch_at ? `Last read ${ago(st.bidmatch_fetch_at)}; ${st.bidmatch} bids from the last 30 days.` : "First read in progress."}</p>` : `<p>Not linked. Pulse reads your daily MyBidMatch lists (federal, state, local and education bids matched by your APEX profile) and sorts them by level.</p>`}
+      ${isAdmin() ? `<form id="bmForm" class="add-action" style="grid-template-columns:1fr auto auto"><input name="link" type="password" autocomplete="off" placeholder="https://mybidmatch.outreachsystems.com/go?sub=…">
+        <button class="btn primary">${st.has_bidmatch ? "Replace" : "Save link"}</button>${st.has_bidmatch ? `<button type="button" class="btn" id="clearBm">Remove</button>` : ""}</form>
+        <p class="muted small">The link is in every MyBidMatch email. It's stored encrypted like the API key. Pulse reads each day's list and each bid's details once.</p>` : ""}
+      ${st.bidmatch_error ? `<div class="notice-bar">${icon("alert")}<div>${esc(st.bidmatch_error)}</div></div>` : ""}
     </section>
     <section class="panel"><h2>Schedule</h2>
       <form id="cfgForm" class="form-grid">
@@ -237,16 +265,22 @@ async function Settings() {
       ${st.has_net && st.timer && st.has_vault ? "" : `<p class="muted small">In Supabase: Database → Extensions, turn on <b>pg_net</b> and <b>pg_cron</b> (Vault is on by default), then run the latest <code>supabase/schema.sql</code> once more to create the timer.</p>`}
     </section>
     <section class="panel" style="padding:0"><h2 style="padding:16px 18px 0">Recent requests</h2><div class="table-wrap"><table><thead><tr><th>When</th><th>Source</th><th>Posted dates</th><th>Page</th><th>Result</th></tr></thead><tbody>
-      ${calls.map((c) => `<tr style="cursor:default"><td>${ago(c.created_at)}</td><td>${esc(c.source)}</td><td>${c.posted_from ? short(c.posted_from) + (c.posted_to !== c.posted_from ? "–" + short(c.posted_to) : "") : "All open"}</td><td>${Math.floor(c.page_offset / 1000) + 1}</td>
+      ${calls.map((c) => `<tr style="cursor:default"><td>${ago(c.created_at)}</td><td>${esc(c.source)}</td><td>${c.source === "BidMatch" ? esc({ sub: "List of days", doc: "Day's list", article: "Bid details" }[(c.ref || "").split(":")[0]] || "") : c.posted_from ? short(c.posted_from) + (c.posted_to !== c.posted_from ? "–" + short(c.posted_to) : "") : "All open"}</td><td>${c.source === "BidMatch" ? (c.page_offset || "") : Math.floor(c.page_offset / 1000) + 1}</td>
         <td>${c.status === "done" ? `${c.records} of ${c.total}` : c.status === "pending" ? "Waiting…" : `<span class="red">${esc(c.http_status ? "Error " + c.http_status : "Error")}</span> <span class="muted small">${esc((c.error || "").slice(0, 120))}</span>`}</td></tr>`).join("")
         || `<tr><td colspan="5" class="empty">No requests yet.</td></tr>`}</tbody></table></div></section>
     <section class="panel"><h2>Other sources</h2><p class="muted">Contracts posted on FedConnect over $25,000 also appear on SAM.gov, so they come through here.
-      DOE funding notices on FedConnect also post to Grants.gov, so the Grants tab catches them. eVA (Virginia) isn't connected: it has no API for open bids, so use its email alerts by NIGP code for now.</p></section>`;
+      DOE funding notices on FedConnect also post to Grants.gov, so the Grants tab catches them. Virginia eVA bids come through MyBidMatch (Bid Match tab).</p></section>`;
   if (!isAdmin()) return;
   $("#keyForm").addEventListener("submit", async (e) => {
     e.preventDefault(); const k = e.target.key.value.trim(); if (!k) return;
     try { await db.rpc("fed_set_key", { p_key: k }); e.target.key.value = ""; toast("API key saved"); Settings(); } catch (err) { toast(err.message); }
   });
+  $("#bmForm").addEventListener("submit", async (e) => {
+    e.preventDefault(); const k = e.target.link.value.trim(); if (!k) return;
+    try { await db.rpc("fed_set_bidmatch", { p_link: k }); e.target.link.value = ""; toast("MyBidMatch linked; reading your lists now"); Settings(); } catch (err) { toast(err.message); }
+  });
+  $("#clearBm")?.addEventListener("click", async () => { if (!confirm("Remove the MyBidMatch link? Bids already read stay.")) return;
+    try { await db.rpc("fed_set_bidmatch", { p_link: "" }); toast("Link removed"); Settings(); } catch (err) { toast(err.message); } });
   $("#clearKey")?.addEventListener("click", async () => { if (!confirm("Remove the SAM.gov API key? Pulse stops checking until a new key is saved.")) return;
     try { await db.rpc("fed_clear_key", {}); toast("Key removed"); Settings(); } catch (err) { toast(err.message); } });
   $("#cfgForm").addEventListener("submit", async (e) => {
@@ -261,12 +295,12 @@ window.addEventListener("hashchange", route);
 function route() {
   if (!S.profile) return;
   const parts = location.hash.replace(/^#\/?/, "").split("/");
-  const key = { contracts: 1, grants: 1, searches: 1, settings: 1 }[parts[0]] ? parts[0] : parts[0] === "matches" ? "contracts" : "contracts";
-  if (key === "contracts") FD.source = "SAM.gov"; if (key === "grants") FD.source = "Grants.gov";
+  const key = { contracts: 1, grants: 1, bidmatch: 1, searches: 1, settings: 1 }[parts[0]] ? parts[0] : "contracts";
+  if (key === "contracts") FD.source = "SAM.gov"; if (key === "grants") FD.source = "Grants.gov"; if (key === "bidmatch") FD.source = "BidMatch";
   $$("#nav a[data-r]").forEach((a) => a.classList.toggle("on", a.dataset.r === key));
   document.body.classList.remove("nav-open"); closeDrawer();
   $("#main").innerHTML = `<p class="muted">Loading…</p>`;
-  Promise.resolve({ contracts: Matches, grants: Matches, searches: () => Searches((parts[1] || "").split("?")[0]), settings: Settings }[key]())
+  Promise.resolve({ contracts: Matches, grants: Matches, bidmatch: Matches, searches: () => Searches((parts[1] || "").split("?")[0]), settings: Settings }[key]())
     .catch((e) => ($("#main").innerHTML = setupNeeded(e)
       ? `<section class="panel"><h2>One-time setup needed</h2><p>Opportunities needs the latest database update. An admin runs the latest <code>supabase/schema.sql</code> in the Supabase SQL Editor.</p></section>`
       : `<div class="empty">Couldn't load this page: ${esc(e.message)}</div>`));

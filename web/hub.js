@@ -7,7 +7,7 @@ const APPS = [
   { key: "review", group: "win", staff: true, name: "Business Review", icon: "chart", href: "./review/", blurb: "Opportunities, action items and daily to quarterly reviews." },
   { key: "contacts", group: "win", staff: true, name: "Contacts", icon: "users", href: "./contacts/", blurb: "Customers, investors, partners; import and follow up." },
   { key: "funding", group: "win", staff: true, name: "Funding", icon: "banknotes", href: "./funding/", blurb: "Grant and loan applications, plus the funding catalog." },
-  { key: "opportunities", group: "win", staff: true, name: "Opportunities", icon: "gov", href: "./opportunities/", blurb: "Federal contracts and grants from saved searches, checked daily." },
+  { key: "opportunities", group: "win", staff: true, name: "Opportunities", icon: "gov", href: "./opportunities/", blurb: "Federal contracts, grants and state and local bids, checked daily." },
   { key: "projects", group: "deliver", name: "Projects", icon: "briefcase", href: "./projects/", blurb: "Schedule, tasks, team, budget vs. actual, reports, close-out." },
   { key: "agreements", group: "deliver", name: "Agreements", icon: "clipboard", href: "./agreements/", blurb: "Contracts, teaming and NDAs: fill in, e-sign, close out." },
   { key: "onboarding", group: "deliver", name: "Onboarding", icon: "user-plus", href: "./onboarding/", blurb: "Contractors, consultants and new hires: checklists in and out." },
@@ -122,7 +122,7 @@ function loadAppStats() {
   if (S.profile.role !== "contractor") Promise.all([db.rpc("fed_status", {}), db.rpc("fed_counts", {})]).then(([st, n]) => {
     const bs = n.by_source || {};
     fill("opportunities", (st.has_key ? hstat(bs["SAM.gov"] || 0, "new contracts", "./opportunities/#/contracts", false) : `<span class="hub-stat alert" data-href="./opportunities/#/settings"><b>Add</b> your SAM.gov key</span>`)
-      + hstat(bs["Grants.gov"] || 0, "new grants", "./opportunities/#/grants", false));
+      + hstat((bs["Grants.gov"] || 0) + (bs.BidMatch || 0), st.has_bidmatch ? "new grants and bids" : "new grants", st.has_bidmatch ? "./opportunities/#/bidmatch" : "./opportunities/#/grants", false));
   }).catch(() => fill("opportunities", ""));
   sb.from("agreements").select("status, end_date").then(({ data, error }) => {
     if (error) return fill("agreements", "");

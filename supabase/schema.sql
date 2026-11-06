@@ -2021,6 +2021,19 @@ create index if not exists ix_fed_matches_notice on public.fed_matches (workspac
 alter table public.fed_config alter column every_min set default 1440;
 alter table public.fed_config add column if not exists grants_fetch_at timestamptz;
 alter table public.fed_config add column if not exists grants_error text;
+alter table public.fed_config add column if not exists bidmatch_secret_id uuid;
+alter table public.fed_config add column if not exists bidmatch_hint text;
+alter table public.fed_config add column if not exists bidmatch_fetch_at timestamptz;
+alter table public.fed_config add column if not exists bidmatch_error text;
+alter table public.fed_calls add column if not exists ref text;
+alter table public.fed_notices add column if not exists level text;
+alter table public.fed_notices add column if not exists summary text;
+create table if not exists public.fed_bm_docs (
+  workspace_id uuid not null references public.workspaces (id) on delete cascade,
+  doc text not null, list_date date, articles int, created_at timestamptz not null default now(),
+  primary key (workspace_id, doc)
+);
+alter table public.fed_bm_docs enable row level security;
 alter table public.fed_calls add column if not exists source text not null default 'SAM.gov';
 alter table public.fed_notices add column if not exists aln text[] not null default '{}';
 alter table public.fed_notices add column if not exists funding_id bigint references public.funding (id) on delete set null;
@@ -2045,7 +2058,8 @@ drop policy if exists staff_write on public.fed_searches;
 create policy staff_write on public.fed_searches for all to authenticated using (workspace_id = staff_ws()) with check (workspace_id = staff_ws());
 revoke all on public.fed_config, public.fed_calls, public.fed_notices, public.fed_searches, public.fed_matches from anon, authenticated;
 grant select on public.fed_calls, public.fed_notices, public.fed_matches to authenticated;
-grant select (workspace_id, enabled, every_min, daily_budget, key_hint, next_fetch_at, last_fetch_at, last_status, last_error, grants_fetch_at, grants_error, updated_at, updated_by) on public.fed_config to authenticated;
+grant select (workspace_id, enabled, every_min, daily_budget, key_hint, next_fetch_at, last_fetch_at, last_status, last_error, grants_fetch_at, grants_error, bidmatch_hint, bidmatch_fetch_at, bidmatch_error, updated_at, updated_by) on public.fed_config to authenticated;
+revoke all on public.fed_bm_docs from anon, authenticated;
 
 grant select, insert, update, delete on public.fed_searches to authenticated;
 drop trigger if exists stamp on public.fed_searches;
@@ -2151,6 +2165,105 @@ exception when undefined_function or invalid_schema_name or undefined_table then
   return false;
 end $$;
 
+-- ----- MyBidMatch (Outreach Systems): the subscriber's daily match lists, read from their private link
+create or replace function public.fed_unhtml(p text) returns text language sql immutable as $$
+  select nullif(trim(regexp_replace(replace(replace(replace(replace(replace(replace(regexp_replace(coalesce(p, ''), '<[^>]+>', ' ', 'g'),
+    '&nbsp;', ' '), '&quot;', '"'), '&#39;', ''''), '&lt;', '<'), '&gt;', '>'), '&amp;', '&'), '\s+', ' ', 'g')), '') $$;
+
+-- Federal / State / Local / Education, from the buyer name and the notice text
+create or replace function public.fed_level(p_source text, p_agency text, p_text text) returns text language plpgsql immutable as $$
+declare a text := coalesce(p_agency, ''); rest text; t text := coalesce(p_text, '');
+  edu text := '(school|universit|college|education|academy|board of ed|\misd\M|\musd\M|k-12)';
+  loc text := '(city of|county|town of|village of|borough|township|parish|municipal|\mport of|authority|sanitation|sewer|water district|service district|transit|housing)';
+begin
+  if p_source = 'procure' or a ~* '^(dept|department) of|^(general services|national aeronautics|environmental protection|small business administration|social security|nuclear regulatory|agency for|u\.?s\.?\M|federal|national)' then
+    return 'Federal';
+  end if;
+  if a ~ '^[A-Z][A-Za-z .]+ - ' then
+    rest := regexp_replace(a, '^[A-Za-z .]+ - ', '');
+    if rest ~* edu then return 'Education'; end if;
+    if rest ~* loc then return 'Local'; end if;
+    if rest ~* '(vbo|eva|business opportunities|procurement portal|bid board|bidnet|demandstar)' then
+      if left(t, 400) ~* edu then return 'Education'; end if;
+      if left(t, 400) ~* '(city of|county of|\mcounty\M|town of)' then return 'Local'; end if;
+    end if;
+    return 'State';
+  end if;
+  return case when p_source = 'bid' then 'State' else 'Other' end;
+end $$;
+
+create or replace function public.fed_request_bm(p_ws uuid, p_kind text, p_ref text default null, p_seq int default 0) returns boolean
+language plpgsql volatile security definer set search_path = public as $$
+declare c fed_config; url text; rid bigint;
+begin
+  select * into c from fed_config where workspace_id = p_ws;
+  if p_kind = 'sub' then
+    if c.bidmatch_secret_id is null then return false; end if;
+    execute 'select decrypted_secret from vault.decrypted_secrets where id = $1' into url using c.bidmatch_secret_id;
+  elsif p_kind = 'doc' then url := 'https://mybidmatch.outreachsystems.com/go?doc=' || p_ref;
+  else url := 'https://mybidmatch.outreachsystems.com/article?doc=' || p_ref || '&seq=' || p_seq;
+  end if;
+  if url is null or url !~ '^https://mybidmatch\.outreachsystems\.com/' then return false; end if;
+  execute 'select net.http_get(url := $1, timeout_milliseconds := 60000)' into rid using url;
+  insert into fed_calls (workspace_id, request_id, source, ref, page_offset) values (p_ws, rid, 'BidMatch', p_kind || ':' || coalesce(p_ref, ''), p_seq);
+  return true;
+exception when undefined_function or invalid_schema_name or undefined_table then
+  update fed_config set bidmatch_error = 'The database extension for fetching (pg_net) is not turned on. See Settings.' where workspace_id = p_ws;
+  return false;
+end $$;
+
+-- handle one MyBidMatch page: the subscriber page (list of days), a day's list, or one article
+create or replace function public.fed_store_bm(p_ws uuid, p_kind text, p_ref text, p_seq int, p_html text) returns int
+language plpgsql volatile security definer set search_path = public as $$
+declare m text[]; n int := 0; d date; body text; h4 text; due text; sol text; ts timestamptz;
+begin
+  if p_kind = 'sub' then
+    if p_html !~* 'mybidmatch' then raise exception 'That page is not a MyBidMatch list'; end if;
+    for m in select regexp_matches(p_html, 'href="/go\?doc=([0-9A-Fa-f-]{36})"[^>]*>[A-Za-z]+, ([A-Za-z]{3} +[0-9]{1,2}, [0-9]{4})</a>\s*</td>\s*<td[^>]*>\s*([0-9]+)', 'g') loop
+      d := to_date(regexp_replace(m[2], ' +', ' ', 'g'), 'Mon DD, YYYY');
+      if d >= current_date - 30 and m[3]::int > 0 and not exists (select 1 from fed_bm_docs where workspace_id = p_ws and doc = upper(m[1])) then
+        insert into fed_bm_docs (workspace_id, doc, list_date, articles) values (p_ws, upper(m[1]), d, m[3]::int);
+        perform fed_request_bm(p_ws, 'doc', upper(m[1]));
+        n := n + 1;
+      end if;
+    end loop;
+  elsif p_kind = 'doc' then
+    select list_date into d from fed_bm_docs where workspace_id = p_ws and doc = upper(p_ref);
+    for m in select regexp_matches(p_html,
+        '<tr>\s*<td[^>]*>\s*([0-9]+)\s*</td>\s*<td[^>]*>([^<]*)</td>\s*<td[^>]*>([^<]*)</td>\s*<td[^>]*>([^<]*)</td>\s*<td[^>]*>\s*<a href="/article\?doc=([0-9A-Fa-f-]{36})&(?:amp;)?seq=([0-9]+)"[^>]*>([^<]*)</a>\s*</td>\s*<td[^>]*>([^<]*)</td>', 'g') loop
+      insert into fed_notices (workspace_id, notice_id, source, title, agency, path_name, base_type, notice_type, psc, posted_date, naics, naics_all, ui_link, level, state, active)
+      values (p_ws, 'B' || upper(m[5]) || '-' || m[6], 'BidMatch', fed_unhtml(m[7]),
+        case when trim(m[2]) = 'procure' then fed_name(fed_unhtml(m[3])) else fed_unhtml(m[3]) end, fed_unhtml(m[3]), trim(m[2]),
+        case trim(m[2]) when 'procure' then 'Federal notice' when 'bid' then 'Bid' else initcap(trim(m[2])) end, nullif(trim(m[4]), ''), d,
+        substring(m[8] from 'naics!([0-9]+)'), coalesce(array(select x[1] from regexp_matches(m[8], 'naics!([0-9]+)', 'g') x), '{}'),
+        'https://mybidmatch.outreachsystems.com/article?doc=' || upper(m[5]) || '&seq=' || m[6],
+        fed_level(trim(m[2]), fed_unhtml(m[3]), null), nullif(substring(fed_unhtml(m[3]) from '^([A-Za-z .]+) - '), ''), true)
+      on conflict (workspace_id, notice_id) do nothing;
+      if found then n := n + 1; perform fed_request_bm(p_ws, 'article', upper(m[5]), m[6]::int); end if;
+    end loop;
+  else
+    h4 := fed_unhtml(substring(p_html from '<h4>(.*?)</h4>'));
+    body := fed_unhtml(substring(p_html from '</h4>(.*?)<i>OutreachSystems'));
+    m := regexp_match(body, '(?i)(?:due date|closing on|closing date|response date|responses? due|offers due|bids? due|deadline|\mdue\M)[^0-9]{0,30}([0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4})(?:[ ,]*(?:at)?[ ]*([0-9]{1,2}:[0-9]{2}) *([AP]M))?');
+    begin
+      d := to_date(regexp_replace(m[1], '/([0-9]{2})$', '/20\1'), 'MM/DD/YYYY');
+      ts := case when m[2] is not null then (d + to_timestamp(m[2] || ' ' || upper(m[3]), 'HH12:MI AM')::time) at time zone 'America/New_York'
+                 when d is not null then (d + time '23:59') at time zone 'America/New_York' end;
+    exception when others then ts := null; end;
+    sol := trim(substring(body from '\mSOL\s+((?:(?:RFP|RFQ|IFB|ITB|RFI|RFB)\s+)?[A-Z0-9][A-Za-z0-9_./-]{2,})'));
+    due := substring(body from '(?i)set-aside:\s*(.+?\))');
+    update fed_notices set summary = left(body, 1500), sol_number = coalesce(sol, sol_number), response_deadline = coalesce(ts, response_deadline),
+        set_aside = coalesce(due, set_aside), set_aside_code = coalesce(case when due ~* 'small business' then 'SB' end, set_aside_code),
+        subtier = case when base_type = 'procure' then coalesce(fed_name(nullif(trim(split_part(h4, ',', 2)), '')), subtier) else subtier end,
+        office = case when base_type = 'procure' then coalesce(fed_name(nullif(trim(split_part(h4, ',', 3)), '')), office) else office end,
+        state = coalesce(state, substring(body from 'Place of Performance:[^,]*?\m([A-Z]{2})\M\s')),
+        level = fed_level(base_type, agency, coalesce(h4, '') || ' ' || coalesce(body, '')), updated_at = now()
+     where workspace_id = p_ws and notice_id = 'B' || upper(p_ref) || '-' || p_seq;
+    get diagnostics n = row_count;
+  end if;
+  return n;
+end $$;
+
 -- the timer: collect finished responses, store them, match, ask for the next page or the next scheduled fetch
 -- store one page of Grants.gov search2 results (open and forecasted grants)
 create or replace function public.fed_store_grants(p_ws uuid, p_body jsonb) returns int
@@ -2209,6 +2322,24 @@ begin
     end if;
     body := null;
     if coalesce(r.status_code, 0) = 200 then begin body := r.content::jsonb; exception when others then body := null; end; end if;
+    if cl.source = 'BidMatch' then
+      if coalesce(r.status_code, 0) = 200 then
+        begin
+          got := fed_store_bm(p_ws, split_part(cl.ref, ':', 1), nullif(split_part(cl.ref, ':', 2), ''), cl.page_offset, r.content);
+          update fed_calls set status = 'done', http_status = 200, records = got, done_at = now() where id = cl.id;
+          if split_part(cl.ref, ':', 1) = 'sub' then update fed_config set bidmatch_fetch_at = now(), bidmatch_error = null where workspace_id = p_ws; end if;
+        exception when others then
+          update fed_calls set status = 'error', http_status = 200, error = sqlerrm, done_at = now() where id = cl.id;
+          if split_part(cl.ref, ':', 1) = 'sub' then update fed_config set bidmatch_error = 'Could not read the MyBidMatch page: ' || sqlerrm where workspace_id = p_ws; end if;
+        end;
+      else
+        update fed_calls set status = 'error', http_status = r.status_code, error = coalesce(r.error_msg, left(r.content, 300)), done_at = now() where id = cl.id;
+        if split_part(cl.ref, ':', 1) = 'sub' then
+          update fed_config set bidmatch_error = format('MyBidMatch error %s: %s', coalesce(r.status_code::text, ''), left(coalesce(r.error_msg, ''), 200)) where workspace_id = p_ws;
+        end if;
+      end if;
+      continue;
+    end if;
     if body is null then
       update fed_calls set status = 'error', http_status = r.status_code, error = coalesce(r.error_msg, left(r.content, 300), 'Unreadable response'), done_at = now() where id = cl.id;
       if cl.source = 'Grants.gov' then
@@ -2244,7 +2375,7 @@ begin
   -- next scheduled fetch: SAM.gov today's notices (plus yesterday's once a day, for late postings); Grants.gov all open grants
   select * into c from fed_config where workspace_id = p_ws;
   if (c.enabled and (c.next_fetch_at is null or c.next_fetch_at <= now()) or p_force)
-     and not exists (select 1 from fed_calls where workspace_id = p_ws and status = 'pending') then
+     and not exists (select 1 from fed_calls where workspace_id = p_ws and status = 'pending' and source <> 'BidMatch') then
     update fed_config set next_fetch_at = now() + make_interval(mins => c.every_min) where workspace_id = p_ws;
     if c.key_secret_id is not null then
       perform fed_request(p_ws, case when c.yesterday_done is distinct from today then today - 1 else today end, today, 0);
@@ -2252,9 +2383,11 @@ begin
     if exists (select 1 from fed_searches where workspace_id = p_ws and source = 'Grants.gov' and active) then
       perform fed_request_grants(p_ws, 0);
     end if;
+    if c.bidmatch_secret_id is not null then perform fed_request_bm(p_ws, 'sub'); end if;
   end if;
   -- housekeeping
-  delete from fed_notices f where f.workspace_id = p_ws and f.status = 'New' and f.first_seen < now() - interval '21 days'
+  delete from fed_bm_docs where workspace_id = p_ws and created_at < now() - interval '45 days';
+  delete from fed_notices f where f.workspace_id = p_ws and f.status = 'New' and f.first_seen < now() - case when f.source = 'BidMatch' then interval '40 days' else interval '21 days' end
      and not exists (select 1 from fed_matches m where m.workspace_id = f.workspace_id and m.notice_id = f.notice_id);
   delete from fed_calls where workspace_id = p_ws and created_at < now() - interval '30 days';
 end $$;
@@ -2287,6 +2420,8 @@ begin
     'notices', (select count(*) from fed_notices where workspace_id = w and source = 'SAM.gov'),
     'has_net', has_net, 'has_cron', has_cron, 'has_vault', has_vault, 'timer', job, 'admin', is_admin(),
     'grants_fetch_at', c.grants_fetch_at, 'grants_error', c.grants_error,
+    'has_bidmatch', c.bidmatch_secret_id is not null, 'bidmatch_hint', c.bidmatch_hint, 'bidmatch_fetch_at', c.bidmatch_fetch_at, 'bidmatch_error', c.bidmatch_error,
+    'bidmatch', (select count(*) from fed_notices where workspace_id = w and source = 'BidMatch'),
     'grants', (select count(*) from fed_notices where workspace_id = w and source = 'Grants.gov'));
 end $$;
 
@@ -2320,6 +2455,32 @@ begin
     raise exception 'Supabase Vault isn''t turned on for this database (Database → Extensions → supabase_vault).';
   end;
   update fed_config set key_secret_id = sid, key_hint = '…' || right(k, 4), last_error = null, next_fetch_at = null, updated_at = now(), updated_by = member_name() where workspace_id = w;
+  return fed_status();
+end $$;
+
+create or replace function public.fed_set_bidmatch(p_link text) returns jsonb
+language plpgsql volatile security definer set search_path = public as $$
+declare w uuid := staff_ws(); c fed_config; k text := trim(coalesce(p_link, '')); sid uuid;
+begin
+  if w is null or not is_admin() then raise exception 'Only admins can change the MyBidMatch link.'; end if;
+  insert into fed_config (workspace_id) values (w) on conflict do nothing;
+  select * into c from fed_config where workspace_id = w;
+  if k = '' then
+    if c.bidmatch_secret_id is not null then begin execute 'delete from vault.secrets where id = $1' using c.bidmatch_secret_id; exception when others then null; end; end if;
+    update fed_config set bidmatch_secret_id = null, bidmatch_hint = null where workspace_id = w;
+    return fed_status();
+  end if;
+  k := regexp_replace(k, '^http://', 'https://');
+  if k !~* '^https://mybidmatch\.outreachsystems\.com/go\?sub=[0-9a-f-]{36}$' then raise exception 'Paste the link from your MyBidMatch email; it looks like https://mybidmatch.outreachsystems.com/go?sub=…'; end if;
+  begin
+    if c.bidmatch_secret_id is null then
+      execute 'select vault.create_secret($1, $2, $3)' into sid using k, 'pulse-bidmatch-' || w::text, 'MyBidMatch subscriber link for a Pulse workspace';
+    else execute 'select vault.update_secret($1, $2)' using c.bidmatch_secret_id, k; sid := c.bidmatch_secret_id; end if;
+  exception when undefined_function or invalid_schema_name then
+    raise exception 'Supabase Vault isn''t turned on for this database (Database → Extensions → supabase_vault).';
+  end;
+  update fed_config set bidmatch_secret_id = sid, bidmatch_hint = '…' || right(k, 6), bidmatch_error = null, updated_at = now(), updated_by = member_name() where workspace_id = w;
+  if not exists (select 1 from fed_calls where workspace_id = w and source = 'BidMatch' and status = 'pending') then perform fed_request_bm(w, 'sub'); end if;
   return fed_status();
 end $$;
 
@@ -2398,8 +2559,9 @@ begin
   if n.opportunity_id is not null and exists (select 1 from opportunities where id = n.opportunity_id) then return n.opportunity_id; end if;
   insert into opportunities (workspace_id, title, kind, agency, ref_no, stage, deadline, naics, set_aside, location, url, source, notes, value, meta, updated_by)
   values (w, n.title, coalesce(nullif(p_kind, ''), 'Federal Contract'), concat_ws(' / ', n.agency, n.subtier), n.sol_number, 'Identified',
-    (n.response_deadline at time zone 'America/New_York')::date, n.naics, n.set_aside, nullif(concat_ws(', ', n.city, n.state), ''), n.ui_link, 'SAM.gov',
-    concat_ws(E'\n', 'Notice type: ' || n.notice_type, 'Office: ' || n.office, 'Posted: ' || n.posted_date, 'PSC: ' || n.psc,
+    (n.response_deadline at time zone 'America/New_York')::date, n.naics, n.set_aside, nullif(concat_ws(', ', n.city, n.state), ''), n.ui_link,
+    case when n.source = 'BidMatch' then 'MyBidMatch (' || coalesce(n.level, 'unsorted') || ')' else n.source end,
+    concat_ws(E'\n', 'Notice type: ' || n.notice_type, 'Office: ' || n.office, 'Posted: ' || n.posted_date, 'PSC: ' || n.psc, left(n.summary, 800),
       case when n.awardee is not null then 'Awardee: ' || n.awardee || coalesce(' ($' || to_char(n.award_amount, 'FM999,999,999,990') || ')', '') end),
     n.award_amount, jsonb_build_object('sam_notice_id', n.notice_id), member_name())
   returning id into oid;
@@ -2413,11 +2575,12 @@ create or replace function public.fed_list(p_source text default 'SAM.gov', p_st
 language sql stable security definer set search_path = public as $$
   select coalesce(jsonb_agg(to_jsonb(x) order by case when p_sort = 'due' then x.response_deadline end nulls last, x.posted_date desc nulls last, x.first_seen desc), '[]')
   from (select n.notice_id, n.title, n.sol_number, n.agency, n.subtier, n.office, n.notice_type, n.posted_date, n.response_deadline, n.naics, n.set_aside,
-               n.set_aside_code, n.state, n.city, n.ui_link, n.award_amount, n.awardee, n.status, n.opportunity_id, n.funding_id, n.first_seen, n.source, n.aln,
+               n.set_aside_code, n.state, n.city, n.ui_link, n.award_amount, n.awardee, n.status, n.opportunity_id, n.funding_id, n.first_seen, n.source, n.aln, n.level, left(n.summary, 400) summary,
                (select array_agg(m.search_id) from fed_matches m where m.workspace_id = n.workspace_id and m.notice_id = n.notice_id) searches
           from fed_notices n
          where n.workspace_id = staff_ws() and n.source = coalesce(p_source, 'SAM.gov') and (p_status = 'All' or n.status = p_status)
-           and exists (select 1 from fed_matches m where m.workspace_id = n.workspace_id and m.notice_id = n.notice_id and (p_search is null or m.search_id = p_search))
+           and ((n.source = 'BidMatch' and p_search is null)
+                or exists (select 1 from fed_matches m where m.workspace_id = n.workspace_id and m.notice_id = n.notice_id and (p_search is null or m.search_id = p_search)))
          order by case when p_sort = 'due' then n.response_deadline end nulls last, n.posted_date desc nulls last, n.first_seen desc
          limit least(greatest(coalesce(p_limit, 400), 1), 1000)) x $$;
 -- new (unreviewed) matches, in total and per search
@@ -2425,8 +2588,10 @@ create or replace function public.fed_counts() returns jsonb
 language sql stable security definer set search_path = public as $$
   select jsonb_build_object('new', (select count(distinct n.notice_id) from fed_notices n join fed_matches m on m.workspace_id = n.workspace_id and m.notice_id = n.notice_id
                                      where n.workspace_id = staff_ws() and n.status = 'New'),
-    'by_source', coalesce((select jsonb_object_agg(source, c) from (select n.source, count(distinct n.notice_id) c from fed_notices n join fed_matches m on m.workspace_id = n.workspace_id and m.notice_id = n.notice_id
-                                     where n.workspace_id = staff_ws() and n.status = 'New' group by n.source) z), '{}'),
+    'by_source', coalesce((select jsonb_object_agg(source, c) from (select n.source, count(*) c from fed_notices n
+                                     where n.workspace_id = staff_ws() and n.status = 'New'
+                                       and (n.source = 'BidMatch' or exists (select 1 from fed_matches m where m.workspace_id = n.workspace_id and m.notice_id = n.notice_id))
+                                     group by n.source) z), '{}'),
     'by_search', coalesce((select jsonb_object_agg(search_id, c) from (select m.search_id, count(*) c from fed_matches m join fed_notices n on n.workspace_id = m.workspace_id and n.notice_id = m.notice_id
                                      where m.workspace_id = staff_ws() and n.status = 'New' group by m.search_id) z), '{}')) $$;
 revoke execute on function public.fed_list(text, text, bigint, text, int), public.fed_counts() from public, anon;
@@ -2449,7 +2614,9 @@ begin
   update fed_notices set status = 'Added', funding_id = fid, status_by = member_name() where workspace_id = w and notice_id = p_notice;
   return fid;
 end $$;
-revoke execute on function public.fed_add_to_funding(text), public.fed_store_grants(uuid, jsonb), public.fed_request_grants(uuid, int), public.fed_date(text) from public, anon;
+revoke execute on function public.fed_add_to_funding(text), public.fed_store_grants(uuid, jsonb), public.fed_request_grants(uuid, int), public.fed_date(text), public.fed_set_bidmatch(text) from public, anon;
+revoke execute on function public.fed_store_bm(uuid, text, text, int, text), public.fed_request_bm(uuid, text, text, int) from public, anon, authenticated;
+grant execute on function public.fed_set_bidmatch(text) to authenticated;
 revoke execute on function public.fed_store_grants(uuid, jsonb), public.fed_request_grants(uuid, int) from authenticated;
 grant execute on function public.fed_add_to_funding(text) to authenticated;
 

@@ -618,3 +618,5 @@ textarea.mono { font: 12.5px/1.5 ui-monospace, Menlo, monospace; }
 .task-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; font-size: 12px; color: var(--muted); } .task-meta .pri { color: var(--amber); font-weight: 600; }
 .avatar.mini { width: 22px; height: 22px; font-size: 10px; }
 .board-add input { margin-top: 8px; background: transparent; border-style: dashed; }
+.form-error { margin: 10px 0 0; padding: 8px 10px; border-radius: 8px; background: #fdecec; color: #9b1c1c; font-size: 13px; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .form-error { background: #3a1616; color: #ffb4b4; } }

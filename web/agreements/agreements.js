@@ -371,14 +371,19 @@ function uploadDialog(a, executes) {
   $("#drawerBody").innerHTML = `<form id="up">${executes ? `<p class="muted">Signed on paper, in DocuSign or Adobe Sign? Attach the fully signed PDF. ${ref(a)} becomes Active and any signing links stop working.</p>
       <label>Date it was fully signed<input type="date" name="date" value="${today()}"></label>` : ""}
     <label>File (PDF, Word or image, up to 10 MB)<input type="file" name="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" required></label>
-    <div class="actions-row" style="margin-top:12px"><button class="btn primary">${executes ? "Attach and mark executed" : "Attach"}</button></div></form>`;
+    <div class="actions-row" style="margin-top:12px"><button class="btn primary">${executes ? "Attach and mark executed" : "Attach"}</button></div>
+    <p class="form-error" id="upErr" role="alert" hidden></p></form>`;
   openDrawer();
   $("#up").addEventListener("submit", async (e) => {
-    e.preventDefault(); const file = e.target.file.files[0]; if (!file) return;
-    if (file.size > 10 * 1024 * 1024) return toast("That file is over 10 MB");
-    const b64 = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1]); r.readAsDataURL(file); });
-    try { await db.rpc("agr_upload_signed", { p_id: a.id, p_name: file.name, p_mime: file.type, p_b64: b64, p_executed: executes ? e.target.date.value : null }); toast(executes ? "Signed copy attached. Agreement is active" : "File added"); closeDrawer(); View(a.id); }
-    catch (err) { toast(err.message); }
+    e.preventDefault(); const f = e.target, file = f.file.files[0], btn = $("button.primary", f), err = $("#upErr"); if (!file) return;
+    err.hidden = true;
+    if (file.size > 10 * 1024 * 1024) { err.textContent = "That file is over 10 MB."; err.hidden = false; return; }
+    const label = btn.textContent; btn.disabled = true; btn.textContent = "Uploading…";
+    try {
+      const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1]); r.onerror = () => rej(new Error("Couldn't read that file.")); r.readAsDataURL(file); });
+      await db.rpc("agr_upload_signed", { p_id: a.id, p_name: file.name, p_mime: file.type || "application/octet-stream", p_b64: b64, p_executed: executes ? f.date.value : null });
+      toast(executes ? "Signed copy attached. Agreement is active" : "File added"); closeDrawer(); View(a.id);
+    } catch (ex) { err.textContent = `Upload failed: ${ex.message}`; err.hidden = false; btn.disabled = false; btn.textContent = label; }
   });
 }
 function endDialog(a) {

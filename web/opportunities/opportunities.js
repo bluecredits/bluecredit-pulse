@@ -24,15 +24,40 @@ const PSC = { A: "Research & development", B: "Special studies & analysis", C: "
   N: "Installation of equipment", P: "Salvage", Q: "Medical", R: "Professional & support services", S: "Utilities & housekeeping", T: "Photo, mapping & printing", U: "Education & training",
   V: "Transportation & travel", W: "Lease or rental of equipment", X: "Lease or rental of facilities", Y: "Construction of structures", Z: "Maintenance of real property" };
 const pscLabel = (c) => (c ? (PSC[String(c)[0].toUpperCase()] ? `${c} · ${PSC[String(c)[0].toUpperCase()]}` : /^[0-9]/.test(c) ? `${c} · Supplies` : c) : "");
-// keywords that put a notice in front of you: MyBidMatch's own profile terms, or the search keywords found in the title
+// The NAICS codes and keywords you put in your searches are what every card and filter is built around.
+let MY = { naics: [], kw: [] };
+// "hydrological" also finds "hydrologic", "environmental" finds "environment", "floods" finds "flood"
+const stem = (k) => { const w = k.toLowerCase().trim(), r = w.replace(/(ical|al|ing|ed|es|s)$/, ""); return r.length >= 4 ? r : w; };
+// keywords from your searches found in the title or description (plus MyBidMatch's own profile terms)
 function keywordsOf(r) {
-  if (r.source === "BidMatch") return String(r.bm_keywords || "").split(";").map((k) => k.trim()).filter((k) => k && !/^naics!/i.test(k)).map((k) => k.replace(/^ti:/i, "").replace(/[*?]+$/, ""));
-  const t = (r.title || "").toLowerCase(), out = new Set();
-  (r.searches || []).forEach((id) => (KW[id] || []).forEach((k) => { if (t.includes(k.toLowerCase())) out.add(k); }));
+  const t = `${r.title || ""} ${r.summary || ""}`.toLowerCase(), out = new Set();
+  MY.kw.forEach((k) => { if (t.includes(stem(k))) out.add(k); });
+  if (r.source === "BidMatch") String(r.bm_keywords || "").split(";").map((k) => k.trim().replace(/^ti:/i, "").replace(/[*?]+$/, ""))
+    .filter((k) => k && !/^naics!/i.test(k)).forEach((k) => { if (![...out].some((o) => o.toLowerCase() === k.toLowerCase())) out.add(k); });
   return [...out];
 }
 const naicsOf = (r) => [...new Set([...(r.naics_all || []), r.naics].filter(Boolean))];
-let KW = {};
+const isMine = (code) => MY.naics.some((m) => String(code).startsWith(m));
+// titles for common codes (2022 NAICS); anything else shows the number alone
+const NAICS = { "541620": "Environmental Consulting", "541330": "Engineering Services", "541370": "Surveying & Mapping", "541715": "R&D: Physical, Engineering & Life Sciences",
+  "541511": "Custom Computer Programming", "541512": "Computer Systems Design", "518210": "Computing Infrastructure & Data Processing", "541519": "Other Computer Services",
+  "541690": "Other Scientific & Technical Consulting", "541611": "Management Consulting", "541618": "Other Management Consulting", "541990": "Other Professional & Technical Services",
+  "541360": "Geophysical Surveying & Mapping", "541380": "Testing Laboratories", "541340": "Drafting Services", "541320": "Landscape Architecture", "541310": "Architectural Services",
+  "237110": "Water & Sewer Line Construction", "237990": "Other Heavy & Civil Construction", "221310": "Water Supply & Irrigation Systems", "221320": "Sewage Treatment Facilities",
+  "562910": "Remediation Services", "924110": "Air, Water & Waste Program Administration", "541720": "R&D: Social Sciences & Humanities", "611430": "Professional & Management Training",
+  "561720": "Janitorial Services", "236220": "Commercial Building Construction", "238910": "Site Preparation" };
+const naicsLabel = (c) => (NAICS[c] ? `${c} · ${NAICS[c]}` : String(c));
+// who to talk to, from SAM.gov's point of contact, the BidMatch POC line or the Grants.gov agency contact
+function contactLine(r) {
+  const cs = (r.contacts || []).slice(0, 2);
+  const fedish = r.source === "SAM.gov" || (r.source === "BidMatch" && r.level === "Federal");
+  const label = r.source === "Grants.gov" ? "Grants contact" : fedish ? "Contracting officer" : "Buyer contact";
+  if (!cs.length) return r.source === "Grants.gov" ? "" : `<p class="fed-poc muted">${icon("badge")}<b>${label}:</b> not listed in the notice</p>`;
+  return `<p class="fed-poc">${icon("badge")}<b>${cs.length > 1 && fedish ? "Contacts" : label}:</b> ${cs.map((c) => [
+      c.name ? `<span class="nm">${esc(c.name)}</span>${c.title ? ` <span class="muted">(${esc(c.title)})</span>` : ""}` : "",
+      c.email ? `<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : "", c.phone ? `<a href="tel:${esc(c.phone.replace(/[^0-9+]/g, ""))}">${esc(c.phone)}</a>` : ""]
+    .filter(Boolean).join(" · ")).join(`<span class="sep">|</span>`)}</p>`;
+}
 const TYPES = ["Solicitation", "Combined Synopsis/Solicitation", "Presolicitation", "Sources Sought", "Special Notice", "Award Notice", "Justification", "Sale of Surplus Property", "Intent to Bundle Requirements (DoD-Funded)"];
 const SIZES = [["any", "Any size"], ["small", "Small-business set-asides only"], ["unrestricted", "Unrestricted only (no set-aside)"]];
 const EVERY = [[15, "Every 15 minutes"], [30, "Every 30 minutes"], [60, "Every hour"], [120, "Every 2 hours"], [240, "Every 4 hours"], [720, "Twice a day"], [1440, "Once a day"]];
@@ -45,19 +70,30 @@ const setupNeeded = (e) => /fed_|schema cache|does not exist/i.test(e.message ||
 /* ================================================================ matches */
 async function Matches() {
   const grants = FD.source === "Grants.gov", bm = FD.source === "BidMatch", src = SRC[FD.source];
-  const [allSearches, st, counts] = await Promise.all([must(await sb.from("fed_searches").select("id, name, active, source, keywords").order("name")), db.rpc("fed_status", {}), db.rpc("fed_counts", {})]);
+  const [allSearches, st, counts] = await Promise.all([must(await sb.from("fed_searches").select("id, name, active, source, keywords, naics").order("name")), db.rpc("fed_status", {}), db.rpc("fed_counts", {})]);
   const searches = allSearches.filter((s) => s.source === FD.source);
   if (FD.search && !searches.some((s) => String(s.id) === FD.search)) FD.search = "";
-  KW = Object.fromEntries(allSearches.map((s) => [s.id, s.keywords || []]));
+  // contracts and bids use your contract searches' codes and words; grants use your grant searches' words
+  const mine = allSearches.filter((s) => s.active && (grants ? s.source === "Grants.gov" : s.source === "SAM.gov"));
+  const uniq = (a) => [...new Map(a.filter(Boolean).map((x) => [String(x).toLowerCase(), String(x).trim()])).values()];
+  MY = { naics: uniq(mine.flatMap((s) => s.naics || [])).sort(), kw: uniq(mine.flatMap((s) => s.keywords || [])) };
   let rows = await db.rpc("fed_list", { p_source: FD.source, p_status: FD.status, p_search: FD.search ? +FD.search : null, p_sort: FD.sort });
-  const kwAll = {}, naicsAll = {};
-  rows.forEach((r) => { keywordsOf(r).forEach((k) => (kwAll[k] = (kwAll[k] || 0) + 1)); naicsOf(r).forEach((n) => (naicsAll[n] = (naicsAll[n] || 0) + 1)); });
-  if (FD.kw && !kwAll[FD.kw]) FD.kw = ""; if (FD.naics && !naicsAll[FD.naics]) FD.naics = "";
+  const kwAll = Object.fromEntries(MY.kw.map((k) => [k, 0])), naicsAll = Object.fromEntries(MY.naics.map((c) => [c, 0])), otherNaics = {};
+  rows.forEach((r) => {
+    keywordsOf(r).forEach((k) => (kwAll[k] = (kwAll[k] || 0) + 1));
+    const codes = naicsOf(r);
+    MY.naics.forEach((m) => { if (codes.some((c) => c.startsWith(m))) naicsAll[m]++; });
+    codes.filter((c) => !isMine(c)).forEach((c) => (otherNaics[c] = (otherNaics[c] || 0) + 1));
+  });
   const levelCounts = {}; if (bm) rows.forEach((r) => (levelCounts[r.level || "Other"] = (levelCounts[r.level || "Other"] || 0) + 1));
   if (bm && FD.level) rows = rows.filter((r) => (r.level || "Other") === FD.level);
-  if (FD.kw) rows = rows.filter((r) => keywordsOf(r).includes(FD.kw));
-  if (FD.naics) rows = rows.filter((r) => naicsOf(r).includes(FD.naics));
-  if (FD.q) { const t = FD.q.toLowerCase(); rows = rows.filter((r) => [r.title, r.sol_number, r.agency, r.subtier, r.office, r.naics, (r.aln || []).join(" "), r.summary].join(" ").toLowerCase().includes(t)); }
+  if (FD.kw) rows = rows.filter((r) => keywordsOf(r).some((k) => k.toLowerCase() === FD.kw.toLowerCase()));
+  if (FD.naics) rows = rows.filter((r) => naicsOf(r).some((c) => c.startsWith(FD.naics)));
+  if (FD.q) { const t = FD.q.toLowerCase(); rows = rows.filter((r) => [r.title, r.sol_number, r.agency, r.subtier, r.office, naicsOf(r).join(" "), keywordsOf(r).join(" "), (r.aln || []).join(" "), r.summary,
+    (r.contacts || []).map((c) => `${c.name || ""} ${c.email || ""}`).join(" ")].join(" ").toLowerCase().includes(t)); }
+  const chips = (kind, all, cur, label, fmt) => `<div class="fed-chips" role="group" aria-label="${label}"><span class="lbl">${label}</span>
+      <button type="button" class="chip ${cur ? "" : "on"}" data-${kind}="">All</button>${all.map(([k, n]) => `<button type="button" class="chip ${cur && cur.toLowerCase() === k.toLowerCase() ? "on" : ""} ${n ? "" : "zero"}" data-${kind}="${esc(k)}" title="${esc(fmt(k))}">${esc(k)} <span>${n}</span></button>`).join("")}</div>`;
+  const otherOpts = Object.entries(otherNaics).sort((a, b) => b[1] - a[1]);
   const sname = Object.fromEntries(searches.map((s) => [s.id, s.name]));
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>${grants ? "Grants" : "Contracts"}</h1><p class="muted">${bm ? "Bids from your APEX Accelerator MyBidMatch lists: federal, state, local and education." : (grants ? "Open and forecasted Grants.gov grants" : "Federal notices from SAM.gov") + " that match your searches."} ${bm ? bmLine(st) : statusLine(st, grants)}</p></div>
@@ -68,18 +104,22 @@ async function Matches() {
     <div class="filters">
       <div class="tabs">${["New", "Saved", "Added", "Dismissed", "All"].map((k) => `<button data-st="${k}" aria-selected="${FD.status === k}">${k}</button>`).join("")}</div>
       <select id="fSearch" ${bm ? "hidden" : ""}><option value="">All searches</option>${searches.map((s) => `<option value="${s.id}" ${String(s.id) === FD.search ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select>
-      ${grants ? "" : `<select id="fKw"><option value="">All keywords</option>${Object.entries(kwAll).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<option value="${esc(k)}" ${k === FD.kw ? "selected" : ""}>${esc(k)} (${n})</option>`).join("")}</select>
-      <select id="fNaics"><option value="">All NAICS</option>${Object.entries(naicsAll).sort().map(([k, n]) => `<option value="${esc(k)}" ${k === FD.naics ? "selected" : ""}>${esc(k)} (${n})</option>`).join("")}</select>`}
+      ${grants || !otherOpts.length ? "" : `<select id="fNaics" aria-label="Other NAICS codes"><option value="">Other NAICS codes…</option>${otherOpts.map(([k, n]) => `<option value="${esc(k)}" ${k === FD.naics ? "selected" : ""}>${esc(naicsLabel(k))} (${n})</option>`).join("")}</select>`}
       <select id="fSort"><option value="posted" ${FD.sort === "posted" ? "selected" : ""}>Newest first</option><option value="due" ${FD.sort === "due" ? "selected" : ""}>Due soonest</option></select>
       <input id="fQ" type="search" placeholder="Filter by title, agency, ${grants ? "assistance listing" : bm ? "text" : "NAICS"}…" value="${esc(FD.q)}">
     </div>
+    ${grants || !MY.naics.length ? "" : chips("fnaics", Object.entries(naicsAll), FD.naics, "Your NAICS", naicsLabel)}
+    ${MY.kw.length || Object.keys(kwAll).length ? chips("fkw", Object.entries(kwAll).sort((a, b) => b[1] - a[1]), FD.kw, "Your keywords", (k) => k) : ""}
+    ${FD.naics || FD.kw ? `<p class="muted small fed-filtered">Showing ${rows.length} with ${[FD.naics && "NAICS " + naicsLabel(FD.naics), FD.kw && `“${esc(FD.kw)}”`].filter(Boolean).join(" and ")}. <button type="button" class="link-btn" data-clear>Clear</button></p>` : ""}
     <div class="fed-list">${rows.map((r) => card(r, sname)).join("") || `<div class="empty">${FD.status === "New" ? "No new matches right now." : "Nothing here."}${bm || searches.length ? "" : ` <a href="#/searches/new?${grants ? "grants" : "contracts"}">Create your first ${grants ? "grants" : "contracts"} search</a>.`}</div>`}</div>`;
   $$("[data-st]").forEach((b) => b.addEventListener("click", () => { FD.status = b.dataset.st; Matches(); }));
   $$("[data-lv]").forEach((b) => b.addEventListener("click", () => { FD.level = b.dataset.lv; Matches(); }));
   $("#fSearch").addEventListener("change", (e) => { FD.search = e.target.value; Matches(); });
   $("#fSort").addEventListener("change", (e) => { FD.sort = e.target.value; Matches(); });
-  $("#fKw")?.addEventListener("change", (e) => { FD.kw = e.target.value; Matches(); });
   $("#fNaics")?.addEventListener("change", (e) => { FD.naics = e.target.value; Matches(); });
+  $$("[data-fnaics]").forEach((b) => b.addEventListener("click", () => { FD.naics = b.dataset.fnaics; Matches(); }));
+  $$("[data-fkw]").forEach((b) => b.addEventListener("click", () => { FD.kw = b.dataset.fkw; Matches(); }));
+  $("[data-clear]")?.addEventListener("click", () => { FD.naics = ""; FD.kw = ""; Matches(); });
   $$("[data-more]").forEach((b) => b.addEventListener("click", () => { const p = b.previousElementSibling; const open = p.classList.toggle("open"); b.textContent = open ? "Show less" : "Show full description"; }));
   $("#fQ").addEventListener("input", debounce((e) => { FD.q = e.target.value; Matches().then(() => { const i = $("#fQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 300));
   $("#runNow").addEventListener("click", runNow);
@@ -87,10 +127,16 @@ async function Matches() {
   rowsCache = Object.fromEntries(rows.map((r) => [r.notice_id, r]));
 }
 let rowsCache = {};
+// NAICS and keywords: always on the card, your own codes highlighted; click one to filter by it
+function keyLine(r) {
+  const codes = naicsOf(r).sort((a, b) => isMine(b) - isMine(a)), kws = keywordsOf(r), grant = r.source === "Grants.gov";
+  return `<div class="fed-keys">
+      ${grant ? "" : `<div><span class="lbl">NAICS</span>${codes.length ? codes.map((c) => `<button type="button" class="tag ${isMine(c) ? "mine" : ""}" data-pick-naics="${esc(MY.naics.find((m) => c.startsWith(m)) || c)}" title="${isMine(c) ? "One of your NAICS codes" : "Filter by this code"}">${esc(naicsLabel(c))}</button>`).join("") : `<span class="muted">not listed in the notice</span>`}</div>`}
+      <div><span class="lbl">Keywords</span>${kws.length ? kws.map((k) => `<button type="button" class="tag kw" data-pick-kw="${esc(k)}">${esc(k)}</button>`).join("") : `<span class="muted">none of your keywords in the text</span>`}</div>
+    </div>`;
+}
 function classes(r) {
-  const kws = keywordsOf(r), codes = naicsOf(r), rows = [];
-  if (codes.length) rows.push(`<div><dt>NAICS</dt><dd>${codes.map((c) => `<button type="button" class="tag" data-pick-naics="${esc(c)}">${esc(c)}</button>`).join(" ")}</dd></div>`);
-  if (kws.length) rows.push(`<div><dt>Keywords</dt><dd>${kws.map((k) => `<button type="button" class="tag kw" data-pick-kw="${esc(k)}">${esc(k)}</button>`).join(" ")}</dd></div>`);
+  const rows = [];
   if (r.psc) rows.push(`<div><dt>Category</dt><dd>${esc(pscLabel(r.psc))}</dd></div>`);
   if (r.set_aside) rows.push(`<div><dt>Set-aside</dt><dd>${esc(r.set_aside)}</dd></div>`);
   if (r.level) rows.push(`<div><dt>Level</dt><dd>${esc(r.level)}</dd></div>`);
@@ -120,6 +166,8 @@ function card(r, sname) {
         ${hits.map((h) => `<span class="fed-hit">${icon("search")}${esc(h)}</span>`).join("")}</div>
       <h3><a href="${esc(r.ui_link || "https://sam.gov/opp/" + r.notice_id + "/view")}" target="_blank" rel="noopener">${esc(r.title || "(untitled)")} <svg class="ic ext-ic"><use href="#i-external"/></svg></a></h3>
       <p class="muted small">${esc(grant ? [r.agency, r.subtier].filter(Boolean).join(" · ") : [r.agency, r.subtier, r.office].filter((x, i, a) => x && a.indexOf(x) === i).join(" · "))}</p>
+      ${keyLine(r)}
+      ${contactLine(r)}
       ${r.summary ? `<p class="fed-sum">${esc(r.summary.replace(/^[A-Z0-9]{1,2} -{1,2} /, ""))}</p>${r.summary.length > 320 ? `<button type="button" class="link-btn" data-more>Show full description</button>` : ""}` : ""}
       ${grant ? "" : classes(r)}
       <dl class="fed-facts">

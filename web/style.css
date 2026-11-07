@@ -705,9 +705,9 @@ textarea.mono { font: 12.5px/1.5 ui-monospace, Menlo, monospace; }
 .tabs a[aria-selected="true"] { background: #fff; color: var(--blue); box-shadow: var(--shadow-sm); }
 .tabs a:hover { color: var(--blue); }
 .fed-levels { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
-.fed-levels .chip { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 5px 12px; font: 600 12.5px var(--font-ui); color: var(--ink-2); cursor: pointer; }
-.fed-levels .chip span { color: var(--muted); font-weight: 500; margin-left: 2px; }
-.fed-levels .chip.on { background: var(--blue); border-color: var(--blue); color: #fff; } .fed-levels .chip.on span { color: #dbeafe; }
+.fed-levels .chip, .fed-chips .chip { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 5px 12px; font: 600 12.5px var(--font-ui); color: var(--ink-2); cursor: pointer; }
+.fed-levels .chip span, .fed-chips .chip span { color: var(--muted); font-weight: 500; margin-left: 2px; }
+.fed-levels .chip.on, .fed-chips .chip.on { background: var(--blue); border-color: var(--blue); color: #fff; } .fed-levels .chip.on span, .fed-chips .chip.on span { color: #dbeafe; }
 .fed-sum { font-size: 13px; color: var(--ink-2); margin: 6px 0 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .pill.lv-federal { background: #dbeafe; color: #1d4ed8; } .pill.lv-state { background: #ede9fe; color: #6d28d9; }
 .pill.lv-local { background: #dcfce7; color: #15803d; } .pill.lv-education { background: #fef3c7; color: #b45309; } .pill.lv-other { background: #f1f5f9; color: #475569; }
@@ -775,3 +775,18 @@ button.apps-btn { border: 0; background: none; cursor: pointer; }
 .lead-src h4 .due-soon { color: var(--amber); }
 .snapshot .grid2 .snap-sec, .snap-group > .snap-sec:not([id]) { padding-left: 0; border-left: 0; }
 @media print { .snap-list li[hidden] { display: flex !important; } .snap-tile { border: 1px solid var(--line); } }
+
+/* Opportunities: NAICS + keywords on every card, filter chips, contracting officer */
+.fed-keys { display: grid; gap: 6px; margin: 8px 0 6px; font-size: 13px; }
+.fed-keys > div { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.fed-keys .lbl, .fed-chips .lbl { font: 700 11px var(--font-ui); letter-spacing: .04em; text-transform: uppercase; color: var(--muted); min-width: 74px; }
+.fed-keys .tag.mine { background: var(--blue); color: #fff; border-color: var(--blue); }
+.fed-poc { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 4px 0 8px; font-size: 13px; }
+.fed-poc .ic { width: 15px; height: 15px; color: var(--blue); }
+.fed-poc.muted .ic { color: var(--muted); }
+.fed-poc .nm { font-weight: 600; }
+.fed-poc a { color: var(--blue); text-decoration: none; } .fed-poc a:hover { text-decoration: underline; }
+.fed-poc .sep { color: var(--line); margin: 0 4px; }
+.fed-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 10px; }
+.fed-chips .chip.zero { opacity: .55; }
+.fed-filtered { margin: -2px 0 10px; }

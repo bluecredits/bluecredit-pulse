@@ -2048,6 +2048,9 @@ alter table public.fed_calls add column if not exists ref text;
 alter table public.fed_notices add column if not exists level text;
 alter table public.fed_notices add column if not exists summary text;
 alter table public.fed_notices add column if not exists bm_keywords text;
+-- who to talk to: [{name, title, email, phone, type}] (SAM.gov point of contact, the BidMatch POC line, the Grants.gov agency contact)
+alter table public.fed_notices add column if not exists contacts jsonb not null default '[]';
+alter table public.fed_notices add column if not exists detail_at timestamptz;
 create table if not exists public.fed_bm_docs (
   workspace_id uuid not null references public.workspaces (id) on delete cascade,
   doc text not null, list_date date, articles int, created_at timestamptz not null default now(),
@@ -2134,7 +2137,7 @@ language plpgsql volatile security definer set search_path = public as $$
 declare v int;
 begin
   insert into fed_notices as f (workspace_id, notice_id, title, sol_number, path_name, agency, subtier, office, notice_type, base_type, posted_date,
-      response_deadline, naics, naics_all, psc, set_aside_code, set_aside, state, city, ui_link, award_amount, awardee, active)
+      response_deadline, naics, naics_all, psc, set_aside_code, set_aside, state, city, ui_link, award_amount, awardee, active, contacts)
   select p_ws, o ->> 'noticeId', o ->> 'title', o ->> 'solicitationNumber', o ->> 'fullParentPathName',
       fed_name(split_part(o ->> 'fullParentPathName', '.', 1)), fed_name(nullif(split_part(o ->> 'fullParentPathName', '.', 2), '')),
       fed_name(nullif(regexp_replace(o ->> 'fullParentPathName', '^.*\.', ''), '')),
@@ -2144,16 +2147,20 @@ begin
                 union select o ->> 'naicsCode') z where x is not null and x <> ''), '{}'),
       o ->> 'classificationCode', nullif(o ->> 'typeOfSetAside', ''), nullif(o ->> 'typeOfSetAsideDescription', ''),
       o #>> '{placeOfPerformance,state,code}', o #>> '{placeOfPerformance,city,name}', o ->> 'uiLink',
-      fed_num(o #>> '{award,amount}'), o #>> '{award,awardee,name}', (o ->> 'active') = 'Yes'
+      fed_num(o #>> '{award,amount}'), o #>> '{award,awardee,name}', (o ->> 'active') = 'Yes',
+      coalesce((select jsonb_agg(jsonb_strip_nulls(jsonb_build_object('name', fed_person(p ->> 'fullName'), 'title', nullif(trim(p ->> 'title'), ''),
+          'email', nullif(lower(trim(p ->> 'email')), ''), 'phone', nullif(trim(p ->> 'phone'), ''), 'type', initcap(nullif(p ->> 'type', '')))))
+        from jsonb_array_elements(case when jsonb_typeof(o -> 'pointOfContact') = 'array' then o -> 'pointOfContact' else '[]' end) p
+       where coalesce(nullif(trim(p ->> 'fullName'), ''), nullif(trim(p ->> 'email'), '')) is not null), '[]')
     from jsonb_array_elements(case when jsonb_typeof(p_body -> 'opportunitiesData') = 'array' then p_body -> 'opportunitiesData' else '[]' end) o
    where coalesce(o ->> 'noticeId', '') <> ''
   on conflict (workspace_id, notice_id) do update set title = excluded.title, sol_number = excluded.sol_number, path_name = excluded.path_name,
       agency = excluded.agency, subtier = excluded.subtier, office = excluded.office, notice_type = excluded.notice_type, base_type = excluded.base_type,
       posted_date = excluded.posted_date, response_deadline = excluded.response_deadline, naics = excluded.naics, naics_all = excluded.naics_all,
       psc = excluded.psc, set_aside_code = excluded.set_aside_code, set_aside = excluded.set_aside, state = excluded.state, city = excluded.city,
-      ui_link = excluded.ui_link, award_amount = excluded.award_amount, awardee = excluded.awardee, active = excluded.active, updated_at = now()
-    where (f.title, f.response_deadline, f.active, f.set_aside_code, f.notice_type) is distinct from
-          (excluded.title, excluded.response_deadline, excluded.active, excluded.set_aside_code, excluded.notice_type);
+      ui_link = excluded.ui_link, award_amount = excluded.award_amount, awardee = excluded.awardee, active = excluded.active, contacts = excluded.contacts, updated_at = now()
+    where (f.title, f.response_deadline, f.active, f.set_aside_code, f.notice_type, f.contacts) is distinct from
+          (excluded.title, excluded.response_deadline, excluded.active, excluded.set_aside_code, excluded.notice_type, excluded.contacts);
   get diagnostics v = row_count;
   return v;
 end $$;
@@ -2183,6 +2190,44 @@ begin
 exception when undefined_function or invalid_schema_name or undefined_table then
   update fed_config set last_error = 'The database extensions for fetching (pg_net, Vault) are not turned on. See Settings.' where workspace_id = p_ws;
   return false;
+end $$;
+
+
+-- a person's name, tidied: "POWERS, Mr. FRANK M" -> "Frank M Powers"
+create or replace function public.fed_person(p text) returns text language plpgsql immutable as $$
+declare n text := trim(both ' ,;' from coalesce(p, ''));
+begin
+  n := regexp_replace(n, '\m(Mr|Ms|Mrs|Miss|Dr)\.?\s+', '', 'gi');
+  if n ~ '^[^,]+,[^,]+$' then n := trim(split_part(n, ',', 2)) || ' ' || trim(split_part(n, ',', 1)); end if;
+  n := regexp_replace(n, '\s+', ' ', 'g');
+  if n = upper(n) then n := initcap(n); end if;
+  return nullif(n, '');
+end $$;
+
+-- contacts in a MyBidMatch article: the "POC Name, email, tel:..." line on federal notices, otherwise the first email address
+create or replace function public.fed_bm_contacts(p_body text) returns jsonb language plpgsql immutable as $$
+declare seg text; em text[]; parts text[]; out jsonb := '[]'; i int; nm text; ph text;
+  ere text := '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}';
+begin
+  if p_body is null then return out; end if;
+  seg := substring(p_body from '\mPOC\s+(.{1,250}.{0,250})');
+  if seg is not null then
+    em := array(select m[1] from regexp_matches(seg, '(' || ere || ')', 'g') m);
+    parts := regexp_split_to_array(seg, ere);
+    for i in 1 .. least(coalesce(array_length(em, 1), 0), 3) loop
+      nm := trim(both ' ,' from regexp_replace(parts[i], '^\s*,?\s*tel:\s*[0-9() .+-]*[0-9]', ''));
+      -- past the POC line the text is the notice itself: stop at anything that doesn't look like a name
+      exit when i > 1 and (length(nm) > 45 or nm !~ '^[A-Za-z][A-Za-z .,''-]*$' or array_length(regexp_split_to_array(trim(nm), '\s+'), 1) > 5);
+      ph := substring(parts[i + 1] from '^\s*,\s*tel:\s*([0-9() .+-]*[0-9])');
+      out := out || jsonb_build_array(jsonb_strip_nulls(jsonb_build_object('name', case when length(nm) <= 45 and nm ~ '^[A-Za-z][A-Za-z .,''-]*$' then fed_person(nm) end,
+               'email', lower(em[i]), 'phone', nullif(trim(ph), ''))));
+    end loop;
+  end if;
+  if jsonb_array_length(out) = 0 then
+    nm := substring(p_body from '(' || ere || ')');
+    if nm is not null then out := jsonb_build_array(jsonb_build_object('email', lower(trim(trailing '.' from nm)))); end if;
+  end if;
+  return out;
 end $$;
 
 -- ----- MyBidMatch (Outreach Systems): the subscriber's daily match lists, read from their private link
@@ -2273,7 +2318,7 @@ begin
     exception when others then ts := null; end;
     sol := trim(substring(body from '\mSOL\s+((?:(?:RFP|RFQ|IFB|ITB|RFI|RFB)\s+)?[A-Z0-9][A-Za-z0-9_./-]{2,})'));
     due := substring(body from '(?i)set-aside:\s*(.+?\))');
-    update fed_notices set summary = left(body, 6000), sol_number = coalesce(sol, sol_number), response_deadline = coalesce(ts, response_deadline),
+    update fed_notices set summary = left(body, 6000), contacts = fed_bm_contacts(body), sol_number = coalesce(sol, sol_number), response_deadline = coalesce(ts, response_deadline),
         set_aside = coalesce(due, set_aside), set_aside_code = coalesce(case when due ~* 'small business' then 'SB' end, set_aside_code),
         subtier = case when base_type = 'procure' then coalesce(fed_name(nullif(trim(split_part(h4, ',', 2)), '')), subtier) else subtier end,
         office = case when base_type = 'procure' then coalesce(fed_name(nullif(trim(split_part(h4, ',', 3)), '')), office) else office end,
@@ -2312,6 +2357,34 @@ end $$;
 create or replace function public.fed_date(p text) returns date language plpgsql immutable as $$
 begin return to_date(nullif(trim(p), ''), 'MM/DD/YYYY'); exception when others then return null; end $$;
 
+
+-- Grants.gov search results carry no contact, so each matched grant is looked up once (fetchOpportunity) for its agency contact and description
+create or replace function public.fed_request_grant_detail(p_ws uuid, p_notice text) returns boolean
+language plpgsql volatile security definer set search_path = public as $$
+declare rid bigint;
+begin
+  execute 'select net.http_post(url := $1, body := $2, headers := $3, timeout_milliseconds := 60000)' into rid
+    using 'https://api.grants.gov/v1/api/fetchOpportunity', jsonb_build_object('opportunityId', substring(p_notice from 2)::bigint),
+          '{"Content-Type": "application/json"}'::jsonb;
+  insert into fed_calls (workspace_id, request_id, source, ref) values (p_ws, rid, 'GrantDetail', p_notice);
+  return true;
+exception when undefined_function or invalid_schema_name or undefined_table or invalid_text_representation then return false;
+end $$;
+create or replace function public.fed_store_grant_detail(p_ws uuid, p_notice text, p_body jsonb) returns int
+language plpgsql volatile security definer set search_path = public as $$
+declare d jsonb := coalesce(p_body #> '{data,synopsis}', p_body #> '{data,forecast}', '{}'); ph text; n int;
+begin
+  ph := nullif(trim(d ->> 'agencyContactPhone'), ''); if ph !~ '[0-9]{3}' then ph := null; end if;
+  update fed_notices set detail_at = now(),
+      contacts = case when coalesce(nullif(trim(d ->> 'agencyContactName'), ''), nullif(trim(d ->> 'agencyContactEmail'), '')) is not null
+        then jsonb_build_array(jsonb_strip_nulls(jsonb_build_object('name', fed_person(d ->> 'agencyContactName'),
+               'email', nullif(lower(trim(d ->> 'agencyContactEmail')), ''), 'phone', ph, 'type', 'Agency contact'))) else contacts end,
+      summary = coalesce(summary, left(fed_unhtml(coalesce(d ->> 'synopsisDesc', d ->> 'forecastDesc')), 6000))
+   where workspace_id = p_ws and notice_id = p_notice;
+  get diagnostics n = row_count;
+  return n;
+end $$;
+
 -- ask Grants.gov for one page of open and forecasted grants (no key needed)
 create or replace function public.fed_request_grants(p_ws uuid, p_start int) returns boolean
 language plpgsql volatile security definer set search_path = public as $$
@@ -2330,7 +2403,7 @@ end $$;
 -- the timer: collect finished responses, store them, match, ask for the next page or the next scheduled fetch
 create or replace function public.fed_tick_ws(p_ws uuid, p_force boolean default false) returns void
 language plpgsql volatile security definer set search_path = public as $$
-declare c fed_config; cl fed_calls; r record; body jsonb; n int; got int; hits int; started timestamptz := clock_timestamp();
+declare c fed_config; cl fed_calls; r record; g record; body jsonb; n int; got int; hits int; started timestamptz := clock_timestamp();
   today date := (now() at time zone 'America/New_York')::date; stamp text := to_char(now() at time zone 'America/New_York', 'Mon DD, HH12:MI AM');
 begin
   select * into c from fed_config where workspace_id = p_ws for update skip locked;
@@ -2360,6 +2433,16 @@ begin
         if split_part(cl.ref, ':', 1) = 'sub' then
           update fed_config set bidmatch_error = format('MyBidMatch error %s: %s', coalesce(r.status_code::text, ''), left(coalesce(r.error_msg, ''), 200)) where workspace_id = p_ws;
         end if;
+      end if;
+      continue;
+    end if;
+    if cl.source = 'GrantDetail' then
+      if body is not null then
+        got := fed_store_grant_detail(p_ws, cl.ref, body);
+        update fed_calls set status = 'done', http_status = 200, records = got, done_at = now() where id = cl.id;
+      else
+        update fed_calls set status = 'error', http_status = r.status_code, error = coalesce(r.error_msg, left(r.content, 300), 'Unreadable response'), done_at = now() where id = cl.id;
+        update fed_notices set detail_at = now() where workspace_id = p_ws and notice_id = cl.ref;
       end if;
       continue;
     end if;
@@ -2405,7 +2488,7 @@ begin
   -- next scheduled fetch: SAM.gov today's notices (plus yesterday's once a day, for late postings); Grants.gov all open grants
   select * into c from fed_config where workspace_id = p_ws;
   if (c.enabled and (c.next_fetch_at is null or c.next_fetch_at <= now()) or p_force)
-     and not exists (select 1 from fed_calls where workspace_id = p_ws and status = 'pending' and source <> 'BidMatch') then
+     and not exists (select 1 from fed_calls where workspace_id = p_ws and status = 'pending' and source in ('SAM.gov', 'Grants.gov')) then
     update fed_config set next_fetch_at = now() + make_interval(mins => c.every_min) where workspace_id = p_ws;
     if c.key_secret_id is not null then
       perform fed_request(p_ws, case when c.yesterday_done is distinct from today then today - 1 else today end, today, 0);
@@ -2415,6 +2498,14 @@ begin
     end if;
     if c.bidmatch_secret_id is not null then perform fed_request_bm(p_ws, 'sub'); end if;
   end if;
+  -- contacts for matched grants, a few per tick
+  for g in select f.notice_id from fed_notices f
+            where f.workspace_id = p_ws and f.source = 'Grants.gov' and f.detail_at is null and f.status in ('New', 'Saved')
+              and exists (select 1 from fed_matches m where m.workspace_id = f.workspace_id and m.notice_id = f.notice_id)
+              and not exists (select 1 from fed_calls x where x.workspace_id = p_ws and x.source = 'GrantDetail' and x.ref = f.notice_id and x.created_at > now() - interval '1 day')
+            order by f.response_deadline nulls last limit 25 loop
+    perform fed_request_grant_detail(p_ws, g.notice_id);
+  end loop;
   -- housekeeping
   delete from fed_bm_docs where workspace_id = p_ws and created_at < now() - interval '45 days';
   delete from fed_notices f where f.workspace_id = p_ws and f.status = 'New' and f.first_seen < now() - case when f.source = 'BidMatch' then interval '40 days' else interval '21 days' end
@@ -2579,6 +2670,11 @@ begin
   update fed_notices set status = p_status, status_by = member_name() where workspace_id = w and notice_id = any (p_notices) and status <> 'Added';
 end $$;
 
+
+-- "Contact: Frank M Powers (Contracting Officer), frank.m.powers@uscg.mil, 757-555-0100" lines for record notes
+create or replace function public.fed_contacts_text(p jsonb) returns text language sql immutable as $$
+  select string_agg('Contact: ' || concat_ws(', ', nullif(concat_ws(' ', c ->> 'name', '(' || coalesce(c ->> 'title', c ->> 'type') || ')'), ''), c ->> 'email', c ->> 'phone'), E'\n')
+    from jsonb_array_elements(case when jsonb_typeof(p) = 'array' then p else '[]' end) c $$;
 create or replace function public.fed_add_to_opportunities(p_notice text, p_kind text default null) returns bigint
 language plpgsql volatile security definer set search_path = public as $$
 declare w uuid := staff_ws(); n fed_notices; oid bigint;
@@ -2587,13 +2683,15 @@ begin
   select * into n from fed_notices where workspace_id = w and notice_id = p_notice for update;
   if not found then raise exception 'Notice not found.'; end if;
   if n.opportunity_id is not null and exists (select 1 from opportunities where id = n.opportunity_id) then return n.opportunity_id; end if;
-  insert into opportunities (workspace_id, title, kind, agency, ref_no, stage, deadline, naics, set_aside, location, url, source, notes, value, meta, updated_by)
+  insert into opportunities (workspace_id, title, kind, agency, ref_no, stage, deadline, naics, set_aside, location, url, source, notes, value, meta, updated_by,
+      contact_name, contact_email)
   values (w, n.title, coalesce(nullif(p_kind, ''), 'Federal Contract'), concat_ws(' / ', n.agency, n.subtier), n.sol_number, 'Identified',
     (n.response_deadline at time zone 'America/New_York')::date, n.naics, n.set_aside, nullif(concat_ws(', ', n.city, n.state), ''), n.ui_link,
     case when n.source = 'BidMatch' then 'MyBidMatch (' || coalesce(n.level, 'unsorted') || ')' else n.source end,
-    concat_ws(E'\n', 'Notice type: ' || n.notice_type, 'Office: ' || n.office, 'Posted: ' || n.posted_date, 'PSC: ' || n.psc, left(n.summary, 800),
+    concat_ws(E'\n', 'Notice type: ' || n.notice_type, 'Office: ' || n.office, 'Posted: ' || n.posted_date, 'PSC: ' || n.psc, fed_contacts_text(n.contacts), left(n.summary, 800),
       case when n.awardee is not null then 'Awardee: ' || n.awardee || coalesce(' ($' || to_char(n.award_amount, 'FM999,999,999,990') || ')', '') end),
-    n.award_amount, jsonb_build_object('sam_notice_id', n.notice_id), member_name())
+    n.award_amount, jsonb_build_object('sam_notice_id', n.notice_id), member_name(),
+    n.contacts -> 0 ->> 'name', n.contacts -> 0 ->> 'email')
   returning id into oid;
   update fed_notices set status = 'Added', opportunity_id = oid, status_by = member_name() where workspace_id = w and notice_id = p_notice;
   return oid;
@@ -2605,7 +2703,7 @@ create or replace function public.fed_list(p_source text default 'SAM.gov', p_st
 language sql stable security definer set search_path = public as $$
   select coalesce(jsonb_agg(to_jsonb(x) order by case when p_sort = 'due' then x.response_deadline end nulls last, x.posted_date desc nulls last, x.first_seen desc), '[]')
   from (select n.notice_id, n.title, n.sol_number, n.agency, n.subtier, n.office, n.notice_type, n.posted_date, n.response_deadline, n.naics, n.set_aside,
-               n.set_aside_code, n.state, n.city, n.ui_link, n.award_amount, n.awardee, n.status, n.opportunity_id, n.funding_id, n.first_seen, n.source, n.aln, n.level, left(n.summary, 6000) summary, n.naics_all, n.psc, n.bm_keywords,
+               n.set_aside_code, n.state, n.city, n.ui_link, n.award_amount, n.awardee, n.status, n.opportunity_id, n.funding_id, n.first_seen, n.source, n.aln, n.level, left(n.summary, 6000) summary, n.naics_all, n.psc, n.bm_keywords, n.contacts,
                (select array_agg(m.search_id) from fed_matches m where m.workspace_id = n.workspace_id and m.notice_id = n.notice_id) searches
           from fed_notices n
          where n.workspace_id = staff_ws() and n.source = coalesce(p_source, 'SAM.gov') and (p_status = 'All' or n.status = p_status)
@@ -2636,10 +2734,11 @@ begin
   select * into n from fed_notices where workspace_id = w and notice_id = p_notice for update;
   if not found then raise exception 'Grant not found.'; end if;
   if n.funding_id is not null and exists (select 1 from funding where id = n.funding_id) then return n.funding_id; end if;
-  insert into funding (workspace_id, name, organization, type, status, deadline, url, source, notes, updated_by)
+  insert into funding (workspace_id, name, organization, type, status, deadline, url, source, notes, updated_by, contact_email)
   values (w, n.title, n.agency, 'Grant', 'Identified', (n.response_deadline at time zone 'America/New_York')::date, n.ui_link, 'Grants.gov',
     concat_ws(E'\n', 'Opportunity number: ' || n.sol_number, 'Status: ' || n.notice_type, 'Posted: ' || n.posted_date,
-      case when cardinality(n.aln) > 0 then 'Assistance listing: ' || array_to_string(n.aln, ', ') end), member_name())
+      case when cardinality(n.aln) > 0 then 'Assistance listing: ' || array_to_string(n.aln, ', ') end, fed_contacts_text(n.contacts)), member_name(),
+    n.contacts -> 0 ->> 'email')
   returning id into fid;
   update fed_notices set status = 'Added', funding_id = fid, status_by = member_name() where workspace_id = w and notice_id = p_notice;
   return fid;

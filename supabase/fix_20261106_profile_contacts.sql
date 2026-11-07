@@ -1,8 +1,11 @@
--- Pulse fix 2026-11-06 (b): contracting officer / buyer / grants contact on every opportunity, and SAM.gov through sam-relay
--- Safe to run more than once. Deploy the "sam-relay" Edge Function (Verify JWT off) before or after; SAM.gov starts working once both are done.
+-- Pulse fix 2026-11-06 (c): one NAICS + keywords profile, contracting officers into Contacts, contacts on cards, SAM.gov through sam-relay
+-- Safe to run more than once. Your existing searches are merged into the profile and paused (not deleted).
 alter table public.fed_notices add column if not exists contacts jsonb not null default '[]';
 alter table public.fed_notices add column if not exists detail_at timestamptz;
 alter table public.fed_config add column if not exists sam_relay_url text;
+alter table public.fed_searches add column if not exists is_profile boolean not null default false;
+alter table public.fed_searches add column if not exists match_any boolean not null default false;
+create unique index if not exists ux_fed_searches_profile on public.fed_searches (workspace_id, source) where is_profile;
 
 create or replace function public.fed_person(p text) returns text language plpgsql immutable as $$
 declare n text := trim(both ' ,;' from coalesce(p, ''));
@@ -42,6 +45,32 @@ end $$;
 create or replace function public.fed_contacts_text(p jsonb) returns text language sql immutable as $$
   select string_agg('Contact: ' || concat_ws(', ', nullif(concat_ws(' ', c ->> 'name', '(' || coalesce(c ->> 'title', c ->> 'type') || ')'), ''), c ->> 'email', c ->> 'phone'), E'\n')
     from jsonb_array_elements(case when jsonb_typeof(p) = 'array' then p else '[]' end) c $$;
+
+create or replace function public.fed_stem(k text) returns text language sql immutable as $$
+  select case when length(regexp_replace(lower(trim(k)), '(ical|al|ing|ed|es|s)$', '')) >= 4
+              then regexp_replace(lower(trim(k)), '(ical|al|ing|ed|es|s)$', '') else lower(trim(k)) end $$;
+
+create or replace function public.fed_fits(n public.fed_notices, s public.fed_searches) returns boolean
+language sql stable set search_path = public as $$
+  with t as (select
+      -- codes: NAICS for contracts, assistance listings for grants
+      case when n.source = 'Grants.gov' then cardinality(s.aln) > 0 and exists (select 1 from unnest(s.aln) q, unnest(n.aln) c where c like trim(q) || '%')
+           else cardinality(s.naics) > 0 and exists (select 1 from unnest(s.naics) q, unnest(n.naics_all) c where c like trim(q) || '%') end as code_hit,
+      case when n.source = 'Grants.gov' then cardinality(s.aln) = 0 else cardinality(s.naics) = 0 end as no_codes,
+      cardinality(s.keywords) > 0 and exists (select 1 from unnest(s.keywords) k where trim(k) <> ''
+        and concat_ws(' ', n.title, n.sol_number, case when s.match_any then n.summary end) ilike '%' || fed_stem(k) || '%') as kw_hit)
+  select n.source = s.source
+     and (cardinality(s.agencies) = 0 or exists (select 1 from unnest(s.agencies) a where concat_ws(' ', n.path_name, n.agency, n.subtier) ilike '%' || trim(a) || '%'))
+     and not exists (select 1 from unnest(s.exclude) k where trim(k) <> '' and n.title ilike '%' || trim(k) || '%')
+     and (cardinality(s.notice_types) = 0 or n.notice_type = any (s.notice_types) or n.base_type = any (s.notice_types))
+     and (not s.open_only or n.response_deadline is null or n.response_deadline >= now())
+     and case when s.match_any then t.code_hit or t.kw_hit
+              else (t.no_codes or t.code_hit) and (cardinality(s.keywords) = 0 or t.kw_hit) end
+     and (n.source = 'Grants.gov' or (
+           (s.size = 'any' or (s.size = 'small' and coalesce(n.set_aside_code, '') not in ('', 'NONE'))
+                or (s.size = 'unrestricted' and coalesce(n.set_aside_code, '') in ('', 'NONE')))
+           and (cardinality(s.set_asides) = 0 or n.set_aside_code = any (s.set_asides))))
+    from t $$;
 
 create or replace function public.fed_store(p_ws uuid, p_body jsonb) returns int
 language plpgsql volatile security definer set search_path = public as $$
@@ -296,14 +325,87 @@ create or replace function public.fed_list(p_source text default 'SAM.gov', p_st
 language sql stable security definer set search_path = public as $$
   select coalesce(jsonb_agg(to_jsonb(x) order by case when p_sort = 'due' then x.response_deadline end nulls last, x.posted_date desc nulls last, x.first_seen desc), '[]')
   from (select n.notice_id, n.title, n.sol_number, n.agency, n.subtier, n.office, n.notice_type, n.posted_date, n.response_deadline, n.naics, n.set_aside,
-               n.set_aside_code, n.state, n.city, n.ui_link, n.award_amount, n.awardee, n.status, n.opportunity_id, n.funding_id, n.first_seen, n.source, n.aln, n.level, left(n.summary, 6000) summary, n.naics_all, n.psc, n.bm_keywords, n.contacts,
+               n.set_aside_code, n.state, n.city, n.ui_link, n.award_amount, n.awardee, n.status, n.opportunity_id, n.funding_id, n.first_seen, n.source, n.aln, n.level, left(n.summary, 6000) summary, n.naics_all, n.psc, n.bm_keywords,
+               (select coalesce(jsonb_agg(c || coalesce((select jsonb_build_object('cid', ct.id) from contacts ct where ct.workspace_id = n.workspace_id
+                    and c ? 'email' and lower(ct.email) = lower(c ->> 'email') limit 1), '{}')), '[]') from jsonb_array_elements(n.contacts) c) contacts,
                (select array_agg(m.search_id) from fed_matches m where m.workspace_id = n.workspace_id and m.notice_id = n.notice_id) searches
           from fed_notices n
          where n.workspace_id = staff_ws() and n.source = coalesce(p_source, 'SAM.gov') and (p_status = 'All' or n.status = p_status)
-           and ((n.source = 'BidMatch' and p_search is null)
+           and ((n.source = 'BidMatch' and p_search is null) or (n.status <> 'New' and p_search is null)
                 or exists (select 1 from fed_matches m where m.workspace_id = n.workspace_id and m.notice_id = n.notice_id and (p_search is null or m.search_id = p_search)))
          order by case when p_sort = 'due' then n.response_deadline end nulls last, n.posted_date desc nulls last, n.first_seen desc
          limit least(greatest(coalesce(p_limit, 400), 1), 1000)) x $$;
+
+create or replace function public.fed_contacts_upsert(p_ws uuid, n public.fed_notices, p_email text default null) returns int
+language plpgsql volatile security definer set search_path = public as $$
+declare c jsonb; cid bigint; k int := 0; org text; v_role text; line text;
+begin
+  org := coalesce(nullif(concat_ws(' / ', n.agency, nullif(n.subtier, n.agency)), ''), n.office);
+  line := format('From %s: %s%s', case n.source when 'BidMatch' then 'MyBidMatch' else n.source end, n.title, coalesce(' (' || n.sol_number || ')', ''));
+  for c in select * from jsonb_array_elements(case when jsonb_typeof(n.contacts) = 'array' then n.contacts else '[]' end) loop
+    continue when p_email is not null and lower(coalesce(c ->> 'email', '')) <> lower(p_email);
+    continue when coalesce(c ->> 'email', c ->> 'name') is null;
+    v_role := coalesce(c ->> 'title', case when n.source = 'Grants.gov' then 'Grants contact' when n.source = 'SAM.gov' or n.level = 'Federal' then 'Contracting Officer' else 'Buyer' end);
+    select id into cid from contacts where workspace_id = p_ws
+       and ((c ? 'email' and lower(email) = lower(c ->> 'email')) or (not c ? 'email' and lower(name) = lower(c ->> 'name') and organization is not distinct from org))
+     order by id limit 1;
+    if cid is null then
+      insert into contacts (workspace_id, name, organization, role, email, phone, category, source, tags, notes, updated_by)
+      values (p_ws, coalesce(c ->> 'name', c ->> 'email'), org, v_role, c ->> 'email', c ->> 'phone', 'Government', 'Opportunities', 'Contracting officer', line, member_name())
+      returning id into cid;
+    else
+      update contacts set name = case when name is null or name = email then coalesce(c ->> 'name', name) else name end,
+          phone = coalesce(phone, c ->> 'phone'), role = coalesce(contacts.role, v_role), organization = coalesce(contacts.organization, org),
+          notes = case when position(line in coalesce(notes, '')) > 0 then notes else concat_ws(E'\n', notes, line) end, updated_at = now(), updated_by = member_name()
+       where id = cid;
+    end if;
+    k := k + 1; cid := null;
+  end loop;
+  return k;
+end $$;
+
+create or replace function public.fed_save_contact(p_notice text, p_email text default null) returns int
+language plpgsql volatile security definer set search_path = public as $$
+declare w uuid := staff_ws(); n fed_notices;
+begin
+  if w is null then raise exception 'Only team members can save contacts.'; end if;
+  select * into n from fed_notices where workspace_id = w and notice_id = p_notice;
+  if not found then raise exception 'Notice not found.'; end if;
+  return fed_contacts_upsert(w, n, nullif(p_email, ''));
+end $$;
+
+create or replace function public.fed_profile_ws(p_ws uuid, p_source text) returns public.fed_searches
+language plpgsql volatile security definer set search_path = public as $$
+declare pr fed_searches;
+begin
+  select * into pr from fed_searches where workspace_id = p_ws and source = p_source and is_profile;
+  if found then return pr; end if;
+  insert into fed_searches (workspace_id, name, source, is_profile, match_any, naics, aln, keywords, exclude, agencies, set_asides, notice_types, size, open_only, active)
+  select p_ws, case when p_source = 'Grants.gov' then 'My grants profile' else 'My contracts profile' end, p_source, true, true,
+     coalesce((select array_agg(distinct x order by x) from fed_searches s, unnest(s.naics) x where s.workspace_id = p_ws and s.source = p_source and s.active), '{}'),
+     coalesce((select array_agg(distinct x order by x) from fed_searches s, unnest(s.aln) x where s.workspace_id = p_ws and s.source = p_source and s.active), '{}'),
+     coalesce((select array_agg(distinct lower(trim(x))) from fed_searches s, unnest(s.keywords) x where s.workspace_id = p_ws and s.source = p_source and s.active and trim(x) <> ''), '{}'),
+     coalesce((select array_agg(distinct lower(trim(x))) from fed_searches s, unnest(s.exclude) x where s.workspace_id = p_ws and s.source = p_source and s.active and trim(x) <> ''), '{}'),
+     '{}', '{}',
+     case when p_source = 'Grants.gov' then '{Posted,Forecasted}'::text[] else '{Solicitation,"Combined Synopsis/Solicitation",Presolicitation,"Sources Sought"}'::text[] end,
+     case when p_source <> 'Grants.gov' and exists (select 1 from fed_searches s where s.workspace_id = p_ws and s.source = p_source and s.active and s.size = 'small') then 'small' else 'any' end,
+     true, true
+  returning * into pr;
+  update fed_searches set active = false where workspace_id = p_ws and source = p_source and not is_profile;
+  delete from fed_matches m using fed_searches s where m.search_id = s.id and s.workspace_id = p_ws and s.source = p_source and not s.is_profile;
+  perform fed_rematch(p_ws, pr.id);
+  return pr;
+end $$;
+
+create or replace function public.fed_profile(p_source text) returns jsonb
+language plpgsql volatile security definer set search_path = public as $$
+declare w uuid := staff_ws();
+begin
+  if w is null then raise exception 'Only team members can use Opportunities.'; end if;
+  if p_source not in ('SAM.gov', 'Grants.gov') then raise exception 'Unknown source %', p_source; end if;
+  insert into fed_config (workspace_id) values (w) on conflict do nothing;
+  return to_jsonb(fed_profile_ws(w, p_source));
+end $$;
 
 create or replace function public.fed_add_to_opportunities(p_notice text, p_kind text default null) returns bigint
 language plpgsql volatile security definer set search_path = public as $$
@@ -324,6 +426,7 @@ begin
     n.contacts -> 0 ->> 'name', n.contacts -> 0 ->> 'email')
   returning id into oid;
   update fed_notices set status = 'Added', opportunity_id = oid, status_by = member_name() where workspace_id = w and notice_id = p_notice;
+  perform fed_contacts_upsert(w, n);
   return oid;
 end $$;
 
@@ -342,12 +445,138 @@ begin
     n.contacts -> 0 ->> 'email')
   returning id into fid;
   update fed_notices set status = 'Added', funding_id = fid, status_by = member_name() where workspace_id = w and notice_id = p_notice;
+  perform fed_contacts_upsert(w, n);
   return fid;
 end $$;
+
+create or replace function public.build_snapshot(p_cadence text, p_as_of date default null) returns jsonb
+language plpgsql stable security invoker set search_path = public as $$
+declare
+  t date := coalesce(p_as_of, current_date);
+  lb int; ah int; since date; until date;
+  ao text[] := array['Identified', 'Qualifying', 'Pursuing', 'Submitted'];
+  af text[] := array['Identified', 'Pursuing', 'Submitted'];
+  snap jsonb; prev record; won int; lost int;
+  o jsonb; f jsonb;
+begin
+  if not is_member() then raise exception 'Not a member'; end if;
+  select v.lb, v.ah into lb, ah from (values ('daily', 1, 7), ('weekly', 7, 30), ('monthly', 31, 60), ('quarterly', 92, 120))
+    v(c, lb, ah) where v.c = p_cadence;
+  if lb is null then raise exception 'Unknown cadence %', p_cadence; end if;
+  since := t - lb; until := t + ah;
+
+  snap := jsonb_build_object('cadence', p_cadence, 'as_of', t, 'since', since, 'until', until,
+    'opp_deadlines', coalesce((select jsonb_agg(x order by x.deadline) from (
+        select id, title, agency, deadline, stage, priority, owner, value, value_text from opportunities
+         where stage = any (ao) and deadline between t and until) x), '[]'),
+    'funding_deadlines', coalesce((select jsonb_agg(x order by x.deadline) from (
+        select id, name, organization, deadline, status, owner, amount_text from funding
+         where status = any (af) and deadline between t and until) x), '[]'),
+    'stale_count', (select count(*) from opportunities where stage in ('Identified', 'Qualifying', 'Pursuing') and deadline < t)
+                 + (select count(*) from funding where status in ('Identified', 'Pursuing') and deadline < t),
+    'stale', coalesce((select jsonb_agg(x order by x.deadline desc) from (
+        select * from (
+          select 'opportunities' entity, id, title as name, deadline, stage status, owner from opportunities
+           where stage in ('Identified', 'Qualifying', 'Pursuing') and deadline < t
+          union all
+          select 'funding', id, name, deadline, status, owner from funding
+           where status in ('Identified', 'Pursuing') and deadline < t) u
+        order by deadline desc limit 25) x), '[]'),
+    'actions_overdue', coalesce((select jsonb_agg(a order by a.due_date) from actions a where status = 'Open' and due_date < t), '[]'),
+    'actions_completed', coalesce((select jsonb_agg(a order by a.updated_at desc) from actions a
+        where status = 'Done' and updated_at::date >= since), '[]'),
+    'followups_due', coalesce((select jsonb_agg(x order by x.next_step_date) from (
+        select id, name, organization, next_step, next_step_date, owner, status from contacts
+         where next_step_date <= until and coalesce(status, '') not in ('Do Not Contact', 'Dormant')
+         order by next_step_date limit 100) x), '[]'),
+    'contacts_touched', (select count(*) from contacts where last_touch >= since),
+    'moves', jsonb_build_object(
+        'submitted', coalesce((select jsonb_agg(a order by a.ts desc) from activity a where field in ('stage', 'status')
+            and entity in ('opportunities', 'funding') and ts::date >= since and new_value = 'Submitted'), '[]'),
+        'won', coalesce((select jsonb_agg(a order by a.ts desc) from activity a where field in ('stage', 'status')
+            and entity in ('opportunities', 'funding') and ts::date >= since and new_value = 'Won'), '[]'),
+        'lost', coalesce((select jsonb_agg(a order by a.ts desc) from activity a where field in ('stage', 'status')
+            and entity in ('opportunities', 'funding') and ts::date >= since and new_value in ('Lost', 'Missed')), '[]')),
+    'created', jsonb_build_object(
+        'opportunities', (select count(*) from activity where entity = 'opportunities' and action = 'create' and ts::date >= since),
+        'funding', (select count(*) from activity where entity = 'funding' and action = 'create' and ts::date >= since),
+        'contacts', (select count(*) from activity where entity = 'contacts' and action = 'create' and ts::date >= since)));
+
+  -- new leads from Opportunities (SAM.gov, Grants.gov, MyBidMatch) found in this period and not yet reviewed
+  if to_regclass('public.fed_notices') is not null then
+    snap := snap || jsonb_build_object('leads', coalesce((select jsonb_object_agg(src, obj) from (
+      select n.source src, jsonb_build_object(
+          'new', count(*) filter (where n.status = 'New'), 'saved', count(*) filter (where n.status = 'Saved'),
+          'due_soon', count(*) filter (where n.response_deadline::date between t and until),
+          'items', coalesce(jsonb_agg(jsonb_build_object('id', n.notice_id, 'title', n.title, 'agency', coalesce(n.subtier, n.agency), 'due', n.response_deadline,
+                      'status', n.status, 'level', n.level, 'naics', n.naics, 'url', n.ui_link)
+                    order by n.response_deadline nulls last, n.posted_date desc) filter (where n.rk <= 12), '[]')) obj
+        from (select f.*, row_number() over (partition by f.source order by f.response_deadline nulls last, f.posted_date desc) rk
+                from fed_notices f
+               where f.status in ('New', 'Saved') and f.first_seen::date >= since and f.first_seen::date <= t
+                 and (f.response_deadline is null or f.response_deadline >= t)
+                 and (f.source = 'BidMatch' or f.status = 'Saved' or exists (select 1 from fed_matches m where m.workspace_id = f.workspace_id and m.notice_id = f.notice_id))) n
+       group by n.source) z), '{}'));
+  end if;
+
+  if p_cadence <> 'daily' then
+    snap := snap || jsonb_build_object(
+      'opp_pipeline', coalesce((select jsonb_agg(jsonb_build_object('k', stage, 'n', n, 'value', v) order by n desc) from (
+          select stage, count(*) n, coalesce(sum(value), 0) v from opportunities group by stage) s), '[]'),
+      'funding_pipeline', coalesce((select jsonb_agg(jsonb_build_object('k', status, 'n', n) order by n desc) from (
+          select status, count(*) n from funding where coalesce(status, '') <> 'Catalog' group by status) s), '[]'));
+  end if;
+
+  if p_cadence in ('monthly', 'quarterly') then
+    select coalesce(jsonb_object_agg(new_value, n), '{}') into o from (
+      select new_value, count(distinct entity_id) n from activity where entity = 'opportunities' and field = 'stage'
+         and ts::date >= since group by new_value) s;
+    select coalesce(jsonb_object_agg(new_value, n), '{}') into f from (
+      select new_value, count(distinct entity_id) n from activity where entity = 'funding' and field = 'status'
+         and ts::date >= since group by new_value) s;
+    won := coalesce((o ->> 'Won')::int, 0) + coalesce((f ->> 'Won')::int, 0);
+    lost := coalesce((o ->> 'Lost')::int, 0) + coalesce((f ->> 'Lost')::int, 0);
+    snap := snap || jsonb_build_object(
+      'results', jsonb_build_object('opportunities', o, 'funding', f,
+        'win_rate', case when won + lost > 0 then round(100.0 * won / (won + lost)) end,
+        'value_won', (select coalesce(sum(value), 0) from opportunities where stage = 'Won' and id in (
+            select entity_id from activity where entity = 'opportunities' and new_value = 'Won' and ts::date >= since)),
+        'funding_submitted_by_date', (select count(*) from funding where submitted_date between since and t)),
+      'by_owner', coalesce((select jsonb_agg(x order by x.active_opps + x.active_funding desc) from (
+          select coalesce(nullif(owner, ''), 'Unassigned') owner,
+                 count(*) filter (where src = 'o' and st = any (ao)) active_opps,
+                 count(*) filter (where src = 'f' and st = any (af)) active_funding,
+                 count(*) filter (where st = 'Submitted') submitted,
+                 count(*) filter (where st = 'Won') won
+            from (select owner, stage st, 'o' src from opportunities
+                  union all select owner, status, 'f' from funding where coalesce(status, '') <> 'Catalog') u
+           group by 1) x), '[]'));
+  end if;
+
+  select id, review_date, title into prev from reviews where cadence = p_cadence and review_date < t
+   order by review_date desc, id desc limit 1;
+  if found then
+    snap := snap || jsonb_build_object('previous_review', jsonb_build_object('id', prev.id, 'review_date', prev.review_date, 'title', prev.title),
+      'carry_over', coalesce((select jsonb_agg(a) from actions a where review_id = prev.id and status = 'Open'), '[]'));
+  else
+    snap := snap || jsonb_build_object('previous_review', null, 'carry_over', '[]'::jsonb);
+  end if;
+  return snap;
+end $$;
+
+revoke execute on function public.fed_contacts_upsert(uuid, public.fed_notices, text), public.fed_profile_ws(uuid, text),
+  public.fed_request_grant_detail(uuid, text), public.fed_store_grant_detail(uuid, text, jsonb) from public, anon, authenticated;
+revoke execute on function public.fed_save_contact(text, text), public.fed_profile(text) from public, anon;
+grant execute on function public.fed_save_contact(text, text), public.fed_profile(text) to authenticated;
+-- every workspace that uses Opportunities gets its profiles (built from its searches)
+select public.fed_profile_ws(c.workspace_id, x.src) from public.fed_config c, (values ('SAM.gov'), ('Grants.gov')) x(src);
+
 
 -- contacts for the bids already read
 update public.fed_notices set contacts = public.fed_bm_contacts(summary) where source = 'BidMatch' and summary is not null;
 -- SAM.gov through the relay, and fetch now
 update public.fed_config set sam_relay_url = 'https://dtnohwaxnnwqplmdtdeq.supabase.co/functions/v1/sam-relay', last_error = null, next_fetch_at = null
  where key_secret_id is not null;
-select 'contacts + SAM relay' as fix, (select count(*) from public.fed_notices where jsonb_array_length(contacts) > 0) as notices_with_a_contact;
+select (select count(*) from public.fed_searches where is_profile) as profiles,
+       (select count(*) from public.fed_matches m join public.fed_searches s on s.id = m.search_id where s.is_profile) as profile_matches,
+       (select count(*) from public.fed_notices where jsonb_array_length(contacts) > 0) as notices_with_a_contact;

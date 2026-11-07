@@ -780,7 +780,7 @@ button.apps-btn { border: 0; background: none; cursor: pointer; }
 .fed-keys { display: grid; gap: 6px; margin: 8px 0 6px; font-size: 13px; }
 .fed-keys > div { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
 .fed-keys .lbl, .fed-chips .lbl { font: 700 11px var(--font-ui); letter-spacing: .04em; text-transform: uppercase; color: var(--muted); min-width: 74px; }
-.fed-keys .tag.mine { background: var(--blue); color: #fff; border-color: var(--blue); }
+.tag.mine, .fed-keys .tag.mine { background: var(--blue); color: #fff; border-color: var(--blue); }
 .fed-poc { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 4px 0 8px; font-size: 13px; }
 .fed-poc .ic { width: 15px; height: 15px; color: var(--blue); }
 .fed-poc.muted .ic { color: var(--muted); }
@@ -790,3 +790,15 @@ button.apps-btn { border: 0; background: none; cursor: pointer; }
 .fed-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 10px; }
 .fed-chips .chip.zero { opacity: .55; }
 .fed-filtered { margin: -2px 0 10px; }
+.fed-poc { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 4px 0 8px; font-size: 13px; }
+.fed-poc .one { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.fed-poc .save-ct, .fed-poc .in-contacts { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; font-weight: 600; margin-left: 4px; }
+.fed-poc .save-ct .ic, .fed-poc .in-contacts .ic { width: 13px; height: 13px; }
+.fed-poc .in-contacts { color: var(--green); } .fed-poc .in-contacts .ic { color: var(--green); }
+.prof-grid { align-items: start; }
+.prof-form { display: grid; gap: 12px; }
+.prof-form h2 { display: flex; align-items: center; justify-content: flex-start; gap: 8px; margin: 0; }
+.prof-form label { display: grid; gap: 4px; font-weight: 600; font-size: 13.5px; }
+.prof-form textarea { font: 14px var(--font); }
+.prof-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: -4px; }
+.prof-more summary { cursor: pointer; font-weight: 600; font-size: 13.5px; color: var(--blue); margin-bottom: 8px; }

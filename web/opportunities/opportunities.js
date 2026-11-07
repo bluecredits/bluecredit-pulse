@@ -1,7 +1,7 @@
-/* Pulse · Opportunities — saved searches over federal contracts (SAM.gov) and grants (Grants.gov). The database pulls
-   new notices on a timer (see "Opportunities" in schema.sql) and matches every search locally; this page shows the
-   matches, lets you save, dismiss, add a contract to Business Review's pipeline or a grant to Funding, and holds the
-   searches and settings. */
+/* Pulse · Opportunities — federal contracts (SAM.gov), APEX MyBidMatch bids and grants (Grants.gov). The database pulls
+   new notices on a timer (see "Opportunities" in schema.sql) and matches them against your profile (NAICS codes and
+   keywords); this page shows the matches, lets you save, dismiss, add a contract to Business Review's pipeline or a grant
+   to Funding (contacts go to the Contacts list), and holds the profile and settings. */
 "use strict";
 
 const FD = { source: "SAM.gov", status: "New", search: "", q: "", sort: "posted", level: "", kw: "", naics: "" };
@@ -24,11 +24,11 @@ const PSC = { A: "Research & development", B: "Special studies & analysis", C: "
   N: "Installation of equipment", P: "Salvage", Q: "Medical", R: "Professional & support services", S: "Utilities & housekeeping", T: "Photo, mapping & printing", U: "Education & training",
   V: "Transportation & travel", W: "Lease or rental of equipment", X: "Lease or rental of facilities", Y: "Construction of structures", Z: "Maintenance of real property" };
 const pscLabel = (c) => (c ? (PSC[String(c)[0].toUpperCase()] ? `${c} · ${PSC[String(c)[0].toUpperCase()]}` : /^[0-9]/.test(c) ? `${c} · Supplies` : c) : "");
-// The NAICS codes and keywords you put in your searches are what every card and filter is built around.
+// The NAICS codes and keywords in your profile are what every card and filter is built around.
 let MY = { naics: [], kw: [] };
 // "hydrological" also finds "hydrologic", "environmental" finds "environment", "floods" finds "flood"
 const stem = (k) => { const w = k.toLowerCase().trim(), r = w.replace(/(ical|al|ing|ed|es|s)$/, ""); return r.length >= 4 ? r : w; };
-// keywords from your searches found in the title or description (plus MyBidMatch's own profile terms)
+// keywords from your profile found in the title or description (plus MyBidMatch's own profile terms)
 function keywordsOf(r) {
   const t = `${r.title || ""} ${r.summary || ""}`.toLowerCase(), out = new Set();
   MY.kw.forEach((k) => { if (t.includes(stem(k))) out.add(k); });
@@ -53,10 +53,12 @@ function contactLine(r) {
   const fedish = r.source === "SAM.gov" || (r.source === "BidMatch" && r.level === "Federal");
   const label = r.source === "Grants.gov" ? "Grants contact" : fedish ? "Contracting officer" : "Buyer contact";
   if (!cs.length) return r.source === "Grants.gov" ? "" : `<p class="fed-poc muted">${icon("badge")}<b>${label}:</b> not listed in the notice</p>`;
-  return `<p class="fed-poc">${icon("badge")}<b>${cs.length > 1 && fedish ? "Contacts" : label}:</b> ${cs.map((c) => [
+  return `<div class="fed-poc">${icon("badge")}<b>${cs.length > 1 && fedish ? "Contacts" : label}:</b> ${cs.map((c) => `<span class="one">${[
       c.name ? `<span class="nm">${esc(c.name)}</span>${c.title ? ` <span class="muted">(${esc(c.title)})</span>` : ""}` : "",
       c.email ? `<a href="mailto:${esc(c.email)}">${esc(c.email)}</a>` : "", c.phone ? `<a href="tel:${esc(c.phone.replace(/[^0-9+]/g, ""))}">${esc(c.phone)}</a>` : ""]
-    .filter(Boolean).join(" · ")).join(`<span class="sep">|</span>`)}</p>`;
+    .filter(Boolean).join(" · ")}
+      ${c.cid ? `<a class="in-contacts" href="../contacts/#/contacts/${c.cid}" title="Open in Contacts">${icon("check")}In Contacts</a>`
+        : c.email || c.name ? `<button type="button" class="link-btn save-ct" data-save-ct="${esc(c.email || "")}" title="Add to the Contacts list">${icon("user-plus")}Save to Contacts</button>` : ""}</span>`).join(`<span class="sep">|</span>`)}</div>`;
 }
 const TYPES = ["Solicitation", "Combined Synopsis/Solicitation", "Presolicitation", "Sources Sought", "Special Notice", "Award Notice", "Justification", "Sale of Surplus Property", "Intent to Bundle Requirements (DoD-Funded)"];
 const SIZES = [["any", "Any size"], ["small", "Small-business set-asides only"], ["unrestricted", "Unrestricted only (no set-aside)"]];
@@ -70,11 +72,10 @@ const setupNeeded = (e) => /fed_|schema cache|does not exist/i.test(e.message ||
 /* ================================================================ matches */
 async function Matches() {
   const grants = FD.source === "Grants.gov", bm = FD.source === "BidMatch", src = SRC[FD.source];
-  const [allSearches, st, counts] = await Promise.all([must(await sb.from("fed_searches").select("id, name, active, source, keywords, naics").order("name")), db.rpc("fed_status", {}), db.rpc("fed_counts", {})]);
-  const searches = allSearches.filter((s) => s.source === FD.source);
-  if (FD.search && !searches.some((s) => String(s.id) === FD.search)) FD.search = "";
-  // contracts and bids use your contract searches' codes and words; grants use your grant searches' words
-  const mine = allSearches.filter((s) => s.active && (grants ? s.source === "Grants.gov" : s.source === "SAM.gov"));
+  const [prof, st, counts] = await Promise.all([db.rpc("fed_profile", { p_source: grants ? "Grants.gov" : "SAM.gov" }), db.rpc("fed_status", {}), db.rpc("fed_counts", {})]);
+  const searches = bm ? [] : [prof]; FD.search = "";
+  // contracts and bids use your contracts profile; grants use your grants profile
+  const mine = [prof];
   const uniq = (a) => [...new Map(a.filter(Boolean).map((x) => [String(x).toLowerCase(), String(x).trim()])).values()];
   MY = { naics: uniq(mine.flatMap((s) => s.naics || [])).sort(), kw: uniq(mine.flatMap((s) => s.keywords || [])) };
   let rows = await db.rpc("fed_list", { p_source: FD.source, p_status: FD.status, p_search: FD.search ? +FD.search : null, p_sort: FD.sort });
@@ -104,23 +105,21 @@ async function Matches() {
       ${moreKw.length ? `<optgroup label="${bm ? "MyBidMatch profile terms" : "Other"}">${moreKw.map(([k, n]) => opt(k, n, FD.kw, (x) => x)).join("")}</optgroup>` : ""}</select>`;
   const sname = Object.fromEntries(searches.map((s) => [s.id, s.name]));
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>${grants ? "Grants" : "Contracts"}</h1><p class="muted">${bm ? "Bids from your APEX Accelerator MyBidMatch lists: federal, state, local and education." : (grants ? "Open and forecasted Grants.gov grants" : "Federal notices from SAM.gov") + " that match your searches."} ${bm ? bmLine(st) : statusLine(st, grants)}</p></div>
-      <div class="actions-row"><button class="btn" id="runNow">${icon("return")}Check now</button>${bm ? `<a class="btn" href="#/settings">${icon("cog")}MyBidMatch link</a>` : `<a class="btn primary" href="#/searches/new?${grants ? "grants" : "contracts"}">${icon("plus")}New search</a>`}</div></div>
+    <div class="page-head"><div><h1>${grants ? "Grants" : "Contracts"}</h1><p class="muted">${bm ? "Bids from your APEX Accelerator MyBidMatch lists: federal, state, local and education." : (grants ? "Open and forecasted Grants.gov grants" : "Federal notices from SAM.gov") + " with your NAICS codes or keywords."} ${bm ? bmLine(st) : statusLine(st, grants)}</p></div>
+      <div class="actions-row"><button class="btn" id="runNow">${icon("return")}Check now</button>${bm ? `<a class="btn" href="#/settings">${icon("cog")}MyBidMatch link</a>` : `<a class="btn primary" href="#/profile">${icon("cog")}Edit my NAICS &amp; keywords</a>`}</div></div>
     ${grants ? "" : `<div class="tabs src-tabs">${[["SAM.gov", "#/contracts", "SAM.gov"], ["BidMatch", "#/contracts/bids", "APEX BidMatch"]].map(([k, href, l]) => `<a href="${href}" aria-selected="${k === FD.source}">${l}${counts.by_source?.[k] ? ` <span class="count">${counts.by_source[k]}</span>` : ""}</a>`).join("")}</div>`}
     ${bm ? bmBanner(st) : banner(st, searches, grants)}
     ${bm ? `<div class="fed-levels">${["", ...LEVELS].map((l) => `<button class="chip ${FD.level === l ? "on" : ""}" data-lv="${l}">${l || "All"}${l ? ` <span>${levelCounts[l] || 0}</span>` : ""}</button>`).join("")}</div>` : ""}
     <div class="filters">
       <div class="tabs">${["New", "Saved", "Added", "Dismissed", "All"].map((k) => `<button data-st="${k}" aria-selected="${FD.status === k}">${k}</button>`).join("")}</div>
-      <select id="fSearch" ${bm ? "hidden" : ""}><option value="">All searches</option>${searches.map((s) => `<option value="${s.id}" ${String(s.id) === FD.search ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select>
       ${naicsSel}${kwSel}
       <select id="fSort"><option value="posted" ${FD.sort === "posted" ? "selected" : ""}>Newest first</option><option value="due" ${FD.sort === "due" ? "selected" : ""}>Due soonest</option></select>
       <input id="fQ" type="search" placeholder="Filter by title, agency, ${grants ? "assistance listing" : bm ? "text" : "NAICS"}…" value="${esc(FD.q)}">
     </div>
     ${FD.naics || FD.kw ? `<p class="muted small fed-filtered">Showing ${rows.length} with ${[FD.naics && "NAICS " + naicsLabel(FD.naics), FD.kw && `“${esc(FD.kw)}”`].filter(Boolean).join(" and ")}. <button type="button" class="link-btn" data-clear>Clear</button></p>` : ""}
-    <div class="fed-list">${rows.map((r) => card(r, sname)).join("") || `<div class="empty">${FD.status === "New" ? "No new matches right now." : "Nothing here."}${bm || searches.length ? "" : ` <a href="#/searches/new?${grants ? "grants" : "contracts"}">Create your first ${grants ? "grants" : "contracts"} search</a>.`}</div>`}</div>`;
+    <div class="fed-list">${rows.map((r) => card(r, sname)).join("") || `<div class="empty">${FD.status === "New" ? "No new matches right now." : "Nothing here."}${bm || MY.naics.length || MY.kw.length ? "" : ` <a href="#/profile">Add your NAICS codes and keywords</a>.`}</div>`}</div>`;
   $$("[data-st]").forEach((b) => b.addEventListener("click", () => { FD.status = b.dataset.st; Matches(); }));
   $$("[data-lv]").forEach((b) => b.addEventListener("click", () => { FD.level = b.dataset.lv; Matches(); }));
-  $("#fSearch").addEventListener("change", (e) => { FD.search = e.target.value; Matches(); });
   $("#fSort").addEventListener("change", (e) => { FD.sort = e.target.value; Matches(); });
   $("#fNaics")?.addEventListener("change", (e) => { FD.naics = e.target.value; Matches(); });
   $("#fKw")?.addEventListener("change", (e) => { FD.kw = e.target.value; Matches(); });
@@ -129,6 +128,12 @@ async function Matches() {
   $("#fQ").addEventListener("input", debounce((e) => { FD.q = e.target.value; Matches().then(() => { const i = $("#fQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 300));
   $("#runNow").addEventListener("click", runNow);
   $$("[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act, b.closest("[data-nid]").dataset.nid, b)));
+  $$("[data-save-ct]").forEach((b) => b.addEventListener("click", async () => {
+    b.disabled = true;
+    try { const n = await db.rpc("fed_save_contact", { p_notice: b.closest("[data-nid]").dataset.nid, p_email: b.dataset.saveCt || null });
+      toast(n ? "Saved to Contacts" : "Nothing to save"); b.outerHTML = `<span class="in-contacts">${icon("check")}In Contacts</span>`;
+    } catch (e) { toast(e.message); b.disabled = false; }
+  }));
   rowsCache = Object.fromEntries(rows.map((r) => [r.notice_id, r]));
 }
 let rowsCache = {};
@@ -168,7 +173,7 @@ function card(r, sname) {
   return `<article class="panel fed-card ${r.status === "Dismissed" ? "muted" : ""}" data-nid="${esc(r.notice_id)}">
     <div class="fed-main">
       <div class="fed-top">${bmr ? `<span class="pill lv-${esc((r.level || "other").toLowerCase())}">${esc(r.level || "Other")}</span>` : ""}<span class="pill ${r.notice_type === "Forecasted" ? "s-high" : ""}">${esc(r.notice_type || "Notice")}</span>${r.set_aside ? `<span class="pill s-won" title="${esc(r.set_aside)}">${esc(r.set_aside_code || "Set-aside")}</span>` : ""}
-        ${hits.map((h) => `<span class="fed-hit">${icon("search")}${esc(h)}</span>`).join("")}</div>
+</div>
       <h3><a href="${esc(r.ui_link || "https://sam.gov/opp/" + r.notice_id + "/view")}" target="_blank" rel="noopener">${esc(r.title || "(untitled)")} <svg class="ic ext-ic"><use href="#i-external"/></svg></a></h3>
       <p class="muted small">${esc(grant ? [r.agency, r.subtier].filter(Boolean).join(" · ") : [r.agency, r.subtier, r.office].filter((x, i, a) => x && a.indexOf(x) === i).join(" · "))}</p>
       ${keyLine(r)}
@@ -196,7 +201,7 @@ async function act(what, nid, btn) {
   try {
     if (what === "add" && FD.source === "Grants.gov") {
       const id = await db.rpc("fed_add_to_funding", { p_notice: nid });
-      toast("Added to Funding");
+      toast((rowsCache[nid]?.contacts || []).length ? "Added to Funding · contact saved to Contacts" : "Added to Funding");
       btn.closest(".fed-card").querySelector(".fed-actions").innerHTML = `<a class="btn small" href="../funding/#/funding/${id}">${icon("check")}In Funding</a>`;
     } else if (what === "add") {
       const kinds = workspaceSettings(S.workspace).lists["opportunities.kind"] || [];
@@ -204,7 +209,7 @@ async function act(what, nid, btn) {
       const kind = lvl === "Federal" ? kinds.find((k) => /federal/i.test(k)) || kinds.find((k) => /contract/i.test(k)) || ""
         : kinds.find((k) => /state|local/i.test(k)) || kinds.find((k) => /contract/i.test(k)) || "";
       const id = await db.rpc("fed_add_to_opportunities", { p_notice: nid, p_kind: kind || null });
-      toast("Added to the pipeline"); const c = btn.closest(".fed-card");
+      toast((rowsCache[nid]?.contacts || []).length ? "Added to the pipeline · contact saved to Contacts" : "Added to the pipeline"); const c = btn.closest(".fed-card");
       c.querySelector(".fed-actions").innerHTML = `<a class="btn small" href="../review/#/opportunities/${id}">${icon("check")}In pipeline</a>`;
     } else {
       await db.rpc("fed_set_status", { p_notices: [nid], p_status: what });
@@ -226,8 +231,9 @@ function banner(st, searches, grants) {
   const err = grants ? st.grants_error : st.last_error;
   if (err) msgs.push(esc(err));
   else if (!grants && /^Paused/.test(st.last_status || "")) msgs.push(esc(st.last_status));
-  if (!grants && st.has_key && !searches.length) msgs.push(`Notices are coming in. <a href="#/searches/new?contracts">Create a search</a> to see the ones that fit.`);
-  if (grants && !searches.length) msgs.push(`<a href="#/searches/new?grants">Create a grants search</a>; Pulse then reads Grants.gov's open and forecasted grants (no key needed).`);
+  const p = searches[0];
+  if (p && !(p.naics || []).length && !(p.keywords || []).length && !(p.aln || []).length)
+    msgs.push(`<a href="#/profile">Add your ${grants ? "keywords and assistance listings" : "NAICS codes and keywords"}</a> to see the ${grants ? "grants" : "notices"} that fit.`);
   return msgs.map((m) => `<div class="notice-bar">${icon("alert")}<div>${m}</div></div>`).join("");
 }
 async function runNow() {
@@ -238,81 +244,61 @@ async function runNow() {
 }
 function debounce(fn, ms) { let h; return (...a) => { clearTimeout(h); h = setTimeout(() => fn(...a), ms); }; }
 
-/* ================================================================ searches */
-async function Searches(sub) {
-  const rows = must(await sb.from("fed_searches").select("*").order("source").order("name"));
-  const n = (await db.rpc("fed_counts", {})).by_search || {};
+/* ================================================================ profile */
+// One list of NAICS codes and keywords for contracts, one for grants. A notice shows up when it has ANY of your codes
+// OR ANY of your keywords (title or description); the NAICS and keyword drop-downs on the results narrow from there.
+async function Profile() {
+  const [pc, pg] = await Promise.all([db.rpc("fed_profile", { p_source: "SAM.gov" }), db.rpc("fed_profile", { p_source: "Grants.gov" })]);
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>Searches</h1><p class="muted">Every active search is checked against each new batch of notices and grants. Searches don't use extra SAM.gov requests.</p></div>
-      <div class="actions-row"><button class="btn" id="newG">${icon("plus")}Grants search</button><button class="btn primary" id="newS">${icon("plus")}Contracts search</button></div></div>
-    <section class="panel" style="padding:0"><div class="table-wrap"><table><thead><tr><th>Search</th><th>For</th><th>Criteria</th><th>New matches</th><th>Active</th></tr></thead><tbody>
-    ${rows.map((s) => `<tr data-sid="${s.id}" tabindex="0"><td><b>${esc(s.name)}</b><div class="muted small">${esc(nameOf(s.owner_id))}</div></td><td>${s.source === "Grants.gov" ? "Grants" : "Contracts"}</td><td class="small">${esc(summary(s))}</td>
-      <td><a href="#/${SRC[s.source].tab}" data-show="${s.id}" data-src="${s.source}">${n[s.id] || 0}</a></td><td>${s.active ? "Yes" : "<span class='muted'>Paused</span>"}</td></tr>`).join("")
-      || `<tr><td colspan="5" class="empty">No searches yet. Start with your NAICS codes or assistance listings and a few keywords.</td></tr>`}</tbody></table></div></section>`;
-  $("#newS").addEventListener("click", () => editSearch(null, "SAM.gov"));
-  $("#newG").addEventListener("click", () => editSearch(null, "Grants.gov"));
-  $$("tr[data-sid]").forEach((tr) => tr.addEventListener("click", (e) => { if (e.target.closest("[data-show]")) return; editSearch(rows.find((s) => s.id === +tr.dataset.sid)); }));
-  $$("[data-show]").forEach((a) => a.addEventListener("click", () => { FD.source = a.dataset.src; FD.search = a.dataset.show; FD.status = "New"; }));
-  if (sub === "new") editSearch(null, /grants/.test(location.hash) ? "Grants.gov" : "SAM.gov");
+    <div class="page-head"><div><h1>My NAICS codes &amp; keywords</h1><p class="muted">Opportunities shows every notice with <b>any</b> of your NAICS codes <b>or</b> any of your keywords in its title or description. Narrow the results with the NAICS and keyword drop-downs.</p></div></div>
+    <div class="grid2 prof-grid">${profForm(pc)}${profForm(pg)}</div>`;
+  $$(".prof-form").forEach(wireProf);
 }
-const nameOf = (id) => S.team.find((p) => p.id === id)?.display_name || "";
-function summary(s) {
-  const p = [];
-  if (s.naics?.length) p.push("NAICS " + s.naics.join(", "));
-  if (s.aln?.length) p.push("Listing " + s.aln.join(", "));
-  if (s.agencies?.length) p.push(s.agencies.join(", "));
-  if (s.source !== "Grants.gov" && s.size !== "any") p.push(SIZES.find(([k]) => k === s.size)[1]);
-  if (s.set_asides?.length) p.push(s.set_asides.join(", "));
-  if (s.notice_types?.length) p.push(s.notice_types.join(", "));
-  if (s.keywords?.length) p.push("“" + s.keywords.join("”, “") + "”");
-  if (s.exclude?.length) p.push("not " + s.exclude.join(", "));
-  return p.join(" · ") || "Everything";
+function profForm(v) {
+  const grants = v.source === "Grants.gov", id = grants ? "g" : "c";
+  return `<form class="panel prof-form" data-pid="${v.id}" data-src="${v.source}">
+    <h2>${icon(grants ? "banknotes" : "gov")} ${grants ? "Grants · Grants.gov" : "Contracts · SAM.gov and BidMatch"}</h2>
+    ${grants ? `<label>Keywords <small class="muted">comma-separated</small><textarea name="keywords" rows="3" placeholder="water, watershed, stormwater, flood">${esc((v.keywords || []).join(", "))}</textarea></label>
+      <label>Assistance listings (CFDA) <small class="muted">optional; "66." matches every EPA listing</small><input name="aln" value="${esc((v.aln || []).join(", "))}" placeholder="66.458, 10.760, 15."></label>`
+    : `<label>NAICS codes <small class="muted">comma-separated; 4–5 digits match every code that starts with them</small><textarea name="naics" rows="2" placeholder="541620, 541330, 541370">${esc((v.naics || []).join(", "))}</textarea></label>
+      <div class="prof-tags" data-naics-tags></div>
+      <label>Keywords <small class="muted">comma-separated</small><textarea name="keywords" rows="3" placeholder="water, flood, floodplain, stormwater">${esc((v.keywords || []).join(", "))}</textarea></label>`}
+    <details class="prof-more"><summary>More filters</summary><div class="form-grid">
+      ${grants ? "" : `<label>Business size<select name="size">${SIZES.map(([k, l]) => `<option value="${k}" ${k === v.size ? "selected" : ""}>${l}</option>`).join("")}</select></label>`}
+      <label>Agencies only <small class="muted">blank = all</small><input name="agencies" value="${esc((v.agencies || []).join(", "))}" placeholder="${grants ? "EPA, USDA" : "Environmental Protection Agency, Corps of Engineers"}"></label>
+      <label style="grid-column:1/-1">Leave out titles with<input name="exclude" value="${esc((v.exclude || []).join(", "))}" placeholder="${grants ? "fellowship, training" : "janitorial, bottled water"}"></label>
+      <fieldset style="grid-column:1/-1"><legend>${grants ? "Status" : "Notice type"} <small class="muted">none ticked = any</small></legend><div class="fed-checks">
+        ${(grants ? GRANT_TYPES : TYPES).map((k) => `<label class="check"><input type="checkbox" name="nt" value="${esc(k)}" ${(v.notice_types || []).includes(k) ? "checked" : ""}> ${esc(k)}</label>`).join("")}</div></fieldset>
+      ${grants ? "" : `<fieldset style="grid-column:1/-1"><legend>Set-aside type <small class="muted">none ticked = any</small></legend><div class="fed-checks">
+        ${SET_ASIDES.map(([k, l]) => `<label class="check"><input type="checkbox" name="sa" value="${k}" ${(v.set_asides || []).includes(k) ? "checked" : ""}> ${esc(l)}</label>`).join("")}</div></fieldset>`}
+      <label class="check" style="grid-column:1/-1"><input type="checkbox" name="open_only" ${v.open_only ? "checked" : ""}> Hide ${grants ? "grants past their closing date" : "notices past their due date"}</label>
+    </div></details>
+    <div class="fed-preview" data-preview></div>
+    <div class="actions-row"><button class="btn primary">Save</button><a class="btn" href="#/${grants ? "grants" : "contracts"}">See results</a></div>
+  </form>`;
 }
-function editSearch(s, source) {
-  const src = s?.source || source || "SAM.gov", grants = src === "Grants.gov";
-  const v = s || { name: "", naics: [], aln: [], agencies: [], size: "any", set_asides: [], keywords: [], exclude: [], open_only: true, active: true,
-    notice_types: grants ? ["Posted", "Forecasted"] : ["Solicitation", "Combined Synopsis/Solicitation", "Presolicitation", "Sources Sought"] };
-  $("#drawerTitle").textContent = `${s ? "Edit" : "New"} ${grants ? "grants" : "contracts"} search`;
-  $("#drawerBody").innerHTML = `<form id="sForm" class="form-grid">
-    <p class="muted small" style="grid-column:1/-1;margin:0">${grants ? "Open and forecasted grants from Grants.gov." : "Contract notices from SAM.gov."}</p>
-    <label style="grid-column:1/-1">Name<input name="name" required value="${esc(v.name)}" placeholder="${grants ? "e.g. Water infrastructure grants" : "e.g. Stormwater, small business, EPA + USACE"}"></label>
-    ${grants ? `<label style="grid-column:1/-1">Assistance listings (CFDA) <small class="muted">comma-separated; "66." matches every EPA listing</small><input name="aln" value="${esc((v.aln || []).join(", "))}" placeholder="66.458, 10.760, 15."></label>`
-      : `<label style="grid-column:1/-1">NAICS codes <small class="muted">comma-separated; 3–5 digits match every code that starts with them</small><input name="naics" value="${esc(v.naics.join(", "))}" placeholder="237110, 541330, 5413"></label>`}
-    <label style="grid-column:1/-1">Agencies <small class="muted">any part of the agency name${grants ? " or code" : " or office"}</small><input name="agencies" value="${esc(v.agencies.join(", "))}" placeholder="${grants ? "EPA, USDA, Bureau of Reclamation" : "Environmental Protection Agency, Corps of Engineers, Interior"}"></label>
-    <label style="grid-column:1/-1">Keywords in the title <small class="muted">any of these</small><input name="keywords" value="${esc(v.keywords.join(", "))}" placeholder="water, stormwater, groundwater, hydrology"></label>
-    <label style="grid-column:1/-1">Leave out titles with<input name="exclude" value="${esc(v.exclude.join(", "))}" placeholder="${grants ? "fellowship, training" : "janitorial, bottled water"}"></label>
-    ${grants ? "" : `<label>Business size<select name="size">${SIZES.map(([k, l]) => `<option value="${k}" ${k === v.size ? "selected" : ""}>${l}</option>`).join("")}</select></label>`}
-    <label class="check" style="align-self:end"><input type="checkbox" name="open_only" ${v.open_only ? "checked" : ""}> Hide ${grants ? "grants past their closing date" : "notices past their due date"}</label>
-    ${grants ? "" : `<fieldset style="grid-column:1/-1"><legend>Set-aside type <small class="muted">none ticked = any</small></legend><div class="fed-checks">
-      ${SET_ASIDES.map(([k, l]) => `<label class="check"><input type="checkbox" name="sa" value="${k}" ${v.set_asides.includes(k) ? "checked" : ""}> ${esc(l)}</label>`).join("")}</div></fieldset>`}
-    <fieldset style="grid-column:1/-1"><legend>${grants ? "Status" : "Notice type"} <small class="muted">none ticked = any</small></legend><div class="fed-checks">
-      ${(grants ? GRANT_TYPES : TYPES).map((k) => `<label class="check"><input type="checkbox" name="nt" value="${esc(k)}" ${v.notice_types.includes(k) ? "checked" : ""}> ${esc(k)}</label>`).join("")}</div></fieldset>
-    <label class="check" style="grid-column:1/-1"><input type="checkbox" name="active" ${v.active ? "checked" : ""}> Active</label>
-    <div class="fed-preview" id="preview" style="grid-column:1/-1"></div>
-    <div class="actions-row" style="grid-column:1/-1"><button class="btn primary">Save search</button>${s ? `<button type="button" class="btn danger" id="delS">Delete</button>` : ""}</div></form>`;
-  openDrawer();
-  const f = $("#sForm");
-  const read = () => ({ source: src, name: f.name.value.trim(), agencies: list(f.agencies.value), keywords: list(f.keywords.value), exclude: list(f.exclude.value),
-    open_only: f.open_only.checked, active: f.active.checked, notice_types: $$("[name=nt]:checked", f).map((x) => x.value),
-    naics: grants ? [] : list(f.naics.value).map((x) => x.replace(/\D/g, "")).filter(Boolean), aln: grants ? list(f.aln.value).map((x) => x.replace(/[^\d.]/g, "")).filter(Boolean) : [],
+function wireProf(f) {
+  const grants = f.dataset.src === "Grants.gov";
+  const read = () => ({ source: f.dataset.src, match_any: true, keywords: list(f.keywords.value), agencies: list(f.agencies.value), exclude: list(f.exclude.value),
+    open_only: f.open_only.checked, notice_types: $$("[name=nt]:checked", f).map((x) => x.value),
+    naics: grants ? [] : list(f.naics.value).map((x) => x.replace(/\D/g, "")).filter(Boolean),
+    aln: grants ? list(f.aln.value).map((x) => x.replace(/[^\d.]/g, "")).filter(Boolean) : [],
     size: grants ? "any" : f.size.value, set_asides: grants ? [] : $$("[name=sa]:checked", f).map((x) => x.value) });
+  const tags = () => { const t = $("[data-naics-tags]", f); if (t) t.innerHTML = read().naics.map((c) => `<span class="tag mine">${esc(naicsLabel(c))}</span>`).join(""); };
   const preview = debounce(async () => {
     try { const p = await db.rpc("fed_preview", { p: read() });
-      $("#preview").innerHTML = `<b>${p.count}</b> ${grants ? "grant" : "notice"}${p.count === 1 ? "" : "s"} ${grants ? "currently listed" : "from the last three weeks"} match.${p.sample.length ? `<ul>${p.sample.map((x) => `<li>${esc(x.title)} <span class="muted">· ${esc(x.agency || "")} · ${short(x.posted_date)}</span></li>`).join("")}</ul>` : ""}`;
-    } catch (e) { $("#preview").textContent = ""; }
+      $("[data-preview]", f).innerHTML = `<b>${p.count}</b> ${grants ? "grant" : "SAM.gov notice"}${p.count === 1 ? "" : "s"} ${grants ? "currently listed" : "already pulled"} fit.${p.sample.length ? `<ul>${p.sample.map((x) => `<li>${esc(x.title)} <span class="muted">· ${esc(x.agency || "")} · ${short(x.posted_date)}</span></li>`).join("")}</ul>` : ""}`;
+    } catch (e) { $("[data-preview]", f).textContent = ""; }
   }, 400);
-  f.addEventListener("input", preview); preview();
+  f.addEventListener("input", () => { tags(); preview(); }); tags(); preview();
   f.addEventListener("submit", async (e) => {
-    e.preventDefault(); const d = read();
+    e.preventDefault(); const b = $("button.primary", f); b.disabled = true;
     try {
-      const row = must(s ? await sb.from("fed_searches").update(d).eq("id", s.id).select("id").single() : await sb.from("fed_searches").insert(d).select("id").single());
-      const added = await db.rpc("fed_apply_search", { p_id: row.id });
-      closeDrawer(); toast(`Search saved${added ? ` · ${added} match${added === 1 ? "" : "es"}` : grants ? " · reading Grants.gov" : ""}`); Searches();
+      must(await sb.from("fed_searches").update(read()).eq("id", +f.dataset.pid));
+      const added = await db.rpc("fed_apply_search", { p_id: +f.dataset.pid });
+      toast(`Saved${added ? ` · ${added} new match${added === 1 ? "" : "es"}` : ""}`);
     } catch (err) { toast(err.message); }
-  });
-  $("#delS")?.addEventListener("click", async () => {
-    if (!confirm(`Delete the search “${s.name}”? Items you saved or added stay.`)) return;
-    try { must(await sb.from("fed_searches").delete().eq("id", s.id)); closeDrawer(); toast("Search deleted"); Searches(); } catch (err) { toast(err.message); }
+    b.disabled = false;
   });
 }
 
@@ -389,12 +375,13 @@ function route() {
   if (!S.profile) return;
   const parts = location.hash.replace(/^#\/?/, "").split("/");
   if (parts[0] === "bidmatch") { location.replace("#/contracts/bids"); return; }
-  const key = { contracts: 1, grants: 1, searches: 1, settings: 1 }[parts[0]] ? parts[0] : "contracts";
+  if (parts[0] === "searches") { location.replace("#/profile"); return; }
+  const key = { contracts: 1, grants: 1, profile: 1, settings: 1 }[parts[0]] ? parts[0] : "contracts";
   if (key === "contracts") FD.source = parts[1] === "bids" ? "BidMatch" : "SAM.gov"; if (key === "grants") FD.source = "Grants.gov";
   $$("#nav a[data-r]").forEach((a) => a.classList.toggle("on", a.dataset.r === key));
   document.body.classList.remove("nav-open"); closeDrawer();
   $("#main").innerHTML = `<p class="muted">Loading…</p>`;
-  Promise.resolve({ contracts: Matches, grants: Matches, searches: () => Searches((parts[1] || "").split("?")[0]), settings: Settings }[key]())
+  Promise.resolve({ contracts: Matches, grants: Matches, profile: Profile, settings: Settings }[key]())
     .catch((e) => ($("#main").innerHTML = setupNeeded(e)
       ? `<section class="panel"><h2>One-time setup needed</h2><p>Opportunities needs the latest database update. An admin runs the latest <code>supabase/schema.sql</code> in the Supabase SQL Editor.</p></section>`
       : `<div class="empty">Couldn't load this page: ${esc(e.message)}</div>`));

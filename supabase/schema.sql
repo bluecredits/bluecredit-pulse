@@ -585,7 +585,7 @@ begin
                 from fed_notices f
                where f.status in ('New', 'Saved') and f.first_seen::date >= since and f.first_seen::date <= t
                  and (f.response_deadline is null or f.response_deadline >= t)
-                 and (f.source = 'BidMatch' or exists (select 1 from fed_matches m where m.workspace_id = f.workspace_id and m.notice_id = f.notice_id))) n
+                 and (f.source = 'BidMatch' or f.status = 'Saved' or exists (select 1 from fed_matches m where m.workspace_id = f.workspace_id and m.notice_id = f.notice_id))) n
        group by n.source) z), '{}'));
   end if;
 
@@ -2062,6 +2062,10 @@ alter table public.fed_notices add column if not exists aln text[] not null defa
 alter table public.fed_notices add column if not exists funding_id bigint references public.funding (id) on delete set null;
 alter table public.fed_searches add column if not exists source text not null default 'SAM.gov';
 alter table public.fed_searches add column if not exists aln text[] not null default '{}';
+-- one profile per workspace and source (your NAICS codes and keywords); a notice fits if it has ANY of your codes OR ANY of your keywords
+alter table public.fed_searches add column if not exists is_profile boolean not null default false;
+alter table public.fed_searches add column if not exists match_any boolean not null default false;
+create unique index if not exists ux_fed_searches_profile on public.fed_searches (workspace_id, source) where is_profile;
 do $$ begin
   alter table public.fed_searches add constraint fed_searches_source check (source in ('SAM.gov', 'Grants.gov'));
 exception when duplicate_object then null; end $$;
@@ -2089,22 +2093,31 @@ drop trigger if exists stamp on public.fed_searches;
 create trigger stamp before insert or update on public.fed_searches for each row execute function public.stamp_row();
 
 -- does a notice fit a search?
+-- "hydrological" also finds "hydrologic", "floods" finds "flood"
+create or replace function public.fed_stem(k text) returns text language sql immutable as $$
+  select case when length(regexp_replace(lower(trim(k)), '(ical|al|ing|ed|es|s)$', '')) >= 4
+              then regexp_replace(lower(trim(k)), '(ical|al|ing|ed|es|s)$', '') else lower(trim(k)) end $$;
 create or replace function public.fed_fits(n public.fed_notices, s public.fed_searches) returns boolean
 language sql stable set search_path = public as $$
+  with t as (select
+      -- codes: NAICS for contracts, assistance listings for grants
+      case when n.source = 'Grants.gov' then cardinality(s.aln) > 0 and exists (select 1 from unnest(s.aln) q, unnest(n.aln) c where c like trim(q) || '%')
+           else cardinality(s.naics) > 0 and exists (select 1 from unnest(s.naics) q, unnest(n.naics_all) c where c like trim(q) || '%') end as code_hit,
+      case when n.source = 'Grants.gov' then cardinality(s.aln) = 0 else cardinality(s.naics) = 0 end as no_codes,
+      cardinality(s.keywords) > 0 and exists (select 1 from unnest(s.keywords) k where trim(k) <> ''
+        and concat_ws(' ', n.title, n.sol_number, case when s.match_any then n.summary end) ilike '%' || fed_stem(k) || '%') as kw_hit)
   select n.source = s.source
      and (cardinality(s.agencies) = 0 or exists (select 1 from unnest(s.agencies) a where concat_ws(' ', n.path_name, n.agency, n.subtier) ilike '%' || trim(a) || '%'))
-     and (cardinality(s.keywords) = 0 or exists (select 1 from unnest(s.keywords) k where concat_ws(' ', n.title, n.sol_number) ilike '%' || trim(k) || '%'))
      and not exists (select 1 from unnest(s.exclude) k where trim(k) <> '' and n.title ilike '%' || trim(k) || '%')
      and (cardinality(s.notice_types) = 0 or n.notice_type = any (s.notice_types) or n.base_type = any (s.notice_types))
      and (not s.open_only or n.response_deadline is null or n.response_deadline >= now())
-     and case when n.source = 'Grants.gov' then
-           (cardinality(s.aln) = 0 or exists (select 1 from unnest(s.aln) q, unnest(n.aln) c where c like trim(q) || '%'))
-         else
-           (cardinality(s.naics) = 0 or exists (select 1 from unnest(s.naics) q, unnest(n.naics_all) c where c like trim(q) || '%'))
-           and (s.size = 'any' or (s.size = 'small' and coalesce(n.set_aside_code, '') not in ('', 'NONE'))
+     and case when s.match_any then t.code_hit or t.kw_hit
+              else (t.no_codes or t.code_hit) and (cardinality(s.keywords) = 0 or t.kw_hit) end
+     and (n.source = 'Grants.gov' or (
+           (s.size = 'any' or (s.size = 'small' and coalesce(n.set_aside_code, '') not in ('', 'NONE'))
                 or (s.size = 'unrestricted' and coalesce(n.set_aside_code, '') in ('', 'NONE')))
-           and (cardinality(s.set_asides) = 0 or n.set_aside_code = any (s.set_asides))
-         end $$;
+           and (cardinality(s.set_asides) = 0 or n.set_aside_code = any (s.set_asides))))
+    from t $$;
 
 -- add matches for one search (or every active search) in a workspace; returns how many new matches
 create or replace function public.fed_rematch(p_ws uuid, p_search bigint default null, p_since timestamptz default null) returns int
@@ -2677,6 +2690,80 @@ end $$;
 create or replace function public.fed_contacts_text(p jsonb) returns text language sql immutable as $$
   select string_agg('Contact: ' || concat_ws(', ', nullif(concat_ws(' ', c ->> 'name', '(' || coalesce(c ->> 'title', c ->> 'type') || ')'), ''), c ->> 'email', c ->> 'phone'), E'\n')
     from jsonb_array_elements(case when jsonb_typeof(p) = 'array' then p else '[]' end) c $$;
+
+-- ----- contracting officers into Contacts
+-- Saves a notice's contacts (all, or the one with p_email) to the Contacts list; matched by email so nobody is added twice.
+create or replace function public.fed_contacts_upsert(p_ws uuid, n public.fed_notices, p_email text default null) returns int
+language plpgsql volatile security definer set search_path = public as $$
+declare c jsonb; cid bigint; k int := 0; org text; v_role text; line text;
+begin
+  org := coalesce(nullif(concat_ws(' / ', n.agency, nullif(n.subtier, n.agency)), ''), n.office);
+  line := format('From %s: %s%s', case n.source when 'BidMatch' then 'MyBidMatch' else n.source end, n.title, coalesce(' (' || n.sol_number || ')', ''));
+  for c in select * from jsonb_array_elements(case when jsonb_typeof(n.contacts) = 'array' then n.contacts else '[]' end) loop
+    continue when p_email is not null and lower(coalesce(c ->> 'email', '')) <> lower(p_email);
+    continue when coalesce(c ->> 'email', c ->> 'name') is null;
+    v_role := coalesce(c ->> 'title', case when n.source = 'Grants.gov' then 'Grants contact' when n.source = 'SAM.gov' or n.level = 'Federal' then 'Contracting Officer' else 'Buyer' end);
+    select id into cid from contacts where workspace_id = p_ws
+       and ((c ? 'email' and lower(email) = lower(c ->> 'email')) or (not c ? 'email' and lower(name) = lower(c ->> 'name') and organization is not distinct from org))
+     order by id limit 1;
+    if cid is null then
+      insert into contacts (workspace_id, name, organization, role, email, phone, category, source, tags, notes, updated_by)
+      values (p_ws, coalesce(c ->> 'name', c ->> 'email'), org, v_role, c ->> 'email', c ->> 'phone', 'Government', 'Opportunities', 'Contracting officer', line, member_name())
+      returning id into cid;
+    else
+      update contacts set name = case when name is null or name = email then coalesce(c ->> 'name', name) else name end,
+          phone = coalesce(phone, c ->> 'phone'), role = coalesce(contacts.role, v_role), organization = coalesce(contacts.organization, org),
+          notes = case when position(line in coalesce(notes, '')) > 0 then notes else concat_ws(E'\n', notes, line) end, updated_at = now(), updated_by = member_name()
+       where id = cid;
+    end if;
+    k := k + 1; cid := null;
+  end loop;
+  return k;
+end $$;
+create or replace function public.fed_save_contact(p_notice text, p_email text default null) returns int
+language plpgsql volatile security definer set search_path = public as $$
+declare w uuid := staff_ws(); n fed_notices;
+begin
+  if w is null then raise exception 'Only team members can save contacts.'; end if;
+  select * into n from fed_notices where workspace_id = w and notice_id = p_notice;
+  if not found then raise exception 'Notice not found.'; end if;
+  return fed_contacts_upsert(w, n, nullif(p_email, ''));
+end $$;
+
+-- ----- the profile: your NAICS codes and keywords (one for contracts, one for grants)
+-- Created from your existing searches the first time; the old searches are paused (kept, not deleted).
+create or replace function public.fed_profile_ws(p_ws uuid, p_source text) returns public.fed_searches
+language plpgsql volatile security definer set search_path = public as $$
+declare pr fed_searches;
+begin
+  select * into pr from fed_searches where workspace_id = p_ws and source = p_source and is_profile;
+  if found then return pr; end if;
+  insert into fed_searches (workspace_id, name, source, is_profile, match_any, naics, aln, keywords, exclude, agencies, set_asides, notice_types, size, open_only, active)
+  select p_ws, case when p_source = 'Grants.gov' then 'My grants profile' else 'My contracts profile' end, p_source, true, true,
+     coalesce((select array_agg(distinct x order by x) from fed_searches s, unnest(s.naics) x where s.workspace_id = p_ws and s.source = p_source and s.active), '{}'),
+     coalesce((select array_agg(distinct x order by x) from fed_searches s, unnest(s.aln) x where s.workspace_id = p_ws and s.source = p_source and s.active), '{}'),
+     coalesce((select array_agg(distinct lower(trim(x))) from fed_searches s, unnest(s.keywords) x where s.workspace_id = p_ws and s.source = p_source and s.active and trim(x) <> ''), '{}'),
+     coalesce((select array_agg(distinct lower(trim(x))) from fed_searches s, unnest(s.exclude) x where s.workspace_id = p_ws and s.source = p_source and s.active and trim(x) <> ''), '{}'),
+     '{}', '{}',
+     case when p_source = 'Grants.gov' then '{Posted,Forecasted}'::text[] else '{Solicitation,"Combined Synopsis/Solicitation",Presolicitation,"Sources Sought"}'::text[] end,
+     case when p_source <> 'Grants.gov' and exists (select 1 from fed_searches s where s.workspace_id = p_ws and s.source = p_source and s.active and s.size = 'small') then 'small' else 'any' end,
+     true, true
+  returning * into pr;
+  update fed_searches set active = false where workspace_id = p_ws and source = p_source and not is_profile;
+  delete from fed_matches m using fed_searches s where m.search_id = s.id and s.workspace_id = p_ws and s.source = p_source and not s.is_profile;
+  perform fed_rematch(p_ws, pr.id);
+  return pr;
+end $$;
+create or replace function public.fed_profile(p_source text) returns jsonb
+language plpgsql volatile security definer set search_path = public as $$
+declare w uuid := staff_ws();
+begin
+  if w is null then raise exception 'Only team members can use Opportunities.'; end if;
+  if p_source not in ('SAM.gov', 'Grants.gov') then raise exception 'Unknown source %', p_source; end if;
+  insert into fed_config (workspace_id) values (w) on conflict do nothing;
+  return to_jsonb(fed_profile_ws(w, p_source));
+end $$;
+
 create or replace function public.fed_add_to_opportunities(p_notice text, p_kind text default null) returns bigint
 language plpgsql volatile security definer set search_path = public as $$
 declare w uuid := staff_ws(); n fed_notices; oid bigint;
@@ -2696,6 +2783,7 @@ begin
     n.contacts -> 0 ->> 'name', n.contacts -> 0 ->> 'email')
   returning id into oid;
   update fed_notices set status = 'Added', opportunity_id = oid, status_by = member_name() where workspace_id = w and notice_id = p_notice;
+  perform fed_contacts_upsert(w, n);
   return oid;
 end $$;
 
@@ -2705,11 +2793,13 @@ create or replace function public.fed_list(p_source text default 'SAM.gov', p_st
 language sql stable security definer set search_path = public as $$
   select coalesce(jsonb_agg(to_jsonb(x) order by case when p_sort = 'due' then x.response_deadline end nulls last, x.posted_date desc nulls last, x.first_seen desc), '[]')
   from (select n.notice_id, n.title, n.sol_number, n.agency, n.subtier, n.office, n.notice_type, n.posted_date, n.response_deadline, n.naics, n.set_aside,
-               n.set_aside_code, n.state, n.city, n.ui_link, n.award_amount, n.awardee, n.status, n.opportunity_id, n.funding_id, n.first_seen, n.source, n.aln, n.level, left(n.summary, 6000) summary, n.naics_all, n.psc, n.bm_keywords, n.contacts,
+               n.set_aside_code, n.state, n.city, n.ui_link, n.award_amount, n.awardee, n.status, n.opportunity_id, n.funding_id, n.first_seen, n.source, n.aln, n.level, left(n.summary, 6000) summary, n.naics_all, n.psc, n.bm_keywords,
+               (select coalesce(jsonb_agg(c || coalesce((select jsonb_build_object('cid', ct.id) from contacts ct where ct.workspace_id = n.workspace_id
+                    and c ? 'email' and lower(ct.email) = lower(c ->> 'email') limit 1), '{}')), '[]') from jsonb_array_elements(n.contacts) c) contacts,
                (select array_agg(m.search_id) from fed_matches m where m.workspace_id = n.workspace_id and m.notice_id = n.notice_id) searches
           from fed_notices n
          where n.workspace_id = staff_ws() and n.source = coalesce(p_source, 'SAM.gov') and (p_status = 'All' or n.status = p_status)
-           and ((n.source = 'BidMatch' and p_search is null)
+           and ((n.source = 'BidMatch' and p_search is null) or (n.status <> 'New' and p_search is null)
                 or exists (select 1 from fed_matches m where m.workspace_id = n.workspace_id and m.notice_id = n.notice_id and (p_search is null or m.search_id = p_search)))
          order by case when p_sort = 'due' then n.response_deadline end nulls last, n.posted_date desc nulls last, n.first_seen desc
          limit least(greatest(coalesce(p_limit, 400), 1), 1000)) x $$;
@@ -2743,6 +2833,7 @@ begin
     n.contacts -> 0 ->> 'email')
   returning id into fid;
   update fed_notices set status = 'Added', funding_id = fid, status_by = member_name() where workspace_id = w and notice_id = p_notice;
+  perform fed_contacts_upsert(w, n);
   return fid;
 end $$;
 revoke execute on function public.fed_add_to_funding(text), public.fed_store_grants(uuid, jsonb), public.fed_request_grants(uuid, int), public.fed_date(text), public.fed_set_bidmatch(text) from public, anon;
@@ -2758,6 +2849,13 @@ revoke execute on function public.fed_status(), public.fed_save_config(jsonb), p
   public.fed_preview(jsonb), public.fed_apply_search(bigint), public.fed_set_status(text[], text), public.fed_add_to_opportunities(text, text) from public, anon;
 grant execute on function public.fed_status(), public.fed_save_config(jsonb), public.fed_set_key(text), public.fed_clear_key(), public.fed_run_now(),
   public.fed_preview(jsonb), public.fed_apply_search(bigint), public.fed_set_status(text[], text), public.fed_add_to_opportunities(text, text) to authenticated;
+
+revoke execute on function public.fed_contacts_upsert(uuid, public.fed_notices, text), public.fed_profile_ws(uuid, text),
+  public.fed_request_grant_detail(uuid, text), public.fed_store_grant_detail(uuid, text, jsonb) from public, anon, authenticated;
+revoke execute on function public.fed_save_contact(text, text), public.fed_profile(text) from public, anon;
+grant execute on function public.fed_save_contact(text, text), public.fed_profile(text) to authenticated;
+-- every workspace that uses Opportunities gets its profiles (built from its searches)
+select public.fed_profile_ws(c.workspace_id, x.src) from public.fed_config c, (values ('SAM.gov'), ('Grants.gov')) x(src);
 
 -- the timer itself: every 5 minutes (each workspace's own schedule decides when it actually calls SAM.gov)
 do $$ begin

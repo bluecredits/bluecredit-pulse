@@ -152,6 +152,12 @@ async function Dashboard() {
   const d = await db.rpc("dashboard_data", { p_owner: firstName() });
   const k = d.kpis, last = d.last_reviews || {};
   const h = new Date().getHours();
+  // only what needs you this week: overdue or due within 7 days, soonest first
+  const mine = [...d.my_actions].sort((x, y) => (x.due_date || "9999").localeCompare(y.due_date || "9999"));
+  // the same action given in several reviews shows once
+  const seen = new Set();
+  const urgent = mine.filter((a) => a.due_date && daysUntil(a.due_date) <= 7)
+    .filter((a) => { const k = `${a.text}`.trim().toLowerCase() + "|" + a.due_date; if (seen.has(k)) return false; seen.add(k); return true; });
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>${h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"}, ${esc(firstName())}</h1>
       <p class="muted">${new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}</p></div>
@@ -168,15 +174,14 @@ async function Dashboard() {
       ${d.due_soon.length ? `<ul class="list">${d.due_soon.map(dueLi).join("")}</ul>` : `<p class="muted">No deadlines in the next two weeks. Qualify something from the forecasts.</p>`}</section>
     <div class="grid2">
       <div>
-        <section class="panel"><h2>My open actions <small><a href="#/actions">All actions</a></small></h2>
-          ${d.my_actions.length ? d.my_actions.map(actionItem).join("") : `<p class="muted">Nothing assigned to you. Actions you're given in reviews show up here.</p>`}</section>
-        <section class="panel"><h2>Recent activity <small><a href="#/activity">Full log</a></small></h2>
-          <ul class="list">${d.recent.slice(0, 12).map((a) => `<li><span>${esc(a.summary)}</span><span class="meta">${esc(a.user_name)} · ${ago(a.ts)}</span></li>`).join("") || `<li class="muted">No edits yet.</li>`}</ul></section>
-      </div>
-      <div>
+        <section class="panel"><h2>My actions due this week <small><a href="#/actions">All actions</a></small></h2>
+          ${urgent.length ? urgent.slice(0, 5).map(actionItem).join("") : `<p class="muted">Nothing of yours is due in the next 7 days.</p>`}
+          ${mine.length > Math.min(urgent.length, 5) ? `<p class="meta" style="margin:8px 0 0"><a href="#/actions">${mine.length - Math.min(urgent.length, 5)} more open action${mine.length - Math.min(urgent.length, 5) === 1 ? "" : "s"} →</a></p>` : ""}</section>
         <section class="panel"><h2>Review rhythm</h2><ul class="list">
           ${Object.entries(S.schema.cadences).map(([c, cfg]) => { const l = last[c]; const late = !l || daysUntil(l) < -{ daily: 1, weekly: 7, monthly: 31, quarterly: 92 }[c];
             return `<li><span>${cfg.label}</span><span class="meta ${late ? "due-over" : ""}">${l ? "Last " + short(l) : "Not run yet"}</span></li>`; }).join("")}</ul></section>
+      </div>
+      <div>
         <section class="panel"><h2>Opportunities by stage</h2>${bars(d.opp_by_stage, "opportunities", "stage")}</section>
         <section class="panel"><h2>Funding pipeline</h2>${bars(d.funding_by_status, "funding", "status")}</section>
       </div>

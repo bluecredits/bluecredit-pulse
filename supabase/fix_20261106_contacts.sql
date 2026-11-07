@@ -231,7 +231,9 @@ begin
         update fed_config set last_error = case
             when r.status_code = 429 then 'SAM.gov says the daily request limit for this API key is used up. Fetching resumes tomorrow; consider a slower schedule.'
             when r.status_code in (401, 403) then 'SAM.gov rejected the API key. Check it is current (keys expire every 90 days) and save it again.'
-            when r.timed_out then 'SAM.gov was slow to answer; Pulse retries smaller pages automatically.'
+            when (r.timed_out or coalesce(r.error_msg, '') ilike '%timeout%') and nullif(c.sam_relay_url, '') is null
+              then 'SAM.gov never accepted the connection from the database. Deploy the sam-relay Edge Function and run the contacts + relay SQL to route SAM.gov through it.'
+            when r.timed_out or coalesce(r.error_msg, '') ilike '%timeout%' then 'SAM.gov did not answer in time (through sam-relay). Pulse tries once more; if this keeps happening, SAM.gov may be down.'
             else format('SAM.gov error %s: %s', r.status_code, left(coalesce(r.error_msg, r.content, ''), 200)) end
           where workspace_id = p_ws;
         -- a slow page gets one retry

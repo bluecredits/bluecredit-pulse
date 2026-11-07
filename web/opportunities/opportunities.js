@@ -91,9 +91,17 @@ async function Matches() {
   if (FD.naics) rows = rows.filter((r) => naicsOf(r).some((c) => c.startsWith(FD.naics)));
   if (FD.q) { const t = FD.q.toLowerCase(); rows = rows.filter((r) => [r.title, r.sol_number, r.agency, r.subtier, r.office, naicsOf(r).join(" "), keywordsOf(r).join(" "), (r.aln || []).join(" "), r.summary,
     (r.contacts || []).map((c) => `${c.name || ""} ${c.email || ""}`).join(" ")].join(" ").toLowerCase().includes(t)); }
-  const chips = (kind, all, cur, label, fmt) => `<div class="fed-chips" role="group" aria-label="${label}"><span class="lbl">${label}</span>
-      <button type="button" class="chip ${cur ? "" : "on"}" data-${kind}="">All</button>${all.map(([k, n]) => `<button type="button" class="chip ${cur && cur.toLowerCase() === k.toLowerCase() ? "on" : ""} ${n ? "" : "zero"}" data-${kind}="${esc(k)}" title="${esc(fmt(k))}">${esc(k)} <span>${n}</span></button>`).join("")}</div>`;
+  const opt = (k, n, cur, fmt) => `<option value="${esc(k)}" ${cur && cur.toLowerCase() === k.toLowerCase() ? "selected" : ""}>${esc(fmt(k))} (${n})</option>`;
   const otherOpts = Object.entries(otherNaics).sort((a, b) => b[1] - a[1]);
+  if (FD.naics && !MY.naics.includes(FD.naics) && !otherNaics[FD.naics]) otherOpts.unshift([FD.naics, 0]);
+  if (FD.kw && !Object.keys(kwAll).some((k) => k.toLowerCase() === FD.kw.toLowerCase())) kwAll[FD.kw] = 0;
+  const naicsSel = grants ? "" : `<select id="fNaics" aria-label="NAICS"><option value="">All NAICS codes</option>
+      ${MY.naics.length ? `<optgroup label="Your NAICS codes">${MY.naics.map((c) => opt(c, naicsAll[c], FD.naics, naicsLabel)).join("")}</optgroup>` : ""}
+      ${otherOpts.length ? `<optgroup label="Other codes in these results">${otherOpts.map(([c, n]) => opt(c, n, FD.naics, naicsLabel)).join("")}</optgroup>` : ""}</select>`;
+  const kwEntries = Object.entries(kwAll), mineKw = kwEntries.filter(([k]) => MY.kw.includes(k)).sort((a, b) => b[1] - a[1]), moreKw = kwEntries.filter(([k]) => !MY.kw.includes(k)).sort((a, b) => b[1] - a[1]);
+  const kwSel = `<select id="fKw" aria-label="Keyword"><option value="">All keywords</option>
+      ${mineKw.length ? `<optgroup label="Your keywords">${mineKw.map(([k, n]) => opt(k, n, FD.kw, (x) => x)).join("")}</optgroup>` : ""}
+      ${moreKw.length ? `<optgroup label="${bm ? "MyBidMatch profile terms" : "Other"}">${moreKw.map(([k, n]) => opt(k, n, FD.kw, (x) => x)).join("")}</optgroup>` : ""}</select>`;
   const sname = Object.fromEntries(searches.map((s) => [s.id, s.name]));
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>${grants ? "Grants" : "Contracts"}</h1><p class="muted">${bm ? "Bids from your APEX Accelerator MyBidMatch lists: federal, state, local and education." : (grants ? "Open and forecasted Grants.gov grants" : "Federal notices from SAM.gov") + " that match your searches."} ${bm ? bmLine(st) : statusLine(st, grants)}</p></div>
@@ -104,12 +112,10 @@ async function Matches() {
     <div class="filters">
       <div class="tabs">${["New", "Saved", "Added", "Dismissed", "All"].map((k) => `<button data-st="${k}" aria-selected="${FD.status === k}">${k}</button>`).join("")}</div>
       <select id="fSearch" ${bm ? "hidden" : ""}><option value="">All searches</option>${searches.map((s) => `<option value="${s.id}" ${String(s.id) === FD.search ? "selected" : ""}>${esc(s.name)}</option>`).join("")}</select>
-      ${grants || !otherOpts.length ? "" : `<select id="fNaics" aria-label="Other NAICS codes"><option value="">Other NAICS codes…</option>${otherOpts.map(([k, n]) => `<option value="${esc(k)}" ${k === FD.naics ? "selected" : ""}>${esc(naicsLabel(k))} (${n})</option>`).join("")}</select>`}
+      ${naicsSel}${kwSel}
       <select id="fSort"><option value="posted" ${FD.sort === "posted" ? "selected" : ""}>Newest first</option><option value="due" ${FD.sort === "due" ? "selected" : ""}>Due soonest</option></select>
       <input id="fQ" type="search" placeholder="Filter by title, agency, ${grants ? "assistance listing" : bm ? "text" : "NAICS"}…" value="${esc(FD.q)}">
     </div>
-    ${grants || !MY.naics.length ? "" : chips("fnaics", Object.entries(naicsAll), FD.naics, "Your NAICS", naicsLabel)}
-    ${MY.kw.length || Object.keys(kwAll).length ? chips("fkw", Object.entries(kwAll).sort((a, b) => b[1] - a[1]), FD.kw, "Your keywords", (k) => k) : ""}
     ${FD.naics || FD.kw ? `<p class="muted small fed-filtered">Showing ${rows.length} with ${[FD.naics && "NAICS " + naicsLabel(FD.naics), FD.kw && `“${esc(FD.kw)}”`].filter(Boolean).join(" and ")}. <button type="button" class="link-btn" data-clear>Clear</button></p>` : ""}
     <div class="fed-list">${rows.map((r) => card(r, sname)).join("") || `<div class="empty">${FD.status === "New" ? "No new matches right now." : "Nothing here."}${bm || searches.length ? "" : ` <a href="#/searches/new?${grants ? "grants" : "contracts"}">Create your first ${grants ? "grants" : "contracts"} search</a>.`}</div>`}</div>`;
   $$("[data-st]").forEach((b) => b.addEventListener("click", () => { FD.status = b.dataset.st; Matches(); }));
@@ -117,8 +123,7 @@ async function Matches() {
   $("#fSearch").addEventListener("change", (e) => { FD.search = e.target.value; Matches(); });
   $("#fSort").addEventListener("change", (e) => { FD.sort = e.target.value; Matches(); });
   $("#fNaics")?.addEventListener("change", (e) => { FD.naics = e.target.value; Matches(); });
-  $$("[data-fnaics]").forEach((b) => b.addEventListener("click", () => { FD.naics = b.dataset.fnaics; Matches(); }));
-  $$("[data-fkw]").forEach((b) => b.addEventListener("click", () => { FD.kw = b.dataset.fkw; Matches(); }));
+  $("#fKw")?.addEventListener("change", (e) => { FD.kw = e.target.value; Matches(); });
   $("[data-clear]")?.addEventListener("click", () => { FD.naics = ""; FD.kw = ""; Matches(); });
   $$("[data-more]").forEach((b) => b.addEventListener("click", () => { const p = b.previousElementSibling; const open = p.classList.toggle("open"); b.textContent = open ? "Show less" : "Show full description"; }));
   $("#fQ").addEventListener("input", debounce((e) => { FD.q = e.target.value; Matches().then(() => { const i = $("#fQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 300));

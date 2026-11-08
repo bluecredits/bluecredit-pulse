@@ -130,7 +130,7 @@ async function openPerson(id) {
       <select id="ckWho" aria-label="Who does it"><option value="us">We do it</option><option value="them">They do it</option></select><button class="btn small" id="ckAdd">Add</button></div>` : ""}
     <h3 class="ck-h">Agreements</h3>
     <ul class="checklist">${agrs.map((g) => `<li class="ck"><a href="../agreements/#/view/${g.id}">AGR-${String(g.number).padStart(4, "0")} · ${esc(g.title)}</a><span class="meta">${esc(g.status)}</span></li>`).join("") || `<li class="muted small" style="padding:4px 10px">None yet.</li>`}</ul>
-    ${isStaff() ? `<div class="actions-row" style="margin:4px 0 12px">${[["consulting", "Consulting agreement"], ["confidentiality", "Confidentiality agreement"], ["teaming", "Teaming agreement"]].map(([k, l]) =>
+    ${isStaff() ? `<div class="actions-row" style="margin:4px 0 12px">${[...(o.kind === "Employee" || o.kind === "Intern" ? [["employment", "Employment agreement"]] : [["consulting", "Consulting agreement"]]), ["confidentiality", "Confidentiality agreement"], ["teaming", "Teaming agreement"]].map(([k, l]) =>
       `<a class="btn small" href="../agreements/#/new?template=${k}&onboarding=${o.id}">${icon("plus")}${l}</a>`).join("")}</div>` : ""}
     ${isStaff() && o.user_id ? `<h3 class="ck-h">Timecards projects</h3><div class="chips">${allProj.filter((p) => p.status !== "Closed").map((p) =>
         `<label class="chip-check"><input type="checkbox" data-proj="${p.id}" ${projects.some((x) => x.project_id === p.id) ? "checked" : ""} ${isAdmin() ? "" : "disabled"}> ${esc(p.name)}</label>`).join("") || `<span class="muted">No projects yet. Add them in <a href="../timecards/#/projects">Timecards</a>.</span>`}</div>` : ""}
@@ -235,14 +235,14 @@ async function Template() {
 }
 
 /* ================================================================ router */
-const routes = { openings: Openings, candidates: Candidates, interviews: Interviews, people: People, mine: Mine, template: Template, "hiring-setup": HiringSetup };
+const routes = { openings: Openings, candidates: Candidates, interviews: Interviews, people: People, mine: Mine, template: Template, "hiring-setup": HiringSetup, policies: MyPolicies, signoffs: SignOffs };
 window.addEventListener("hashchange", route);
 function route() {
   if (!S.profile) return;
   const [path, qs] = location.hash.replace(/^#\/?/, "").split("?");
   const [name] = path.split("/");
   const hiring = ["openings", "candidates", "interviews", "hiring-setup"];
-  const key = routes[name] && (isStaff() || name === "mine") ? name : isStaff() ? (hasApp("hiring") ? "candidates" : "people") : "mine";
+  const key = routes[name] && (isStaff() || name === "mine" || name === "policies") && (name !== "signoffs" || isAdmin()) ? name : isStaff() ? (hasApp("hiring") ? "candidates" : "people") : "mine";
   $$("#nav a[data-r]").forEach((a) => a.classList.toggle("on", a.dataset.r === key));
   document.body.classList.remove("nav-open"); closeDrawer();
   $("#main").innerHTML = `<p class="muted">Loading…</p>`;
@@ -255,8 +255,8 @@ async function boot() {
   if (!sb) { $("#setup").hidden = false; return; }
   try {
     if (!(await requireMember())) return;
-    if (!isStaff()) $$('#nav a[data-r]:not([data-r="mine"]), #nav .nav-label').forEach((a) => a.remove());
-    else if (!isAdmin()) $$('#nav a[data-r="template"], #nav a[data-r="hiring-setup"]').forEach((a) => a.remove());
+    if (!isStaff()) $$('#nav a[data-r]:not([data-r="mine"]):not([data-r="policies"]), #nav .nav-label').forEach((a) => a.remove());
+    else if (!isAdmin()) $$('#nav a[data-r="template"], #nav a[data-r="hiring-setup"], #nav a[data-r="signoffs"]').forEach((a) => a.remove());
     if (!hasApp("hiring")) $$('#nav a[data-r="openings"], #nav a[data-r="candidates"], #nav a[data-r="interviews"], #nav a[data-r="hiring-setup"]').forEach((a) => a.insertAdjacentHTML("beforeend", `<small class="plan-badge">Pro</small>`));
     showShell(); route();
   } catch (e) { showShell(); $("#main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }

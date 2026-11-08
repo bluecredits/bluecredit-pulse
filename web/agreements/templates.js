@@ -199,6 +199,25 @@ const CIA = `
 </div>`;
 
 
+const EMPLOYMENT = `
+<h1>EMPLOYMENT AGREEMENT</h1>
+<p>This Employment Agreement (this "Agreement") is made effective as of {{effective_date_long}} between <b>{{company_name}}</b>{{#if company_entity}}, {{company_entity}}{{/if}} (the "Company"), and <b>{{party_name}}</b>, of {{party_address}} ("you").</p>
+<ol class="agr-sections">
+<li><b>Position.</b> The Company employs you as <b>{{position_title}}</b>{{#if manager_title}}, reporting to the {{manager_title}}{{/if}}, starting on {{start_date_long}}. This is a {{employment_type_text}} position classified as <b>{{classification}}</b> under the Fair Labor Standards Act and applicable state law. You will work {{work_location}}. You will perform the duties the Company reasonably assigns and devote your working time and best efforts to the Company.</li>
+<li><b>Pay.</b> The Company will pay you {{pay_text}}, less applicable withholdings and deductions, on the Company's regular pay schedule ({{pay_frequency}}).{{#if classification_nonexempt}} You will be paid for all hours worked, including overtime as the law requires; overtime must be approved in advance.{{/if}} The Company reviews pay periodically and may adjust it.</li>
+{{#if bonus}}<li><b>Bonus.</b> {{bonus}} Any bonus is at the Company's discretion unless this section states otherwise.</li>{{/if}}
+<li><b>Benefits and time off.</b> You may take part in the benefit plans the Company offers to similarly situated employees, under the terms of those plans, which the Company may change. {{#if benefits}}{{benefits}} {{/if}}{{#if pto_days}}You will receive {{pto_days}} days of paid time off a year, plus Company holidays, under the Company's time off policy.{{/if}}</li>
+{{#if probation_days}}<li><b>Introductory period.</b> The first {{probation_days}} days of employment are an introductory period to review fit and performance. Completing it does not change the at-will nature of employment.</li>{{/if}}
+<li><b>Company policies.</b> You agree to follow the Company's policies, as published in Pulse and updated from time to time, and to read and certify them when asked. If a policy conflicts with this Agreement, this Agreement controls.</li>
+<li><b>Confidentiality and inventions.</b> As a condition of employment you will sign, and comply with, the Company's Confidentiality and Assignment Agreement, which protects the Company's confidential information and assigns to the Company the work product you create in your employment.</li>
+<li><b>Other work.</b> While employed, you will not work for or advise a competitor, customer or supplier of the Company without the Company's written consent, and you will tell the Company about any outside activity that could create a conflict of interest.</li>
+{{#if us_law}}<li><b>Employment eligibility.</b> This offer depends on your providing proof of your identity and authorization to work in the United States (Form I-9) within three business days of your start date{{#if background_check}}, and on satisfactory completion of a background check as permitted by law{{/if}}.</li>{{/if}}
+<li><b>At-will employment.</b> {{#if us_law}}Your employment is at will: you or the Company may end it at any time, for any lawful reason, with or without cause or notice.{{/if}}{{#unless us_law}}Either party may end your employment by giving {{notice_days}} days' written notice, or as the law of the place where you work requires if longer. The Company may pay salary in place of notice.{{/unless}} {{#if us_law}}We ask that you give {{notice_days}} days' notice if you resign.{{/if}} On leaving you will return all Company property and information.</li>
+{{#if arbitration}}<li><b>Dispute resolution.</b> You and the Company agree to resolve disputes under the Company's separate Arbitration Agreement, which you will sign with this Agreement.</li>{{/if}}
+<li><b>Entire agreement.</b> This Agreement, with the Confidentiality and Assignment Agreement{{#if arbitration}} and the Arbitration Agreement{{/if}}, is the entire agreement about your employment and replaces any earlier offer or discussion. It may be changed only in a writing signed by you and an officer of the Company. It is governed by the laws of {{law_place}}. If any part is unenforceable, the rest remains in effect. Electronic signatures count as originals.</li>
+</ol>
+{{signatures}}`;
+
 const AMENDMENT = `
 <h1>AMENDMENT NO. {{amendment_no}}<br><small>to the {{original_title}}</small></h1>
 <p>This Amendment No. {{amendment_no}} (this "Amendment") is made effective as of {{effective_date_long}} by and between <b>{{company_name}}</b>{{#if company_entity}}, {{company_entity}}{{/if}} (the "Company"), and <b>{{party_name}}</b>{{#if party_entity}}, {{party_entity}}{{/if}} (the "Counterparty"), and amends the {{original_title}} between them dated {{original_date_long}} (reference {{original_ref}}) (the "Agreement").</p>
@@ -267,6 +286,33 @@ const BUILTIN_TEMPLATES = [
       { key: "prior_patents", label: "Patents and applications naming them", group: "Exhibit A", type: "text" },
       ...F_COMPANY, ...F_LAW,
     ], body: CIA },
+  { key: "employment", kind: "employment", name: "Employment Agreement", icon: "user-plus",
+    blurb: "Hire an employee: position, pay, benefits, time off, policies, confidentiality, at-will terms. The employee signs online.",
+    checklist: ["sign", "agreement"], signers: [{ role: "company", label: "Your company" }, { role: "party", label: "Employee" }],
+    fields: [
+      { key: "party_name", label: "Employee full name", group: "The employee", required: true },
+      { key: "party_address", label: "Home address", group: "The employee", required: true },
+      { key: "party_signer_email", label: "Email (gets the signing link)", group: "The employee", type: "email", required: true },
+      { key: "position_title", label: "Job title", group: "The job", required: true },
+      { key: "manager_title", label: "Reports to (title)", group: "The job", placeholder: "Chief Executive Officer" },
+      { key: "start_date", label: "Start date", group: "The job", type: "date", required: true },
+      { key: "employment_type", label: "Schedule", group: "The job", type: "select", options: ["Full-time", "Part-time"], default: "Full-time" },
+      { key: "classification", label: "Overtime classification", group: "The job", type: "select", options: ["Exempt", "Non-exempt"], default: "Exempt" },
+      { key: "work_location", label: "Where they work", group: "The job", default: "remotely, with travel as needed", placeholder: "at the Company's office in Alexandria, Virginia" },
+      { key: "pay_basis", label: "Pay basis", group: "Pay", type: "select", options: ["Annual salary", "Hourly"], default: "Annual salary" },
+      { key: "pay_rate", label: "Amount", group: "Pay", type: "number", required: true },
+      { key: "currency", label: "Currency", group: "Pay", type: "select", options: ["USD", "EUR", "GBP", "CAD", "AUD", "KES", "ZAR", "NGN", "INR", "PKR"], default: "USD" },
+      { key: "pay_frequency", label: "Paid", group: "Pay", type: "select", options: ["every two weeks", "twice a month", "monthly", "weekly"], default: "twice a month" },
+      { key: "bonus", label: "Bonus (optional)", group: "Pay", type: "text" },
+      { key: "benefits", label: "Benefits to mention (optional)", group: "Benefits", type: "text", placeholder: "You will be eligible for health insurance on the first of the month after your start date." },
+      { key: "pto_days", label: "Paid time off (days a year)", group: "Benefits", type: "number", default: "15" },
+      { key: "probation_days", label: "Introductory period (days, blank for none)", group: "Terms", type: "number", default: "90" },
+      { key: "notice_days", label: "Notice asked for when resigning (days)", group: "Terms", type: "number", default: "14" },
+      { key: "background_check", label: "Subject to a background check", group: "Terms", type: "yesno", default: "no" },
+      { key: "arbitration", label: "Disputes go to arbitration (separate agreement)", group: "Terms", type: "yesno", default: "no" },
+      { key: "effective_date", label: "Agreement date", group: "Terms", type: "date", required: true, default: "today" },
+      ...F_COMPANY, ...F_LAW,
+    ], body: EMPLOYMENT },
   { key: "amendment", kind: "amendment", name: "Amendment", icon: "clipboard", amendment: true,
     blurb: "Change an executed agreement: each change is a numbered section. Opens from the agreement you're amending.",
     checklist: [], signers: [{ role: "company", label: "Your company" }, { role: "party", label: "Counterparty" }],
@@ -309,6 +355,9 @@ function agreementVars(tpl, v) {
   const unit = { Hourly: " per hour", Daily: " per day", "Monthly retainer": " per month", "Fixed fee": "" }[v.fee_type] ?? "";
   x.fee_text = v.fee_rate ? (v.fee_type === "Fixed fee" ? `a fixed fee of ${moneyText(v.fee_rate, v.currency)}` : `${moneyText(v.fee_rate, v.currency)}${unit}`) : "";
   x.fee_cap_text = moneyText(v.fee_cap, v.currency);
+  x.pay_text = v.pay_rate ? (v.pay_basis === "Hourly" ? `${moneyText(v.pay_rate, v.currency)} per hour` : `an annual salary of ${moneyText(v.pay_rate, v.currency)}`) : "";
+  x.employment_type_text = String(v.employment_type || "full-time").toLowerCase();
+  x.classification_nonexempt = v.classification === "Non-exempt" ? "yes" : "";
   x.relationship_text = { Employee: "my employment or continued employment", Advisor: "my retention as an advisor or continued retention as an advisor",
     Consultant: "my retention as a consultant or continued retention as a consultant", Contractor: "my engagement as a contractor or continued engagement" }[v.relationship] || "my retention";
   return x;
@@ -334,17 +383,17 @@ function renderTemplate(body, vars, signaturesHtml = "") {
 function signatureBlocks(tpl, vars, signers = []) {
   const who = (role) => role === "company"
     ? { org: vars.company_name, name: vars.company_signer_name, title: vars.company_signer_title }
-    : { org: tpl.kind === "confidentiality" ? "" : vars.party_name, name: vars.party_signer_name || vars.party_name, title: tpl.kind === "confidentiality" ? vars.relationship : vars.party_signer_title };
+    : { org: ["confidentiality", "employment"].includes(tpl.kind) ? "" : vars.party_name, name: vars.party_signer_name || vars.party_name, title: tpl.kind === "confidentiality" ? vars.relationship : tpl.kind === "employment" ? vars.position_title : vars.party_signer_title };
   return `<!--sigs--><div class="agr-sigs">${tpl.signers.map((s) => {
     const p = who(s.role), done = signers.find((x) => x.role === s.role && x.status === "Signed");
-    const label = tpl.kind === "teaming" ? ((s.role === "company") === (vars.our_role !== "Subcontractor") ? "PRIME" : "SUBCONTRACTOR") : s.role === "company" ? "COMPANY" : (tpl.kind === "consulting" ? "CONSULTANT" : "SIGNATORY");
+    const label = tpl.kind === "teaming" ? ((s.role === "company") === (vars.our_role !== "Subcontractor") ? "PRIME" : "SUBCONTRACTOR") : s.role === "company" ? "COMPANY" : (tpl.kind === "consulting" ? "CONSULTANT" : tpl.kind === "employment" ? "EMPLOYEE" : "SIGNATORY");
     return `<div class="agr-sig"><div class="agr-sig-role">${label}${p.org ? `<br><b>${_esc(String(p.org).toUpperCase())}</b>` : ""}</div>
       <div class="agr-sig-line">${done ? (done.signature_kind === "drawn" && /^data:image\/png;base64,/.test(done.signature_data || "") ? `<img src="${done.signature_data}" alt="Signature">` : `<span class="agr-typed">${_esc(done.signature_data)}</span>`) : ""}</div>
       <div>By: ${done ? "/s/ " + _esc(done.name) : "_______________________________"}</div><div>Name: ${_esc(done?.name || p.name || "")}</div>
       ${p.title || done?.title ? `<div>Title: ${_esc(done?.title || p.title || "")}</div>` : ""}<div>Date: ${done ? _esc(new Date(done.signed_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })) : "__________________"}</div></div>`;
   }).join("")}</div><!--/sigs-->`;
 }
-const COMPUTED = new Set(["effective_date_long", "proposal_due_long", "start_date_long", "end_date_long", "original_date_long", "law_place", "venue_place", "us_law",
+const COMPUTED = new Set(["pay_text", "employment_type_text", "classification_nonexempt", "effective_date_long", "proposal_due_long", "start_date_long", "end_date_long", "original_date_long", "law_place", "venue_place", "us_law",
   "company_contact", "party_contact", "fee_text", "fee_cap_text", "relationship_text", "signatures", ...["prime", "sub"].flatMap((k) => ["name", "entity", "address", "short", "contact"].map((f) => `${k}_${f}`))]);
 function templateFields(tpl) {
   const known = new Set(tpl.fields.map((f) => f.key));

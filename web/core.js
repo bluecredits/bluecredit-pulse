@@ -59,6 +59,33 @@ function md(src) {
   close(); return out.join("");
 }
 
+// Longer documents (policies): headings, lists, tables, quotes and rules from Markdown. Everything is escaped first.
+function mdDoc(src) {
+  const inline = (t) => esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/(^|[^*\w])\*([^*\n]+)\*/g, "$1<i>$2</i>").replace(/(^|\W)_([^_\n]+)_(?=\W|$)/g, "$1<i>$2</i>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>').replace(/\\([*_#\[\]()|-])/g, "$1");
+  const L = String(src || "").replace(/\r/g, "").split("\n"), out = []; let list = null, para = [];
+  const flush = () => { if (para.length) { out.push(`<p>${inline(para.join(" "))}</p>`); para = []; } };
+  const close = () => { flush(); if (list) { out.push(`</${list}>`); list = null; } };
+  const cells = (r) => r.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+  for (let i = 0; i < L.length; i++) {
+    const line = L[i]; let m;
+    if ((m = line.match(/^(#{1,4})\s+(.*)/))) { close(); const h = Math.min(4, m[1].length + 1); out.push(`<h${h}>${inline(m[2])}</h${h}>`); }
+    else if (/^\s*\|.*\|\s*$/.test(line) && /^\s*\|?\s*:?-{3,}/.test(L[i + 1] || "")) {
+      close(); const head = cells(line); i++; const rows = [];
+      while (i + 1 < L.length && /^\s*\|.*\|\s*$/.test(L[i + 1])) rows.push(cells(L[++i]));
+      out.push(`<div class="table-wrap"><table class="doc-table"><thead><tr>${head.map((c) => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
+    }
+    else if ((m = line.match(/^\s*\d+[.)]\s+(.*)/))) { flush(); if (list !== "ol") { close(); out.push("<ol>"); list = "ol"; } out.push(`<li>${inline(m[1])}</li>`); }
+    else if ((m = line.match(/^\s*[-*•]\s+(.*)/))) { flush(); if (list !== "ul") { close(); out.push("<ul>"); list = "ul"; } out.push(`<li>${inline(m[1])}</li>`); }
+    else if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) { close(); out.push("<hr>"); }
+    else if ((m = line.match(/^>\s?(.*)/))) { close(); out.push(`<blockquote>${inline(m[1])}</blockquote>`); }
+    else if (!line.trim()) close();
+    else if (list && /^\s{2,}\S/.test(line)) { out[out.length - 1] = out[out.length - 1].replace(/<\/li>$/, " " + inline(line.trim()) + "</li>"); }
+    else { if (list) close(); para.push(line.trim()); }
+  }
+  close(); return out.join("");
+}
+
 /* ---------------- shared sign-in guard: apps send people to the landing page to sign in */
 const HUB = window.PULSE_HUB || "../";
 function authLost() { if (window.onAuthLost) return window.onAuthLost(); goSignIn(); }
@@ -94,10 +121,11 @@ async function loadWorkspace() {
 /* ---------------------------------------------------------------- plans
    Per staff user per month; contractors and consultants are free. Yearly = 10 months (2 free). */
 const PLANS = {
-  starter: { name: "Starter", price: 3, blurb: "Run the business day to day.", apps: ["review", "contacts", "funding", "timecards", "tickets", "people"], limit: "Up to 10 users" },
-  pro: { name: "Pro", price: 6, blurb: "Find and win work, deliver it, hire.", apps: ["opportunities", "projects", "agreements", "hiring"], limit: "Unlimited users" },
+  starter: { name: "Starter", price: 3, blurb: "Run the business day to day.", apps: ["review", "contacts", "funding", "timecards", "tickets", "people", "documents"], limit: "Up to 10 users" },
+  pro: { name: "Pro", price: 6, blurb: "Find and win work, deliver it, hire.", apps: ["opportunities", "projects", "agreements", "invoices", "hiring"], limit: "Unlimited users" },
   enterprise: { name: "Enterprise", price: 10, blurb: "Everything, with your AI chief of staff.", apps: ["chief", "scheduler"], limit: "Unlimited users, priority support" },
 };
+const FEATURE_NAMES = { hiring: "Hiring", agreements: "Agreements and e-signing", invoices: "Invoices", documents: "Policies and sign-offs" };
 const PLAN_ORDER = ["starter", "pro", "enterprise"];
 const appPlan = (key) => PLAN_ORDER.find((p) => PLANS[p].apps.includes(key)) || "starter";
 const planRank = (p) => Math.max(0, PLAN_ORDER.indexOf(p));
@@ -110,7 +138,7 @@ function lockedPanel(key, what) {
   const need = PLANS[appPlan(key)], admin = S.profile?.role === "admin";
   return `<section class="panel plan-lock"><div class="plan-lock-ic"><svg class="ic"><use href="#i-key"/></svg></div>
     <h1>${esc(what || PULSE_APPS.find((a) => a.key === key)?.name || "This app")} is part of ${need.name}</h1>
-    <p class="muted">${esc(S.workspace?.name || "Your workspace")} is on <b>${esc(PLANS[S.billing?.effective]?.name || "Starter")}</b>. ${need.name} is $${need.price} per user per month and adds ${need.apps.map((k) => esc(k === "hiring" ? "Hiring" : PULSE_APPS.find((a) => a.key === k)?.name || k)).join(", ")}.</p>
+    <p class="muted">${esc(S.workspace?.name || "Your workspace")} is on <b>${esc(PLANS[S.billing?.effective]?.name || "Starter")}</b>. ${need.name} is $${need.price} per user per month and adds ${need.apps.filter((k) => k !== "documents").map((k) => esc(FEATURE_NAMES[k] || PULSE_APPS.find((a) => a.key === k)?.name || k)).join(", ")}.</p>
     <p class="muted small">Nothing has been deleted: everything saved here comes back as soon as you upgrade.</p>
     ${admin ? `<a class="btn primary" href="${HUB}admin/#/billing">See plans and upgrade</a>` : `<p><b>Ask an admin</b> to upgrade in Admin → Billing.</p>`}</section>`;
 }
@@ -134,7 +162,7 @@ const PULSE_APPS = [
   { key: "funding", group: "win", staff: true, name: "Funding", icon: "banknotes", href: "./funding/", blurb: "Grant and loan applications, plus the funding catalog." },
   { key: "opportunities", group: "win", staff: true, name: "Opportunities", icon: "gov", href: "./opportunities/", blurb: "Federal contracts, grants and state and local bids, checked daily." },
   { key: "projects", group: "deliver", name: "Projects", icon: "briefcase", href: "./projects/", blurb: "Schedule, tasks, team, budget vs. actual, reports, close-out." },
-  { key: "agreements", group: "deliver", name: "Agreements", icon: "clipboard", href: "./agreements/", blurb: "Contracts, teaming and NDAs: fill in, e-sign, close out." },
+  { key: "documents", group: "deliver", name: "Documents", icon: "clipboard", href: "./agreements/", blurb: "Policies and sign-offs, contracts and e-signing, invoices, compliance dates." },
   { key: "people", group: "deliver", name: "People", icon: "user-plus", href: "./people/", blurb: "Hiring: openings, candidates, interviews. Then onboarding and offboarding." },
   { key: "timecards", group: "daily", name: "Timecards", icon: "timer", href: "./timecards/", blurb: "Log hours by project each week; approve timesheets." },
   { key: "scheduler", group: "daily", name: "Scheduler", icon: "calendar", href: "./scheduler/", blurb: "Team free/busy from Google or Outlook; find a time, invite." },
@@ -147,9 +175,10 @@ function showShell() {
   buildUserMenu(); buildAppsMenu(); addFooter(); addHelpBtn();
 }
 // Help (?) in the top bar on every page: opens the Help Center at the topic for the app you're in
-const HELP_TOPICS = ["review", "contacts", "funding", "opportunities", "projects", "agreements", "people", "timecards", "tickets", "scheduler", "chief"];
+const HELP_TOPICS = ["review", "contacts", "funding", "opportunities", "projects", "documents", "people", "timecards", "tickets", "scheduler", "chief"];
 function helpTopic() {
   const seg = location.pathname.replace(/\/index\.html$/, "/").split("/").filter(Boolean).pop() || "";
+  if (seg === "agreements") return "documents";
   if (seg === "admin") return /billing/.test(location.hash) ? "billing" : "admin";
   if (seg === "opportunities") { const m = location.hash.match(/#\/help\/?(\w*)/); return "opportunities" + (m && m[1] ? "/" + m[1] : ""); }
   return HELP_TOPICS.includes(seg) ? seg : "";

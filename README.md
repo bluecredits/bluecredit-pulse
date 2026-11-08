@@ -16,7 +16,7 @@ the company's code, contractors and consultants with a separate contractor code.
 | `/careers/?c=…` | Careers page | Public list of a company's Open openings, turned on in People → Hiring setup; `careers/embed.js` puts it inside the company's own website |
 | `/apply/?t=…` | Apply page | Public, no sign-in: the opening's description and an application form with resume upload |
 | `/projects/` | **Projects** | Portfolio, schedule, task board, team, budget vs. actual, documents, risks, status reports, close-out |
-| `/agreements/` | **Agreements** | Teaming, consulting, confidentiality agreements and amendments: fill in, e-sign, amend, close out |
+| `/agreements/` | **Documents** | Policies with read-and-certify (Starter), compliance calendar (Starter), agreements with e-signing: employment, teaming, consulting, confidentiality, amendments (Pro), invoices from approved hours (Pro) |
 | `/sign/` | **Signing page** | Public page a signer opens from their private link (no Pulse account needed) |
 | `/scheduler/` | **Scheduler** | Everyone's Google/Outlook free/busy, find a time, book with invites |
 | `/chief/` | **Chief of Staff** | AI chief of staff (Claude): daily brief, Q&A, suggestions, reminders |
@@ -93,6 +93,16 @@ then add a tile to `APPS` in `web/hub.js`.
 - **Lifecycle:** Draft → Out for signature → Active → (Amendments) → Expired / Terminated → close-out checklist → Closed out.
   Declined or voided agreements can be copied into a corrected draft.
 - The wording is a starting point, not legal advice: have counsel review it for the places you use it.
+
+## Documents: policies, sign-offs, compliance, invoices
+
+- **Policies** (`doc_policies`, `doc_policy_acks`): admins write them, add starter policies from `web/agreements/policylib.js`
+  (Drafts with [bracketed] fill-ins; not legal advice) and publish. Each person certifies in People → My policies: tick, typed
+  name, one click for any number. `policy_ack` records name, time, IP and version; a new version (`policy_publish(id, true)`)
+  asks again. Admins see People → Policy sign-offs (`policy_status`).
+- **Compliance calendar** (`doc_compliance`): filings, licenses, insurance, postings with due dates; Done rolls repeating items forward.
+- **Invoices** (`inv_invoices`, Pro, admins): `inv_create` numbers them; `inv_hours` turns approved timecard hours into lines.
+- Database: `supabase/fix_20261108d_documents.sql`. BlueCredit's own policies load from a gitignored file in `supabase/data/`.
 
 ## Projects
 
@@ -213,8 +223,8 @@ or `pg_dump` with the connection string.
 
 ## Plans and billing
 - **Starter $3**, **Pro $6**, **Enterprise $10** per staff user per month (contractors free; yearly = 10 months).
-  Starter: Business Review, Contacts, Funding, Timecards, Tickets, People (team and onboarding; up to 10 users).
-  Pro adds Opportunities, Projects, Agreements, Hiring. Enterprise adds Chief of Staff and Scheduler.
+  Starter: Business Review, Contacts, Funding, Timecards, Tickets, People (team and onboarding), Documents (policies, sign-offs,
+  compliance calendar); up to 10 users. Pro adds Opportunities, Projects, Agreements, Invoices, Hiring. Enterprise adds Chief of Staff and Scheduler.
 - New workspaces get 14 days of Pro. The plan is enforced in the database (`ws_has_app`, restrictive `plan_gate` policies,
   checks in the apps' functions, the Opportunities timer) and by the server functions (402 for Scheduler / Chief).
 - **Admin → Plan and billing**: plan, users, monthly total, choose a plan. Pulse operators (table `pulse_operators`) see every

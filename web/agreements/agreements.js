@@ -84,7 +84,8 @@ async function New(param) {
       party_signer_title: o.firm ? o.role_title || "" : "", relationship: o.kind === "Employee" ? "Employee" : o.kind === "Advisor" ? "Advisor" : "Consultant",
       services: o.role_title || v.services || "", start_date: o.start_date || v.start_date, end_date: o.end_date || "", fee_rate: o.rate ?? "",
       fee_type: { hour: "Hourly", day: "Daily", month: "Monthly retainer", fixed: "Fixed fee" }[o.rate_unit] || v.fee_type });
-    if (tpl.kind === "confidentiality") v.party_name = o.name;
+    if (tpl.kind === "confidentiality" || tpl.kind === "employment") v.party_name = o.name;
+    if (tpl.kind === "employment") Object.assign(v, { position_title: o.role_title || v.position_title || "", pay_rate: o.rate ?? v.pay_rate ?? "", pay_basis: o.rate_unit === "hour" ? "Hourly" : "Annual salary" });
   }
   if (meta.contact_id) {
     const c = must(await sb.from("contacts").select("*").eq("id", meta.contact_id).maybeSingle());
@@ -222,7 +223,7 @@ async function sendDialog(id) {
   if (/agr-blank/.test(a.body_html || "")) { toast("Fill in the highlighted blanks first"); return; }
   if (a.kind === "amendment" && !(v.special_provisions || []).some((p) => p.text)) { toast("Add at least one change (as a special provision) before sending"); return; }
   const def = (s) => s.role === "company" ? { name: v.company_signer_name, email: v.company_signer_email || (S.profile.display_name === v.company_signer_name ? S.user.email : ""), title: v.company_signer_title }
-    : { name: v.party_signer_name || v.party_name, email: v.party_signer_email, title: tpl.kind === "confidentiality" ? v.relationship : v.party_signer_title };
+    : { name: v.party_signer_name || v.party_name, email: v.party_signer_email, title: tpl.kind === "confidentiality" ? v.relationship : tpl.kind === "employment" ? v.position_title : v.party_signer_title };
   $("#drawerTitle").textContent = `Send ${ref(a)} for signature`;
   $("#drawerBody").innerHTML = `<p class="muted">Each signer gets a private link. The text is locked once you send it; to change it after that you void it and make a corrected copy.</p>
     <form id="sendForm">${tpl.signers.map((s, i) => { const d = def(s); return `<fieldset class="people-pick"><legend>${esc(s.label)}</legend><div class="form-grid">
@@ -473,20 +474,27 @@ function route() {
   if (!S.profile) return;
   const [path, rest] = location.hash.replace(/^#\/?/, "").split(/[?](.*)/s);
   const [name, id] = (path || "").split("/");
-  const key = routes[name] ? name : "list";
+  const key = routes[name] ? name : "policies";
   if (key !== "view") AG.viewTab = null;
-  $$("#nav a[data-r]").forEach((a) => a.classList.toggle("on", a.dataset.r === (key === "view" || key === "edit" ? "list" : key)));
+  const navKey = { view: "list", edit: "list", policy: "policies", "policy-edit": "policies", invoice: "invoices", "invoice-edit": "invoices", "invoice-settings": "invoices" }[key] || key;
+  $$("#nav a[data-r]").forEach((a) => a.classList.toggle("on", a.dataset.r === navKey));
   document.body.classList.remove("nav-open"); closeDrawer();
+  // plan locks inside Documents: policies and compliance are Starter; agreements and invoices are Pro
+  const need = ["list", "new", "edit", "view", "templates"].includes(key) ? "agreements" : /^invoice/.test(key) ? "invoices" : null;
+  if (need && !hasApp(need)) { $("#main").innerHTML = lockedPanel(need, FEATURE_NAMES[need]); return; }
   $("#main").innerHTML = `<p class="muted">Loading…</p>`;
-  Promise.resolve(routes[key](id || rest)).catch((e) => ($("#main").innerHTML = /(relation|function) .*agreement.* does not exist|schema cache/i.test(e.message)
-    ? `<section class="panel"><h2>One-time setup needed</h2><p>Agreements needs the latest database update.</p></section>` : `<div class="empty">Couldn't load this page: ${esc(e.message)}</div>`));
+  Promise.resolve(routes[key](id || rest)).catch((e) => ($("#main").innerHTML = /(relation|function) .*(agreement|doc_|inv_|polic).* does not exist|schema cache/i.test(e.message)
+    ? `<section class="panel"><h2>One-time setup needed</h2><p>Documents needs the latest database update (supabase/fix_20261108d_documents.sql). Ask whoever runs Pulse to run it.</p></section>` : `<div class="empty">Couldn't load this page: ${esc(e.message)}</div>`));
   $("#main").focus({ preventScroll: true });
 }
 async function boot() {
   if (!sb) { $("#setup").hidden = false; return; }
   try {
     if (!(await requireMember())) return;
-    if (!isStaff()) $$('#nav a[data-r="new"], #nav a[data-r="templates"]').forEach((a) => a.remove());
+    if (!isStaff()) $$('#nav a[data-r="new"], #nav a[data-r="templates"], #nav a[data-r="compliance"], #nav [data-staff]').forEach((a) => a.remove());
+    if (!isAdmin()) $$('#nav [data-admin]').forEach((a) => a.remove());
+    $$("#nav a[data-r]").forEach((a) => { const need = { list: "agreements", new: "agreements", templates: "agreements", invoices: "invoices" }[a.dataset.r];
+      if (need && !hasApp(need)) a.insertAdjacentHTML("beforeend", `<small class="plan-badge">${PLANS[appPlan(need)].name}</small>`); });
     showShell(); route();
   } catch (e) { showShell(); $("#main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
 }

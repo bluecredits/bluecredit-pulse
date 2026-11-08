@@ -108,14 +108,27 @@ const TOPICS = [
       { id: "money", title: "Budget vs. actual", html: `<p>Labor cost comes from approved and pending hours in Timecards times each person's rate; add other costs by hand. The project page compares them with the budget.</p>` },
       { id: "status", title: "Status reports and close-out", html: `<p>Weekly status reports prefill from finished tasks and upcoming milestones. <b>Close-out</b> checks for open tasks, milestones, active agreements and unapproved timesheets before the project closes. Contractors see only their assigned projects and can move their own tasks.</p>` }] },
 
-  { id: "agreements", group: "deliver", icon: "clipboard", title: "Agreements", plan: "Pro", blurb: "Teaming, consulting and NDAs: fill in, e-sign, amend, close out.",
+  { id: "documents", group: "deliver", icon: "clipboard", title: "Documents", blurb: "Policies and sign-offs, the compliance calendar, agreements and e-signing, and invoices.",
     sections: [
-      { id: "create", title: "Create and send", html: steps(
-          ["New agreement", `Choose a template (Teaming, Consulting, Confidentiality &amp; Assignment, Amendment) and the governing law. Fill in the form; special provisions are added as numbered sections.`],
+      { id: "policies", title: "Policies", sub: "Starter · admins", html: `<p>${app("agreements/#/policies", "Documents → Policies")} is your policy register: each policy's owner, version, effective date, next review and how many people have certified it.</p>` + steps(
+          ["Add policies", `<b>Add from library</b> gives you plain-English starter policies for a small US company (harassment and EEO, code of conduct, workplace safety and OSHA, emergency action plan, drug-free workplace, hours and pay, time off, remote work, data security, expenses, whistleblower, records retention). Or <b>New policy</b> to write or paste your own.`],
+          ["Edit and fill in", `Replace the [bracketed] parts, choose who it applies to (everyone, staff or contractors), the owner and how often to review it. Untick <b>People must read and certify it</b> for reference documents.`],
+          ["Publish", `Publishing shows it to the people it applies to and asks them to certify it. Small fixes save straight to the published version; for real changes use <b>Publish new version</b>, which asks everyone to certify again.`])
+        + note("Good to know", ["The starter policies are starting points, not legal advice. Check your state's rules and have counsel review them.", "Pulse flags policies due for review in the next 30 days."]) },
+      { id: "certify", title: "Reading and certifying", html: `<p>People see what they need to certify in ${app("people/#/policies", "People → My policies")} (and on their apps page). They open each policy to read it, then certify any number at once with one tick and their typed name. Pulse records the name, time and version. They're asked again only when a policy gets a new version.</p><p>Admins see who has certified what in ${app("people/#/signoffs", "People → Policy sign-offs")}, with a <b>Remind</b> email for anyone who hasn't.</p>` },
+      { id: "compliance", title: "Compliance calendar", sub: "Starter", html: `<p>${app("agreements/#/compliance", "Documents → Compliance calendar")} keeps the dates that are easy to miss: SAM.gov renewal, state annual report, tax filings, insurance renewals, OSHA 300A posting, labor law posters, certifications and licenses. <b>Add common items</b> suggests the usual ones for a small US company; set the real dates. Marking a repeating item <b>Done</b> moves it to its next due date.</p>` },
+      { id: "invoices", title: "Invoices", sub: "Pro · admins", html: steps(
+          ["Set up once", `${app("agreements/#/invoice-settings", "Invoices → Settings")}: number prefix, starting number, payment terms and how to pay (printed on every invoice). Your company name and address come from Agreements → Templates; your logo from Workspace settings.`],
+          ["Create an invoice", `Pick the client from Contacts (or type it) and the project. <b>Add approved hours</b> adds a line per person with their approved timecard hours in the dates you choose, at the project's billing rate. Add other lines, a discount or tax.`],
+          ["Send and get paid", `<b>Print / PDF</b> to save it, <b>Email</b> to open a message to the client (attach the PDF), then <b>Mark sent</b>. Overdue invoices are flagged. <b>Mark paid</b> records the date and amount.`]) },
+      { id: "employment", title: "Employment agreements", html: `<p>For employees, use the <b>Employment Agreement</b> template: job title, start date, schedule and overtime classification, pay, benefits, time off, introductory period, company policies, confidentiality and at-will terms (or notice outside the US). Start it from the new hire's onboarding in People so their details fill in; once they sign online, their onboarding checklist ticks the agreement items. Have them sign the Confidentiality and Assignment Agreement too.</p>` },
+
+      { id: "create", title: "Agreements: create and send", sub: "Pro", html: steps(
+          ["New agreement", `Choose a template (Employment, Teaming, Consulting, Confidentiality &amp; Assignment, Amendment) and the governing law. Fill in the form; special provisions are added as numbered sections.`],
           ["Send for signature", `Sending locks the text. Each signer gets a private link and signs with a typed or drawn signature; no Pulse account needed.`],
           ["Active", `When everyone has signed the agreement becomes Active, and a linked onboarding checklist ticks the matching items.`])
         + note("Good to know", ["Signed on paper or elsewhere? Use <b>Upload signed copy</b> (up to 10 MB).", "Company details (legal name, entity, address, signer) and template wording are in <b>Agreements → Templates</b>.", "The wording is a starting point, not legal advice: have counsel review it."]) },
-      { id: "life", title: "Lifecycle", html: `<p>Draft → Out for signature → Active → (Amendments) → Expired or Terminated → close-out checklist → Closed out. Declined or voided agreements can be copied into a corrected draft.</p>` }] },
+      { id: "life", title: "Agreement lifecycle", html: `<p>Draft → Out for signature → Active → (Amendments) → Expired or Terminated → close-out checklist → Closed out. Declined or voided agreements can be copied into a corrected draft.</p>` }] },
 
   { id: "people", group: "deliver", icon: "user-plus", title: "People and Hiring", plan: "Starter", blurb: "Openings, candidates, interviews and scorecards; then onboarding and offboarding.",
     sections: [
@@ -176,8 +189,8 @@ const TOPICS = [
   { id: "billing", group: "admin", icon: "banknotes", title: "Plans and billing", blurb: "Starter, Pro and Enterprise; the free trial; paying.",
     sections: [
       { id: "plans", title: "Plans", html: `<div class="table-wrap"><table class="help-table"><thead><tr><th>Plan</th><th>Per staff user / month</th><th>Apps</th></tr></thead><tbody>
-          <tr><td>${plan("Starter")}</td><td>$3</td><td>Business Review, Contacts, Funding, Timecards, Tickets, People (team and onboarding). Up to 10 users.</td></tr>
-          <tr><td>${plan("Pro")}</td><td>$6</td><td>Everything in Starter, plus Opportunities, Projects, Agreements and Hiring.</td></tr>
+          <tr><td>${plan("Starter")}</td><td>$3</td><td>Business Review, Contacts, Funding, Timecards, Tickets, People (team and onboarding), Documents (policies, sign-offs and the compliance calendar). Up to 10 users.</td></tr>
+          <tr><td>${plan("Pro")}</td><td>$6</td><td>Everything in Starter, plus Opportunities, Projects, Agreements and e-signing, Invoices and Hiring.</td></tr>
           <tr><td>${plan("Enterprise")}</td><td>$10</td><td>Everything in Pro, plus Chief of Staff and Scheduler. Priority support.</td></tr></tbody></table></div>
         <p>Contractors and consultants are free. Paying yearly costs 10 months.</p>` },
       { id: "trial", title: "Free trial", html: `<p>Every new workspace gets 14 days of Pro, no card needed. When the trial ends, apps outside your plan show a lock until an admin chooses a plan; nothing is deleted.</p>` },

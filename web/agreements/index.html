@@ -4,15 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Agreements · Pulse</title>
+<title>Documents · Pulse</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../style.css?v=20261108c">
+<link rel="stylesheet" href="../style.css?v=20261108d">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3C11 11 7 15.5 7 20a9 9 0 0 0 18 0c0-4.5-4-9-9-17z' fill='%233B82F6'/%3E%3C/svg%3E">
 </head>
 <body>
-<script src="../icons.js?v=20261108c"></script>
+<script src="../icons.js?v=20261108d"></script>
 <div id="setup" class="login" hidden>
   <div class="login-card">
     <h1>Almost there</h1>
@@ -24,7 +24,7 @@
 <header class="topbar" id="topbar" hidden>
   <button class="menu-btn" id="menuBtn" aria-label="Open menu"><svg class="ic"><use href="#i-menu"/></svg></button>
   <a class="bc-lockup" href="../" aria-label="BlueCredit Pulse"><img src="../logo.png" alt="BlueCredit"><span class="s">Pulse</span></a>
-  <span class="crumb">Agreements</span>
+  <span class="crumb">Documents</span>
   <span class="spacer"></span>
   <div class="apps-menu"><button class="apps-btn" id="appsBtn" type="button" title="All apps" aria-label="All apps" aria-haspopup="menu" aria-expanded="false" aria-controls="appsMenu"><svg class="ic"><use href="#i-grid"/></svg><span>All apps</span></button>
     <div class="menu apps-pop" id="appsMenu" role="menu" hidden></div></div>
@@ -33,12 +33,17 @@
 </header>
 <div id="shell" class="shell" hidden>
   <aside class="side">
-    <div class="side-head"><span>Agreements</span></div>
+    <div class="side-head"><span>Documents</span></div>
     <nav id="nav">
+      <div class="nav-label">Policies</div>
+      <a href="#/policies" data-r="policies"><svg class="ic"><use href="#i-book"/></svg><span>Policies</span></a>
+      <a href="#/compliance" data-r="compliance"><svg class="ic"><use href="#i-calendar"/></svg><span>Compliance calendar</span></a>
       <div class="nav-label">Agreements</div>
       <a href="#/list" data-r="list"><svg class="ic"><use href="#i-clipboard"/></svg><span>All agreements</span></a>
       <a href="#/new" data-r="new"><svg class="ic"><use href="#i-plus"/></svg><span>New agreement</span></a>
-      <a href="#/templates" data-r="templates"><svg class="ic"><use href="#i-book"/></svg><span>Templates</span></a>
+      <a href="#/templates" data-r="templates"><svg class="ic"><use href="#i-cog"/></svg><span>Templates</span></a>
+      <div class="nav-label" data-admin>Invoices</div>
+      <a href="#/invoices" data-r="invoices" data-admin><svg class="ic"><use href="#i-banknotes"/></svg><span>Invoices</span></a>
     </nav>
   </aside>
   <div class="scrim" id="scrim"></div>
@@ -57,10 +62,12 @@
 </div>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="../config.js?v=20261108c"></script>
-<script src="../core.js?v=20261108c"></script>
-<script src="./templates.js?v=20261108c"></script>
-<script src="./sigpad.js?v=20261108c"></script>
-<script src="./agreements.js?v=20261108c"></script>
+<script src="../config.js?v=20261108d"></script>
+<script src="../core.js?v=20261108d"></script>
+<script src="./templates.js?v=20261108d"></script>
+<script src="./sigpad.js?v=20261108d"></script>
+<script src="./policylib.js?v=20261108d"></script>
+<script src="./agreements.js?v=20261108d"></script>
+<script src="./docs.js?v=20261108d"></script>
 </body>
 </html>

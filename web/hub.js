@@ -121,11 +121,13 @@ function loadAppStats() {
     fill("opportunities", (st.has_key || st.has_bidmatch ? hstat((bs["SAM.gov"] || 0) + (bs.BidMatch || 0), "new contracts and bids", "./opportunities/#/contracts", false) : `<span class="hub-stat alert" data-href="./opportunities/#/settings"><b>Add</b> your SAM.gov key</span>`)
       + hstat(bs["Grants.gov"] || 0, "new grants", "./opportunities/#/grants", false));
   }).catch(() => fill("opportunities", ""));
-  sb.from("agreements").select("status, end_date").then(({ data, error }) => {
-    if (error) return fill("agreements", "");
+  if (S.profile.role !== "contractor") Promise.all([hasApp("agreements") ? sb.from("agreements").select("status, end_date") : Promise.resolve({ data: [] }),
+      sb.from("doc_compliance").select("due_date, status").eq("status", "Open")]).then(([{ data, error }, comp]) => {
+    if (error) return fill("documents", "");
+    const soon = (comp.data || []).filter((c) => c.due_date && (new Date(c.due_date) - Date.now()) / 864e5 <= 30).length;
     const out = (data || []).filter((r) => r.status === "Out for signature").length, act = (data || []).filter((r) => r.status === "Active");
     const ending = act.filter((r) => r.end_date && (new Date(r.end_date) - Date.now()) / 864e5 <= 60).length, toClose = (data || []).filter((r) => ["Expired", "Terminated"].includes(r.status)).length;
-    fill("agreements", hstat(out, "out for signature", "./agreements/#/list") + hstat(act.length, "active", "./agreements/#/list") + (ending ? hstat(ending, "ending in 60 days", "./agreements/#/list", true) : "") + (toClose ? hstat(toClose, "to close out", "./agreements/#/list", true) : ""));
+    fill("documents", (soon ? hstat(soon, "compliance dates in 30 days", "./agreements/#/compliance", true) : "") + (hasApp("agreements") ? hstat(out, "out for signature", "./agreements/#/list") + hstat(act.length, "active agreements", "./agreements/#/list") + (ending ? hstat(ending, "ending in 60 days", "./agreements/#/list", true) : "") + (toClose ? hstat(toClose, "to close out", "./agreements/#/list", true) : "") : "") || hstat(0, "compliance dates due", "./agreements/#/compliance"));
   });
   if (CFG.apps?.chief !== false) sb.from("reminders").select("id, text, remind_at").eq("user_id", S.user.id).eq("done", false).order("remind_at").then(({ data, error }) => {
     if (error) return fill("chief", "");
@@ -137,14 +139,16 @@ function loadAppStats() {
     const mine = (st || []).some((x) => x.user_id === S.user.id && x.status === "connected"), n = new Set((st || []).filter((x) => x.status === "connected").map((x) => x.user_id)).size;
     fill("scheduler", (mine ? "" : `<span class="hub-stat alert" data-href="./scheduler/#/connect"><b>Connect</b> your calendar</span>`) + hstat(n, `of ${S.team.filter((p) => p.active).length} calendars linked`, "./scheduler/"));
   }).catch(() => fill("scheduler", ""));
-  Promise.all([sb.from("onboardings").select("status, checklist, user_id"), S.profile.role === "contractor" || !hasApp("hiring") ? Promise.resolve(null) : db.rpc("hire_summary", {}).catch(() => null)]).then(([{ data, error }, h]) => {
+  Promise.all([sb.from("onboardings").select("status, checklist, user_id"), S.profile.role === "contractor" || !hasApp("hiring") ? Promise.resolve(null) : db.rpc("hire_summary", {}).catch(() => null),
+      db.rpc("my_policies", {}).catch(() => [])]).then(([{ data, error }, h, pol]) => {
     if (error) return fill("people", "");
+    const toSign = (pol || []).filter((p) => p.requires_ack && !p.acked_at).length, polStat = toSign ? hstat(toSign, toSign === 1 ? "policy to read and certify" : "policies to read and certify", "./people/#/policies", true) : "";
     if (S.profile.role === "contractor") {
       const mine = (data || []).filter((o) => o.user_id === S.user.id).flatMap((o) => o.checklist || []).filter((i) => i.who === "them");
-      return fill("people", hstat(mine.filter((i) => !i.done).length, "of your checklist items left", "./people/#/mine", true));
+      return fill("people", polStat + hstat(mine.filter((i) => !i.done).length, "of your checklist items left", "./people/#/mine", true));
     }
     const on = (data || []).filter((o) => ["Planned", "In progress"].includes(o.status)).length;
-    fill("people", (h?.my_scorecards ? hstat(h.my_scorecards, "scorecards to fill", "./people/#/interviews", true) : "")
+    fill("people", polStat + (h?.my_scorecards ? hstat(h.my_scorecards, "scorecards to fill", "./people/#/interviews", true) : "")
       + (h ? hstat(h.to_review, "candidates to review", "./people/#/candidates", h.to_review > 0) : "") + hstat(on, "being onboarded", "./people/#/people"));
   });
   const d = new Date(), wk = new Date(d); wk.setDate(d.getDate() - ((d.getDay() + 6) % 7)); const w = wk.toLocaleDateString("en-CA");
@@ -168,7 +172,7 @@ let authMode = "signin";
 // plans under the sign-in card
 function renderPricing() {
   const el = $("#pricing"); if (!el || el.dataset.done) return; el.dataset.done = "1";
-  const name = (k) => k === "hiring" ? "Hiring" : PULSE_APPS.find((a) => a.key === k)?.name || k;
+  const name = (k) => FEATURE_NAMES[k] || PULSE_APPS.find((a) => a.key === k)?.name || k;
   el.innerHTML = `<h2>Simple pricing</h2><p class="muted">Per staff user per month. Contractors and consultants are free. Pay yearly and get 2 months free.</p>
     <div class="price-grid">${PLAN_ORDER.map((k, i) => { const p = PLANS[k];
       return `<div class="price-card ${k === "pro" ? "best" : ""}">${k === "pro" ? `<span class="price-flag">Most popular</span>` : ""}<h3>${p.name}</h3>
@@ -189,7 +193,7 @@ function renderLanding() {
     <div class="land-feat-grid">
       <div class="land-feat">${icon("users")}<h3>A simple CRM</h3><p>Contacts, follow-ups and a pipeline by stage. Import your spreadsheet in one step; duplicates are combined. Daily to quarterly reviews open with a live snapshot of what moved and what's due.</p></div>
       <div class="land-feat">${icon("gov")}<h3>New work, found for you</h3><p>Selling to government? Pulse checks SAM.gov, Grants.gov and your APEX bids every day against your NAICS codes and keywords, and saves the contracting officer to Contacts.</p></div>
-      <div class="land-feat">${icon("clipboard")}<h3>From handshake to close-out</h3><p>Teaming agreements and NDAs signed online, projects with budget vs. actual from real timecards, and a close-out check before anything closes.</p></div>
+      <div class="land-feat">${icon("clipboard")}<h3>Contracts, policies and invoices</h3><p>Employment, consulting and teaming agreements signed online. Policies your team reads and certifies in a click, a compliance calendar for filings and renewals, and invoices built from approved hours.</p></div>
       <div class="land-feat">${icon("user-plus")}<h3>Hiring without the spreadsheet</h3><p>A public apply link for each opening, a candidate board, interviews and blind scorecards. Hire, and onboarding starts on its own.</p></div>
       <div class="land-feat">${icon("team")}<h3>Contractors included, free</h3><p>Consultants and contractors join with their own code, log time to their projects and see only what they need. They don't count as paid users.</p></div>
       <div class="land-feat">${icon("key")}<h3>Your data stays yours</h3><p>Every company gets its own private workspace, enforced in the database on every record. Keys and links you paste are stored encrypted.</p></div>

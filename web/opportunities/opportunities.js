@@ -162,7 +162,7 @@ function bmLine(st) {
 }
 function bmBanner(st) {
   const msgs = [];
-  if (!st.has_bidmatch) msgs.push(isAdmin() ? `Paste your MyBidMatch link in <a href="#/settings">Settings</a> (from any MyBidMatch email: “mybidmatch.outreachsystems.com/go?sub=…”). <a href="#/help/bidmatch">How to get MyBidMatch</a>` : "An admin needs to add the MyBidMatch link in Settings.");
+  if (!st.has_bidmatch) msgs.push(isAdmin() ? `Paste your MyBidMatch link in <a href="#/settings">Settings</a> (from any MyBidMatch email: “mybidmatch.outreachsystems.com/go?sub=…”). <a href="../help/#opportunities/bidmatch" target="_blank" rel="noopener">How to get MyBidMatch</a>` : "An admin needs to add the MyBidMatch link in Settings.");
   else if (!st.has_net || !st.timer) msgs.push(`Automatic checks are off: the database timer isn't set up yet.`);
   if (st.bidmatch_error) msgs.push(esc(st.bidmatch_error));
   return msgs.map((m) => `<div class="notice-bar">${icon("alert")}<div>${m}</div></div>`).join("");
@@ -226,10 +226,10 @@ function statusLine(st, grants) {
 }
 function banner(st, searches, grants) {
   const msgs = [];
-  if (!grants && !st.has_key) msgs.push(isAdmin() ? `Add your SAM.gov API key in <a href="#/settings">Settings</a> to start pulling contract notices. <a href="#/help/sam">How to get a key</a>` : `An admin needs to add the SAM.gov API key in Settings.`);
+  if (!grants && !st.has_key) msgs.push(isAdmin() ? `Add your SAM.gov API key in <a href="#/settings">Settings</a> to start pulling contract notices. <a href="../help/#opportunities/sam" target="_blank" rel="noopener">How to get a key</a>` : `An admin needs to add the SAM.gov API key in Settings.`);
   else if (!st.has_net || !st.timer) msgs.push(`Automatic checks are off: the database timer isn't set up yet. ${isAdmin() ? `See <a href="#/settings">Settings</a>.` : "Ask an admin."}`);
   const err = grants ? st.grants_error : st.last_error;
-  if (err) msgs.push(esc(err) + ` <a href="#/help/trouble">What this means</a>`);
+  if (err) msgs.push(esc(err) + ` <a href="../help/#opportunities/trouble" target="_blank" rel="noopener">What this means</a>`);
   else if (!grants && /^Paused/.test(st.last_status || "")) msgs.push(esc(st.last_status));
   const p = searches[0];
   if (p && !(p.naics || []).length && !(p.keywords || []).length && !(p.aln || []).length)
@@ -313,7 +313,7 @@ async function Settings() {
       ${st.has_key ? `<p>Saved (${esc(st.key_hint)}). It's stored encrypted in the database and can't be shown again.</p>` : `<p>Not set. Pulse uses your own key to read public notices from SAM.gov.</p>`}
       ${isAdmin() ? `<form id="keyForm" class="add-action" style="grid-template-columns:1fr auto auto"><input name="key" type="password" autocomplete="off" placeholder="${st.has_key ? "Paste a new key to replace it" : "SAM-xxxxxxxx-xxxx-…"}">
         <button class="btn primary">${st.has_key ? "Replace" : "Save key"}</button>${st.has_key ? `<button type="button" class="btn" id="clearKey">Remove</button>` : ""}</form>
-      <p class="muted small">Get it on SAM.gov → your name → Account Details → Public API Key. Keys expire every 90 days. <a href="#/help/sam">Step-by-step guide →</a></p>` : `<p class="muted">Only admins can change the key.</p>`}
+      <p class="muted small">Get it on SAM.gov → your name → Account Details → Public API Key. Keys expire every 90 days. <a href="../help/#opportunities/sam" target="_blank" rel="noopener">Step-by-step guide →</a></p>` : `<p class="muted">Only admins can change the key.</p>`}
     </section>
     <section class="panel"><h2>Grants.gov</h2>
       <p>No key needed. When you have at least one active grants search, each check reads all open and forecasted grants (about 2–4 requests).
@@ -324,7 +324,7 @@ async function Settings() {
       ${st.has_bidmatch ? `<p>Linked (${esc(st.bidmatch_hint)}). ${st.bidmatch_fetch_at ? `Last read ${ago(st.bidmatch_fetch_at)}; ${st.bidmatch} bids from the last 3 days.` : "First read in progress."}</p>` : `<p>Not linked. Pulse reads your daily MyBidMatch lists (federal, state, local and education bids matched by your APEX profile) and sorts them by level.</p>`}
       ${isAdmin() ? `<form id="bmForm" class="add-action" style="grid-template-columns:1fr auto auto"><input name="link" type="password" autocomplete="off" placeholder="https://mybidmatch.outreachsystems.com/go?sub=…">
         <button class="btn primary">${st.has_bidmatch ? "Replace" : "Save link"}</button>${st.has_bidmatch ? `<button type="button" class="btn" id="clearBm">Remove</button>` : ""}</form>
-        <p class="muted small">The link is in every MyBidMatch email; it's stored encrypted. MyBidMatch comes free through your APEX Accelerator. <a href="#/help/bidmatch">Step-by-step guide →</a></p>` : ""}
+        <p class="muted small">The link is in every MyBidMatch email; it's stored encrypted. MyBidMatch comes free through your APEX Accelerator. <a href="../help/#opportunities/bidmatch" target="_blank" rel="noopener">Step-by-step guide →</a></p>` : ""}
       ${st.bidmatch_error ? `<div class="notice-bar">${icon("alert")}<div>${esc(st.bidmatch_error)}</div></div>` : ""}
     </section>
     <section class="panel"><h2>Schedule</h2>
@@ -380,7 +380,7 @@ function route() {
   $$("#nav a[data-r]").forEach((a) => a.classList.toggle("on", a.dataset.r === key));
   document.body.classList.remove("nav-open"); closeDrawer();
   $("#main").innerHTML = `<p class="muted">Loading…</p>`;
-  Promise.resolve({ contracts: Matches, grants: Matches, profile: Profile, settings: Settings, help: () => Help(parts[1]) }[key]())
+  Promise.resolve({ contracts: Matches, grants: Matches, profile: Profile, settings: Settings, help: () => { location.replace("../help/#opportunities" + (parts[1] ? "/" + parts[1] : "")); } }[key]())
     .catch((e) => ($("#main").innerHTML = setupNeeded(e)
       ? `<section class="panel"><h2>One-time setup needed</h2><p>Opportunities needs the latest database update. An admin runs the latest <code>supabase/schema.sql</code> in the Supabase SQL Editor.</p></section>`
       : `<div class="empty">Couldn't load this page: ${esc(e.message)}</div>`));

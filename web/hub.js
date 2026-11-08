@@ -176,15 +176,56 @@ function renderPricing() {
         <ul>${i ? `<li><b>Everything in ${PLANS[PLAN_ORDER[i - 1]].name}</b></li>` : ""}${p.apps.map((a) => `<li>${esc(name(a))}</li>`).join("")}<li class="muted">${esc(p.limit)}</li></ul></div>`; }).join("")}</div>
     <p class="muted small">Every new workspace starts with 14 days of Pro. No card needed to start.</p>`;
 }
+// ── Landing page (signed out): apps, highlights, how it works, pricing, FAQ ──
+function renderLanding() {
+  const more = $("#landMore"); if (!more || more.dataset.done) return; more.dataset.done = "1";
+  $$(".yr").forEach((e) => (e.textContent = new Date().getFullYear()));
+  const badge = (k) => { const p = appPlan(k); return p === "starter" ? "" : `<small class="plan-badge">${PLANS[p].name}</small>`; };
+  more.innerHTML = `
+  <section class="land-sec" id="apps"><p class="land-kicker">Eleven apps, one sign-in</p><h2>Everything a small company runs on</h2>
+    <div class="land-groups">${GROUPS.map((g) => `<div class="land-group"><h3>${esc(g.title)}</h3><p class="muted small">${esc(g.note)}</p>
+      <ul>${PULSE_APPS.filter((a) => a.group === g.key).map((a) => `<li><span class="hub-ic ${a.key === "chief" ? "ai" : ""}">${icon(a.icon)}</span><span><b>${esc(a.name)}</b>${badge(a.key)}<small>${esc(a.blurb)}</small></span></li>`).join("")}</ul></div>`).join("")}</div></section>
+  <section class="land-sec land-feats"><p class="land-kicker">Why teams switch to Pulse</p><h2>Built for companies that bid on public work</h2>
+    <div class="land-feat-grid">
+      <div class="land-feat">${icon("gov")}<h3>Opportunities, checked every day</h3><p>SAM.gov contracts, Grants.gov grants and your APEX MyBidMatch bids (federal, state, local and education), matched to your NAICS codes and keywords. The contracting officer goes straight into Contacts.</p></div>
+      <div class="land-feat">${icon("chart")}<h3>Reviews that write themselves</h3><p>Daily to quarterly business reviews open with a live snapshot: deadlines, what moved, follow-ups due and overdue actions. Win rate comes from the work itself.</p></div>
+      <div class="land-feat">${icon("clipboard")}<h3>From handshake to close-out</h3><p>Teaming agreements and NDAs signed online, projects with budget vs. actual from real timecards, and a close-out check before anything closes.</p></div>
+      <div class="land-feat">${icon("user-plus")}<h3>Hiring without the spreadsheet</h3><p>A public apply link for each opening, a candidate board, interviews and blind scorecards. Hire, and onboarding starts on its own.</p></div>
+      <div class="land-feat">${icon("users")}<h3>Contractors included, free</h3><p>Consultants and contractors join with their own code, log time to their projects and see only what they need. They don't count as paid users.</p></div>
+      <div class="land-feat">${icon("key")}<h3>Your data stays yours</h3><p>Every company gets its own private workspace, enforced in the database on every record. Keys and links you paste are stored encrypted.</p></div>
+    </div></section>
+  <section class="land-sec" id="how"><p class="land-kicker">Up and running in an afternoon</p><h2>How it works</h2>
+    <ol class="land-steps">
+      <li><b>Start a workspace</b><span>Name your company and pick a starting setup. You get 14 days of Pro, no card needed.</span></li>
+      <li><b>Add your NAICS codes and keywords</b><span>Paste your SAM.gov key and MyBidMatch link once. Matching work shows up the next morning.</span></li>
+      <li><b>Invite the team</b><span>Share the company code with staff and the contractor code with consultants. Everyone signs in once.</span></li>
+    </ol></section>`;
+  const faq = [
+    ["Who counts as a user?", "Admins and members (your staff). Contractors and consultants are free."],
+    ["What happens when the trial ends?", "Apps outside your plan show a lock until an admin chooses a plan. Nothing is deleted."],
+    ["Do I need a SAM.gov account?", "Only to get a free SAM.gov API key, which takes about five minutes. Grants.gov works with no setup. The Help Center walks you through both."],
+    ["Can I bring my existing contacts and lists?", "Yes. Import a spreadsheet or CSV into Contacts and most lists; Pulse matches the columns and combines duplicates."],
+    ["Can I pay by invoice?", "Yes. Pay by card in Plan and billing, or ask for an invoice."],
+  ];
+  $("#landFaq").innerHTML = `<section class="land-sec" id="faq"><h2>Questions</h2><div class="land-faq">${faq.map(([q, a]) => `<details><summary>${esc(q)}</summary><p>${esc(a)}</p></details>`).join("")}</div>
+    <p class="muted small" style="text-align:center;margin-top:16px">More in the <a href="./help/">Help Center</a>, or email <a href="mailto:support@bluecredits.org">support@bluecredits.org</a>.</p></section>
+    <section class="land-final"><h2>Ready when you are</h2><p>Set up your workspace in a few minutes. Your first 14 days are on us.</p><button class="btn primary big" type="button" data-auth="create">Start your free trial</button></section>`;
+}
+const CARD_LEAD = { signin: "Welcome back. Sign in to your workspace.", join: "Joining your company? Use the code your admin sent you.", create: "14 days of Pro free. No card needed." };
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-auth]"); if (!b) return;
+  showAuth(b.dataset.auth); $("#auth")?.scrollIntoView({ behavior: "smooth", block: "center" });
+});
 function showAuth(mode, notice = "") {
-  renderPricing();
+  renderPricing(); renderLanding();
+  if ($("#cardLead")) { $("#cardLead").textContent = CARD_LEAD[mode] || ""; $("#cardLead").hidden = !CARD_LEAD[mode]; }
   authMode = mode;
   $("#shell").hidden = true; $("#topbar").hidden = true; $("#setup").hidden = true; $("#login").hidden = false;
   $("#authTabs").hidden = !["signin", "join", "create"].includes(mode);
   $$("#authTabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.mode === mode)));
   $$(".auth-form").forEach((f) => (f.hidden = f.dataset.mode !== mode));
   $("#authError").textContent = ""; $("#authNotice").textContent = notice;
-  setTimeout(() => $(`.auth-form[data-mode="${mode}"] input`)?.focus(), 30);
+  setTimeout(() => $(`.auth-form[data-mode="${mode}"] input`)?.focus({ preventScroll: true }), 30);
 }
 $$("#authTabs button").forEach((b) => b.addEventListener("click", () => showAuth(b.dataset.mode)));
 $$("[data-goto]").forEach((b) => b.addEventListener("click", () => showAuth(b.dataset.goto)));

@@ -144,7 +144,24 @@ const PULSE_APPS = [
 function showShell() {
   $("#shell").hidden = false; $("#topbar").hidden = false;
   if (S.profile) setWho(S.profile.display_name);
-  buildUserMenu(); buildAppsMenu(); addFooter();
+  buildUserMenu(); buildAppsMenu(); addFooter(); addHelpBtn();
+}
+// Help (?) in the top bar on every page: opens the Help Center at the topic for the app you're in
+const HELP_TOPICS = ["review", "contacts", "funding", "opportunities", "projects", "agreements", "people", "timecards", "tickets", "scheduler", "chief"];
+function helpTopic() {
+  const seg = location.pathname.replace(/\/index\.html$/, "/").split("/").filter(Boolean).pop() || "";
+  if (seg === "admin") return /billing/.test(location.hash) ? "billing" : "admin";
+  if (seg === "opportunities") { const m = location.hash.match(/#\/help\/?(\w*)/); return "opportunities" + (m && m[1] ? "/" + m[1] : ""); }
+  return HELP_TOPICS.includes(seg) ? seg : "";
+}
+function addHelpBtn() {
+  const bar = $("#topbar"); if (!bar || $("#helpBtn", bar)) return;
+  const at = $(".apps-menu", bar) || $(".user-menu", bar);
+  const a = document.createElement("a"); a.id = "helpBtn"; a.className = "help-btn"; a.title = "Help"; a.setAttribute("aria-label", "Help Center");
+  a.innerHTML = `<svg class="ic"><use href="#i-question"/></svg><span>Help</span>`;
+  a.addEventListener("click", () => { a.href = HUB + "help/" + (helpTopic() ? "#" + helpTopic() : ""); });
+  a.href = HUB + "help/" + (helpTopic() ? "#" + helpTopic() : ""); a.target = "_blank"; a.rel = "noopener";
+  at ? at.before(a) : bar.appendChild(a);
 }
 // Apps launcher (grid button, top right) on every page
 const launcherApps = () => PULSE_APPS.filter((a) => (!a.staff || S.profile?.role !== "contractor") && CFG.apps?.[a.key] !== false);

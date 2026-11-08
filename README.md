@@ -5,7 +5,8 @@ the company's code, contractors and consultants with a separate contractor code.
 
 | Address | App | What it's for |
 |---|---|---|
-| `/` | **Landing page** | Sign in, start a workspace, or join one with a code; launches every app |
+| `/` | **Landing page** | Signed out: what Pulse does, the apps, pricing, FAQ, and sign in / start / join. Signed in: launches every app |
+| `/help/` | **Help Center** | Public guides for every app (also the **?** in every top bar, which opens the topic for the app you're in) |
 | `/review/` | **Business Review** | Opportunities, action items, and daily / weekly / monthly / quarterly reviews |
 | `/contacts/` | **Contacts** | Government POCs, primes, partners, investors, experts, mailing list; import and follow-ups |
 | `/funding/` | **Funding** | Grant and loan applications in progress, plus the funding catalog |

@@ -16,7 +16,7 @@ async function load() {
     <section class="panel apply-card">
       <p class="apply-co">${esc(o.company)}</p>
       <h1>${esc(o.title)}</h1>
-      <p class="muted">${esc([o.kind, o.remote, o.location, o.pay].filter(Boolean).join(" · "))}</p>
+      <p class="muted">${esc([o.kind, o.schedule, o.remote, o.location, o.pay].filter(Boolean).join(" · "))}</p>
       ${o.description ? `<h2>About the role</h2>${para(o.description)}` : ""}
       ${o.must_haves ? `<h2>What you'll need</h2>${para(o.must_haves)}` : ""}
     </section>

@@ -1292,6 +1292,12 @@ create table if not exists public.hire_openings (
   created_at timestamptz default now(), updated_at timestamptz default now(), updated_by text
 );
 create unique index if not exists ux_hire_open_token on public.hire_openings (apply_token);
+-- any engagement, from contractor to full-time employee
+alter table public.hire_openings add column if not exists schedule text not null default 'Full-time';
+alter table public.hire_openings drop constraint if exists hire_openings_kind_check;
+alter table public.hire_openings add constraint hire_openings_kind_check check (kind in ('Employee', 'Contractor', 'Consultant', 'Intern', 'Advisor'));
+alter table public.hire_openings drop constraint if exists hire_openings_schedule_check;
+alter table public.hire_openings add constraint hire_openings_schedule_check check (schedule in ('Full-time', 'Part-time', 'As needed'));
 create index if not exists ix_hire_open_ws on public.hire_openings (workspace_id, status);
 
 create table if not exists public.hire_candidates (
@@ -1474,7 +1480,7 @@ end $$;
 -- the public apply page: what the opening says (no sign-in)
 create or replace function public.hire_opening_public(p_token text) returns jsonb
 language sql stable security definer set search_path = public as $$
-  select jsonb_build_object('title', o.title, 'kind', o.kind, 'location', o.location, 'remote', o.remote, 'description', o.description,
+  select jsonb_build_object('title', o.title, 'kind', o.kind, 'schedule', o.schedule, 'location', o.location, 'remote', o.remote, 'description', o.description,
            'must_haves', o.must_haves, 'pay', o.pay, 'company', w.name, 'open', o.status = 'Open')
     from hire_openings o join workspaces w on w.id = o.workspace_id
    where o.apply_token = p_token and length(coalesce(p_token, '')) >= 32 and o.status in ('Open', 'On hold', 'Filled', 'Closed') $$;

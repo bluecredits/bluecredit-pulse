@@ -5,7 +5,8 @@
 
 const HSTAGES = ["Applied", "Screen", "Interview", "Work sample", "Final", "Offer"];
 const HCLOSED = ["Hired", "Rejected", "Withdrew"];
-const HKINDS = ["Employee", "Contractor", "Consultant", "Intern"];
+const HKINDS = ["Employee", "Contractor", "Consultant", "Intern", "Advisor"];
+const HSCHED = ["Full-time", "Part-time", "As needed"];
 const HREMOTE = ["Remote", "Hybrid", "On-site"];
 const HSTATUS = ["Draft", "Open", "On hold", "Filled", "Closed"];
 const ISTYPES = ["Screen", "Interview", "Work sample review", "Final", "Reference check"];
@@ -31,7 +32,7 @@ const DEFAULT_EMAILS = {
   offer: { label: "Offer", subject: "Offer: {role} at {company}", body: "Hi {first},\n\nWe're delighted to offer you the {role} position at {company}.\n\n[Start date, pay, type of engagement and anything else]\n\nPlease reply to accept, or let us know if you have any questions.\n\nBest,\n{me}" },
 };
 const SAMPLE_OPENING = {
-  title: "Applications Developer", kind: "Contractor", remote: "Remote",
+  title: "Applications Developer", kind: "Contractor", schedule: "Part-time", remote: "Remote",
   description: "Build and ship features for our web apps: a multi-company workspace (Pulse), water-modeling tools and a credit marketplace.\n\nYou'll work across JavaScript front ends and a Postgres/Supabase back end, turn requests into small, tested releases, and help keep our GitHub delivery on track.",
   must_haves: "• 2+ years building web apps with JavaScript (no-framework or React) and SQL\n• Postgres (row-level security, functions) or Supabase\n• Git and GitHub pull requests\n• Clear written English; comfortable working remotely and asynchronously\n• Nice to have: Python, GIS or water/environmental data",
   criteria: ["JavaScript and front-end", "SQL and data design", "Problem solving", "Communication", "Ownership and reliability"],
@@ -59,7 +60,7 @@ async function Openings() {
     <div class="page-head"><div><h1>Openings</h1><p class="muted">One per role. Each has an apply link you can post on LinkedIn, Indeed or your website; applications land in Candidates.</p></div>
       ${isAdmin() ? `<div class="actions-row"><button class="btn primary" id="newOpening">${icon("plus")}New opening</button></div>` : ""}</div>
     ${ops.length ? `<div class="hire-openings">${ops.map((o) => `<article class="panel hire-op ${o.status === "Open" ? "" : "dim"}" data-op="${o.id}" tabindex="0">
-        <div class="hire-op-h"><div><h2>${esc(o.title)}</h2><p class="muted small">${esc([o.kind, o.remote, o.location].filter(Boolean).join(" · "))}${o.hiring_manager ? ` · Hiring manager ${esc(nameOf(o.hiring_manager))}` : ""}</p></div>
+        <div class="hire-op-h"><div><h2>${esc(o.title)}</h2><p class="muted small">${esc([o.kind, o.schedule, o.remote, o.location].filter(Boolean).join(" · "))}${o.hiring_manager ? ` · Hiring manager ${esc(nameOf(o.hiring_manager))}` : ""}</p></div>
           <span class="pill ${o.status === "Open" ? "s-active" : o.status === "Filled" ? "s-won" : ""}">${esc(o.status)}</span></div>
         <div class="hire-op-n">${[["To review", ["Applied"]], ["In process", HSTAGES.slice(1)], ["Hired", ["Hired"]]].map(([l, st]) => `<a href="#/candidates?o=${o.id}"><b>${cnt(o.id, st)}</b><span>${l}</span></a>`).join("")}</div>
         <div class="actions-row">${o.status === "Open" ? `<button class="btn small" data-copy="${esc(applyUrl(o))}">${icon("send")}Copy apply link</button>` : ""}
@@ -79,6 +80,7 @@ function editOpening(o) {
     ${o ? "" : `<p class="muted small" style="grid-column:1/-1">Hiring a developer? <button type="button" class="link-btn" id="useSample">Start from the Applications Developer sample</button></p>`}
     <label style="grid-column:1/-1">Job title<input name="title" required value="${esc(v.title || "")}" placeholder="e.g. Applications Developer"></label>
     <label>Type<select name="kind">${HKINDS.map((k) => `<option ${k === v.kind ? "selected" : ""}>${k}</option>`).join("")}</select></label>
+    <label>Hours<select name="schedule">${HSCHED.map((k) => `<option ${k === (v.schedule || "Full-time") ? "selected" : ""}>${k}</option>`).join("")}</select></label>
     <label>Where<select name="remote">${HREMOTE.map((k) => `<option ${k === v.remote ? "selected" : ""}>${k}</option>`).join("")}</select></label>
     <label>Location <small class="muted">(optional)</small><input name="location" value="${esc(v.location || "")}" placeholder="e.g. Alexandria, VA or US time zones"></label>
     <label>Hiring manager<select name="hiring_manager">${staffList().map((p) => `<option value="${p.id}" ${p.id === v.hiring_manager ? "selected" : ""}>${esc(p.display_name)}</option>`).join("")}</select></label>
@@ -103,7 +105,7 @@ function editOpening(o) {
   });
   f.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const row = Object.fromEntries(["title", "kind", "remote", "location", "hiring_manager", "status", "pay", "description", "must_haves"].map((k) => [k, f[k].value.trim() || null]));
+    const row = Object.fromEntries(["title", "kind", "schedule", "remote", "location", "hiring_manager", "status", "pay", "description", "must_haves"].map((k) => [k, f[k].value.trim() || null]));
     row.criteria = f.criteria.value.split("\n").map((x) => x.trim()).filter(Boolean);
     if (!row.criteria.length) row.criteria = hCriteria();
     row.work_sample = f.work_sample.checked;

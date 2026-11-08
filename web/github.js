@@ -55,26 +55,33 @@ function ghConnect(st) {
     <div class="gh-way"><h3>With a token</h3>
       <ol class="gh-steps small">
         <li><a href="${GH_TOKEN_URL}" target="_blank" rel="noopener">Create a fine-grained token on GitHub</a> (Settings → Developer settings). Name it "Pulse".</li>
-        <li><b>Resource owner:</b> your organization (e.g. BlueCredit). <b>Repository access:</b> only the repositories Pulse should see.</li>
+        <li><b>Resource owner:</b> the account or organization the repositories belong to (one token per owner). <b>Repository access:</b> only the repositories Pulse should see.</li>
         <li><b>Permissions → Repository:</b> Issues <i>Read-only</i> (Metadata is added for you). Nothing else.</li>
         <li>Generate, copy it and paste it here. Pulse keeps it encrypted; nobody can read it back.</li></ol>
       <div class="add-action" style="grid-template-columns:1fr auto;margin:8px 0 0"><input id="ghTok" type="password" autocomplete="off" placeholder="github_pat_…" aria-label="GitHub token"><button class="btn ${st.app ? "" : "primary"}" id="ghTokSave">Connect</button></div>
       <p class="muted small" style="margin:6px 0 0">Tokens expire (GitHub suggests 90 days). Pulse tells you when it stops working; paste a new one here.</p></div></div>`;
 }
 function ghConnected(st, links, pname) {
-  const repos = st.repos || [];
-  return `<div class="gh-facts">
-      <div><small class="muted">Connected</small><b>${st.method === "app" ? "Pulse for GitHub app" : "Token " + esc(st.token_hint || "")}</b><span class="muted small">${st.account ? esc(st.account) + " · " : ""}${st.connected_by ? "by " + esc(st.connected_by) + " · " : ""}${ghAgo(st.connected_at)}</span></div>
-      <div><small class="muted">Updates</small><b>${st.method === "app" ? "Instantly" : "Every"} <select id="ghEvery" aria-label="Check every">${[5, 10, 15, 30, 60].map((m) => `<option value="${m}" ${+st.every_min === m ? "selected" : ""}>${m} min</option>`).join("")}</select></b>
-        <span class="muted small">${st.method === "app" ? "through GitHub's notices, plus a full check on this schedule" : "Pulse checks your linked repositories on this schedule"}</span></div>
-      <div><small class="muted">Repositories it can see</small><b>${repos.length}${st.repos_at ? "" : " (loading…)"}</b><span class="muted small"><a href="#" id="ghRefresh">Refresh list</a>${st.method === "token" ? ` · <a href="#" id="ghNewTok">Replace token</a>` : ""}</span></div></div>
+  const repos = st.repos || [], app = st.method === "app";
+  return `<div class="gh-conns">${st.conns.map((c) => `<div class="gh-conn ${c.last_error ? "bad" : ""}">
+        <span class="gh-av">${esc((c.account || "?").slice(0, 2).toUpperCase())}</span>
+        <div><b>${esc(c.account || "Checking…")}</b><span class="muted small">${c.method === "app" ? "Pulse for GitHub app" : "Token " + esc(c.token_hint || "")} · ${c.repos_at ? `${c.repos} repositor${c.repos === 1 ? "y" : "ies"}` : "reading repositories…"} · ${c.connected_by ? "by " + esc(c.connected_by) + " · " : ""}${ghAgo(c.connected_at)}</span>
+          ${c.last_error ? `<span class="small" style="color:var(--red)">${esc(c.last_error)}</span>` : ""}</div>
+        <div class="actions-row" style="margin:0">${c.method === "token" ? `<button class="btn small" data-ghreplace="${c.id}">Replace token</button>` : ""}<button class="btn small danger" data-ghremove="${c.id}">Remove</button></div></div>`).join("")}
+      <details class="gh-add"><summary>${ghIc("plus")}Add another GitHub account or organization</summary>
+        <p class="muted small">Connect each place your repositories live (for example both <b>BlueCredit</b> and <b>bluecredits</b>). Pulse reads each repository through its owner's connection.</p>${ghConnect(st)}</details></div>
+    <div class="gh-facts">
+      <div><small class="muted">Updates</small><b>${app ? "Instantly" : "Every"} <select id="ghEvery" aria-label="Check every">${[5, 10, 15, 30, 60].map((m) => `<option value="${m}" ${+st.every_min === m ? "selected" : ""}>${m} min</option>`).join("")}</select></b>
+        <span class="muted small">${app ? "through GitHub's notices, plus a full check on this schedule" : "Pulse checks your linked repositories on this schedule"}</span></div>
+      <div><small class="muted">Repositories Pulse can see</small><b>${repos.length}</b><span class="muted small"><a href="#" id="ghRefresh">Refresh list</a></span></div>
+      <div><small class="muted">Linked to projects</small><b>${links.length}</b><span class="muted small">${new Set(links.map((l) => l.project_id)).size} project${new Set(links.map((l) => l.project_id)).size === 1 ? "" : "s"}</span></div></div>
     ${repos.length ? `<details class="gh-repos"><summary>Show repositories</summary><ul>${repos.map((r) => `<li>${ghIc(r.private ? "key" : "globe")}<span>${esc(r.full_name)}</span></li>`).join("")}</ul></details>` : ""}
     <h3 class="ck-h">Linked to projects</h3>
     ${links.length ? `<div class="table-wrap" style="border:0"><table><thead><tr><th>Project</th><th>Repository</th><th>Only</th><th>Issues</th><th>Last sync</th></tr></thead><tbody>
       ${links.map((l) => `<tr data-href="../projects/#/p/${l.project_id}/github"><td><b>${esc(pname(l.project_id))}</b></td><td>${esc(l.repo)}</td><td>${esc([l.milestone && "milestone " + l.milestone, l.label && "label " + l.label].filter(Boolean).join(", ") || "everything")}</td>
         <td>${l.issues}</td><td>${l.last_error ? `<span class="pill s-lost" title="${esc(l.last_error)}">Problem</span>` : esc(l.last_status || "")} <small class="muted">${ghAgo(l.last_sync_at)}</small></td></tr>`).join("")}</tbody></table></div>`
       : `<p class="muted">No projects linked yet. Open a project in <a href="../projects/">Projects</a> → <b>GitHub</b> tab and link a repository.</p>`}
-    <div class="actions-row" style="margin-top:14px"><a class="btn primary" href="../projects/">${ghIc("briefcase")}Open Projects</a><button class="btn danger" id="ghOff">Disconnect GitHub</button></div>`;
+    <div class="actions-row" style="margin-top:14px"><a class="btn primary" href="../projects/">${ghIc("briefcase")}Open Projects</a></div>`;
 }
 function ghPeopleTable(st, only) {
   const people = only ? st.people.filter((p) => only.has(p.login.toLowerCase())) : st.people;
@@ -88,22 +95,27 @@ function wirePeople(root, after) {
   }));
 }
 function wireIntegrations(st) {
-  $("#ghApp")?.addEventListener("click", async (e) => { e.target.disabled = true; try { location.href = await db.rpc("gh_install_url", {}); } catch (err) { toast(err.message); e.target.disabled = false; } });
-  const saveTok = async () => {
-    const v = $("#ghTok").value.trim(); if (!v) return toast("Paste the token first");
-    $("#ghTokSave").disabled = true; $("#ghTokSave").textContent = "Checking…";
-    try { await db.rpc("gh_set_token", { p_token: v }); const r = await ghWait(null); toast(r.last_error ? "GitHub said no: check the token" : "GitHub connected"); Integrations(); }
-    catch (err) { toast(err.message); $("#ghTokSave").disabled = false; $("#ghTokSave").textContent = "Connect"; }
+  $$("#ghApp").forEach((b) => b.addEventListener("click", async (e) => { e.target.disabled = true; try { location.href = await db.rpc("gh_install_url", {}); } catch (err) { toast(err.message); e.target.disabled = false; } }));
+  const saveTok = async (conn) => {
+    const inp = $("#ghTok"), btn = $("#ghTokSave"), v = inp.value.trim(); if (!v) return toast("Paste the token first");
+    btn.disabled = true; btn.textContent = "Checking…";
+    try { await db.rpc("gh_set_token", { p_token: v, p_conn: conn || null }); const r = await ghWait(null); toast(r.last_error ? "GitHub said no: " + r.last_error : "GitHub connected"); Integrations(); }
+    catch (err) { toast(err.message); btn.disabled = false; btn.textContent = "Connect"; }
   };
-  $("#ghTokSave")?.addEventListener("click", saveTok);
-  $("#ghTok")?.addEventListener("keydown", (e) => { if (e.key === "Enter") saveTok(); });
-  $("#ghNewTok")?.addEventListener("click", (e) => { e.preventDefault(); $(".gh-card").insertAdjacentHTML("beforeend", ghConnect({ app: false })); $(".gh-ways .gh-way.best")?.remove(); wireIntegrations({}); $("#ghTok").focus(); });
+  $("#ghTokSave")?.addEventListener("click", () => saveTok($("#ghTokSave").dataset.conn));
+  $("#ghTok")?.addEventListener("keydown", (e) => { if (e.key === "Enter") saveTok($("#ghTokSave").dataset.conn); });
+  $$("[data-ghreplace]").forEach((b) => b.addEventListener("click", () => {
+    const d = $(".gh-add"); d.open = true; $(".gh-way.best", d)?.remove();
+    $("#ghTokSave").dataset.conn = b.dataset.ghreplace; $("#ghTokSave").textContent = "Replace";
+    $("h3", $(".gh-way", d)).textContent = `New token for ${st.conns.find((c) => c.id === +b.dataset.ghreplace)?.account || "this account"}`; $("#ghTok").focus();
+  }));
+  $$("[data-ghremove]").forEach((b) => b.addEventListener("click", async () => {
+    const c = st.conns.find((x) => x.id === +b.dataset.ghremove);
+    if (!confirm(`Remove the ${c?.account || "GitHub"} connection? Projects keep the issues they have, but repositories under ${c?.account || "it"} stop updating until you connect it again.`)) return;
+    try { await db.rpc("gh_disconnect", { p_conn: c.id }); toast("Removed"); Integrations(); } catch (err) { toast(err.message); }
+  }));
   $("#ghRefresh")?.addEventListener("click", async (e) => { e.preventDefault(); try { await db.rpc("gh_refresh_repos", {}); await ghWait(null); Integrations(); } catch (err) { toast(err.message); } });
   $("#ghEvery")?.addEventListener("change", async (e) => { try { await db.rpc("gh_set_every", { p_min: +e.target.value }); toast("Saved"); } catch (err) { toast(err.message); } });
-  $("#ghOff")?.addEventListener("click", async () => {
-    if (!confirm("Disconnect GitHub? Linked projects keep the tasks they have but stop updating until you connect again.")) return;
-    try { await db.rpc("gh_disconnect", {}); Integrations(); } catch (err) { toast(err.message); }
-  });
   $$("tr[data-href]").forEach((r) => r.addEventListener("click", () => (location.href = r.dataset.href)));
   wirePeople($("#main"), () => Integrations());
 }

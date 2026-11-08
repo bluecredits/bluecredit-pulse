@@ -1194,3 +1194,12 @@ a.gh-chip:hover { background: var(--blue-1); color: var(--blue); }
 .gh-body { border-top: 1px solid var(--line-2); padding-top: 10px; font-size: 14px; max-height: 320px; overflow: auto; }
 .gh-people select { width: auto; min-width: 200px; }
 .task.gh { cursor: pointer; }
+.gh-conns { display: grid; gap: 10px; margin-bottom: 14px; }
+.gh-conn { display: grid; grid-template-columns: 40px 1fr auto; gap: 12px; align-items: center; border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; }
+.gh-conn.bad { border-color: #fecaca; background: var(--red-1); }
+.gh-conn > div:nth-child(2) { display: grid; gap: 1px; min-width: 0; }
+.gh-av { width: 40px; height: 40px; border-radius: 10px; background: #111827; color: #fff; display: grid; place-items: center; font: 700 13px var(--font-ui); }
+.gh-add summary { cursor: pointer; color: var(--blue); font-weight: 600; font-size: 14px; display: inline-flex; gap: 6px; align-items: center; padding: 4px 0; }
+.gh-add summary .ic { width: 16px; height: 16px; }
+.gh-add[open] { border: 1px dashed var(--line); border-radius: 12px; padding: 10px 14px; }
+@media (max-width: 640px) { .gh-conn { grid-template-columns: 40px 1fr; } .gh-conn .actions-row { grid-column: 1 / -1; } }

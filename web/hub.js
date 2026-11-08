@@ -128,14 +128,15 @@ function loadAppStats() {
     const mine = (st || []).some((x) => x.user_id === S.user.id && x.status === "connected"), n = new Set((st || []).filter((x) => x.status === "connected").map((x) => x.user_id)).size;
     fill("scheduler", (mine ? "" : `<span class="hub-stat alert" data-href="./scheduler/#/connect"><b>Connect</b> your calendar</span>`) + hstat(n, `of ${S.team.filter((p) => p.active).length} calendars linked`, "./scheduler/"));
   }).catch(() => fill("scheduler", ""));
-  sb.from("onboardings").select("status, checklist, user_id").then(({ data, error }) => {
-    if (error) return fill("onboarding", "");
+  Promise.all([sb.from("onboardings").select("status, checklist, user_id"), S.profile.role === "contractor" ? Promise.resolve(null) : db.rpc("hire_summary", {}).catch(() => null)]).then(([{ data, error }, h]) => {
+    if (error) return fill("people", "");
     if (S.profile.role === "contractor") {
       const mine = (data || []).filter((o) => o.user_id === S.user.id).flatMap((o) => o.checklist || []).filter((i) => i.who === "them");
-      return fill("onboarding", hstat(mine.filter((i) => !i.done).length, "of your checklist items left", "./onboarding/#/mine", true));
+      return fill("people", hstat(mine.filter((i) => !i.done).length, "of your checklist items left", "./people/#/mine", true));
     }
-    const on = (data || []).filter((o) => ["Planned", "In progress"].includes(o.status)).length, off = (data || []).filter((o) => o.status === "Offboarding").length;
-    fill("onboarding", hstat(on, "being onboarded", "./onboarding/") + (off ? hstat(off, "offboarding", "./onboarding/", true) : ""));
+    const on = (data || []).filter((o) => ["Planned", "In progress"].includes(o.status)).length;
+    fill("people", (h?.my_scorecards ? hstat(h.my_scorecards, "scorecards to fill", "./people/#/interviews", true) : "")
+      + (h ? hstat(h.to_review, "candidates to review", "./people/#/candidates", h.to_review > 0) : "") + hstat(on, "being onboarded", "./people/#/people"));
   });
   const d = new Date(), wk = new Date(d); wk.setDate(d.getDate() - ((d.getDay() + 6) % 7)); const w = wk.toLocaleDateString("en-CA");
   Promise.all([sb.from("time_entries").select("hours").eq("user_id", S.user.id).gte("work_date", w),

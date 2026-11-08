@@ -11,7 +11,8 @@ the company's code, contractors and consultants with a separate contractor code.
 | `/funding/` | **Funding** | Grant and loan applications in progress, plus the funding catalog |
 | `/opportunities/` | **Opportunities** | Two tabs: Contracts (sub-tabs Federal from SAM.gov and Bids from MyBidMatch: federal, state, local, education) and Grants (Grants.gov) from saved searches checked on a schedule (default once a day); add a contract to the pipeline or a grant to Funding |
 | `/timecards/` | **Timecards** | Weekly timesheets by project, approvals, hours and amounts by project |
-| `/onboarding/` | **Onboarding** | Contractors, consultants and new hires: checklist, invite, offboarding |
+| `/people/` | **People** | Hiring (openings with a public apply link, candidate board, interviews, blind scorecards), then onboarding checklists, invite and offboarding. `/onboarding/` redirects here |
+| `/apply/?t=…` | Apply page | Public, no sign-in: the opening's description and an application form with resume upload |
 | `/projects/` | **Projects** | Portfolio, schedule, task board, team, budget vs. actual, documents, risks, status reports, close-out |
 | `/agreements/` | **Agreements** | Teaming, consulting, confidentiality agreements and amendments: fill in, e-sign, amend, close out |
 | `/sign/` | **Signing page** | Public page a signer opens from their private link (no Pulse account needed) |
@@ -42,7 +43,7 @@ web/review/                Business Review app
 web/contacts/              Contacts app
 web/funding/               Funding app
 web/tickets/               Tickets app
-web/timecards/, onboarding/, scheduler/, chief/, admin/   the other apps
+web/timecards/, people/, apply/, scheduler/, chief/, admin/   the other apps
 supabase/functions/        calendar and chief server functions (Deno) + tests
 deploy/                    Contabo: install.sh, nginx site, systemd services, DEPLOY_CONTABO.md
 supabase/schema.sql        the whole database: tables, security rules, functions (safe to re-run; upgrades old installs)

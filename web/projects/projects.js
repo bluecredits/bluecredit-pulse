@@ -253,8 +253,8 @@ async function Team(p) {
     ${ids.map((uid) => { const m = S.team.find((x) => x.id === uid), link = pp.find((x) => x.user_id === uid), o = onb.find((x) => x.user_id === uid);
       return `<tr style="cursor:default"><td><b>${esc(m?.display_name || "Former member")}</b>${m?.role === "contractor" ? ' <span class="pill s-high">Contractor</span>' : ""}</td>
         <td>${uid === p.manager_id ? "Project manager" : link ? "Assigned" : "Logged time"}</td><td class="num">${hours(uid).toLocaleString()}</td>
-        ${isStaff() ? `<td class="num">${link?.rate ? usd(link.rate) : p.rate ? usd(p.rate) : "—"}</td><td>${o ? `<a href="../onboarding/">${esc(o.status)}</a>` : ""}</td>` : ""}</tr>`; }).join("") || `<tr><td colspan="5" class="empty">Nobody yet.</td></tr>`}</tbody></table></div></section>
-    ${isAdmin() ? `<p class="muted small">Add or remove people, set their rates and who can log time in <a href="../timecards/#/projects">Timecards → Projects</a>. Bring on a new contractor in <a href="../onboarding/">Onboarding</a>.</p>` : ""}`;
+        ${isStaff() ? `<td class="num">${link?.rate ? usd(link.rate) : p.rate ? usd(p.rate) : "—"}</td><td>${o ? `<a href="../people/#/people">${esc(o.status)}</a>` : ""}</td>` : ""}</tr>`; }).join("") || `<tr><td colspan="5" class="empty">Nobody yet.</td></tr>`}</tbody></table></div></section>
+    ${isAdmin() ? `<p class="muted small">Add or remove people, set their rates and who can log time in <a href="../timecards/#/projects">Timecards → Projects</a>. Bring on a new contractor in <a href="../people/#/people">People</a>.</p>` : ""}`;
 }
 
 /* ---------------- cost */

@@ -802,3 +802,63 @@ button.apps-btn { border: 0; background: none; cursor: pointer; }
 .prof-form textarea { font: 14px var(--font); }
 .prof-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: -4px; }
 .prof-more summary { cursor: pointer; font-weight: 600; font-size: 13.5px; color: var(--blue); margin-bottom: 8px; }
+
+/* ---- People → Hiring ---- */
+.hire-openings { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.hire-op { cursor: pointer; display: grid; gap: 12px; margin: 0; }
+.hire-op.dim { opacity: .75; }
+.hire-op-h { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+.hire-op-h h2 { margin: 0 0 2px; font-size: 18px; }
+.hire-op-n { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.hire-op-n a { display: grid; padding: 8px 10px; border-radius: 10px; background: var(--line-2); text-decoration: none; color: var(--muted); font-size: 12px; font-weight: 600; }
+.hire-op-n b { font-size: 20px; color: var(--ink); font-family: var(--font-ui); }
+.apply-box { display: grid; gap: 6px; padding: 12px; border-radius: 12px; background: var(--blue-0); }
+.apply-box code { font-size: 12px; word-break: break-all; }
+.hire-board { display: grid; grid-template-columns: repeat(var(--cols), minmax(190px, 1fr)); gap: 12px; overflow-x: auto; padding-bottom: 6px; }
+.hire-col { background: var(--line-2); border-radius: 14px; padding: 10px; min-height: 120px; display: flex; flex-direction: column; gap: 8px; }
+.hire-col h3 { font-size: 13px; margin: 2px 4px 4px; display: flex; justify-content: space-between; }
+.hire-card { text-align: left; display: grid; gap: 3px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: #fff; cursor: pointer; font: inherit; color: var(--ink); }
+.hire-card:hover { border-color: var(--blue); }
+.hire-card b { font-size: 14px; }
+.hire-meta { display: flex; gap: 8px; align-items: center; font-size: 12px; }
+.hire-score { color: var(--amber); font-weight: 600; }
+.hire-empty { margin: 4px; }
+.hire-steps { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 10px; }
+.hire-steps span { font-size: 11.5px; font-weight: 600; padding: 4px 9px; border-radius: 999px; background: var(--line-2); color: var(--muted); }
+.hire-steps span.past { background: var(--blue-0); color: var(--blue); }
+.hire-steps span.on { background: var(--blue); color: #fff; }
+.hire-steps span.on.out { background: var(--red); }
+.hire-acts { margin: 10px 0 6px; }
+.hire-cover { white-space: pre-wrap; font-size: 14px; background: var(--line-2); padding: 10px 12px; border-radius: 10px; }
+.hire-scores td.num, .hire-scores th { text-align: center; } .hire-scores td:first-child { text-align: left; }
+.chips .chip.on { background: var(--blue); color: #fff; border-color: var(--blue); }
+.file-btn { cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.hire-ev li { font-size: 13px; }
+.score-row { border: 0; padding: 0; margin: 0; }
+.score-row legend { font-weight: 600; font-size: 13.5px; margin-bottom: 4px; }
+.score-pick { display: flex; gap: 6px; flex-wrap: wrap; }
+.score-pick label { cursor: pointer; }
+.score-pick input { position: absolute; opacity: 0; pointer-events: none; }
+.score-pick span { display: inline-grid; place-items: center; min-width: 38px; height: 36px; padding: 0 10px; border-radius: 10px; border: 1px solid var(--line); font-weight: 600; font-size: 14px; background: #fff; }
+.score-pick input:checked + span { background: var(--blue); border-color: var(--blue); color: #fff; }
+.score-pick input:focus-visible + span { outline: 2px solid var(--blue); outline-offset: 2px; }
+.hire-process { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; }
+.hire-process b { margin-right: 4px; }
+.hs-email { display: grid; gap: 6px; margin-bottom: 16px; }
+.hs-email h3 { margin: 0; font-size: 14px; }
+.hs-email label { display: grid; gap: 3px; font-size: 13px; font-weight: 600; }
+/* public apply page */
+.apply-page { background: var(--bg, #f5f8ff); }
+.apply-wrap { max-width: 760px; margin: 0 auto; padding: 32px 16px 16px; display: grid; gap: 16px; }
+.apply-card h1 { margin: 2px 0 4px; font-size: 28px; }
+.apply-card h2 { font-size: 17px; margin: 18px 0 6px; }
+.apply-card p { line-height: 1.6; }
+.apply-co { font-weight: 700; color: var(--blue); margin: 0; text-transform: uppercase; letter-spacing: .05em; font-size: 12.5px; }
+.apply-card label { display: grid; gap: 4px; font-weight: 600; font-size: 13.5px; }
+.apply-done { text-align: center; } .apply-done .ic { width: 40px; height: 40px; color: var(--green); }
+.apply-foot { text-align: center; padding: 8px 16px 28px; }
+@media (max-width: 720px) { .hire-board { grid-template-columns: repeat(var(--cols), 78vw); } }
+.chips .chip { display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--ink-2); text-decoration: none; background: #fff; }
+.chips .chip:hover { border-color: var(--blue); color: var(--blue); }
+.apply-card label.check { display: flex; gap: 10px; align-items: flex-start; font-weight: 500; }
+.apply-card label.check input { width: auto; margin-top: 3px; flex: none; }

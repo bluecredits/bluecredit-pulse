@@ -283,7 +283,7 @@ async function View(id) {
   ].join("");
   $("#main").innerHTML = `
     <div class="page-head"><div><p class="muted small"><a href="#/list">Agreements</a> › ${ref(a)}</p><h1>${esc(a.title)}</h1>
-      <p class="muted">${spill(st)} ${esc(a.template_name)}${a.party_name ? " with " + esc(a.party_name) : ""}${parent ? ` · amends <a href="#/view/${parent.id}">${ref(parent)}</a>` : ""}${onb ? ` · <a href="../onboarding/">${esc(onb.name)}'s onboarding</a>` : ""}</p></div>
+      <p class="muted">${spill(st)} ${esc(a.template_name)}${a.party_name ? " with " + esc(a.party_name) : ""}${parent ? ` · amends <a href="#/view/${parent.id}">${ref(parent)}</a>` : ""}${onb ? ` · <a href="../people/#/people">${esc(onb.name)}'s onboarding</a>` : ""}</p></div>
       <div class="actions-row">${actions}</div></div>
     ${lifecycleBar(a)}
     ${st === "Declined" ? `<div class="notice-bar alert">${icon("alert")}<div><b>Declined</b> by ${esc(signers.find((s) => s.status === "Declined")?.name || "")}: ${esc(signers.find((s) => s.status === "Declined")?.decline_reason || "")}</div></div>` : ""}

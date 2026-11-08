@@ -1,6 +1,7 @@
-/* Pulse · Onboarding — bring on contractors, consultants and new hires with a checklist, then offboard them.
-   Uses ../core.js helpers. Staff see everyone; the person being onboarded sees their own checklist once they
-   join with the contractor code (matched by email). The database enforces who may change what. */
+/* Pulse · People — hiring (see hiring.js), then onboarding contractors, consultants and new hires with a
+   checklist, and offboarding them. Uses ../core.js helpers. Staff see everyone being onboarded; the person
+   being onboarded sees their own checklist once they join with the contractor code (matched by email).
+   The database enforces who may change what. */
 "use strict";
 
 const OB = { tab: "onboarding", q: "" };
@@ -43,7 +44,7 @@ async function People() {
   const list = rows.filter((o) => groups[OB.tab].includes(o.status) && (!q || [o.name, o.email, o.firm, o.role_title].join(" ").toLowerCase().includes(q)));
   const n = (k) => rows.filter((o) => groups[k].includes(o.status)).length;
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>People</h1><p class="muted">Contractors, consultants and new hires: paperwork, access and equipment from first day to last.</p></div>
+    <div class="page-head"><div><h1>Team</h1><p class="muted">Employees, contractors, consultants and interns: onboarding paperwork, access and equipment from first day to last.</p></div>
       <div class="actions-row"><button class="btn" id="invite">${icon("send")}Invite instructions</button><button class="btn primary" id="addPerson">${icon("plus")}Add person</button></div></div>
     <div class="filters"><div class="tabs" role="tablist">${[["onboarding", "Onboarding"], ["active", "Active"], ["off", "Offboarding"], ["all", "All"]].map(([k, l]) =>
       `<button role="tab" data-tab="${k}" aria-selected="${OB.tab === k}">${l} <span class="muted">${n(k)}</span></button>`).join("")}</div>
@@ -176,7 +177,7 @@ async function openPerson(id) {
 async function inviteBox(o) {
   let code = "";
   try { code = isAdmin() ? await db.rpc("get_contractor_code") : ""; } catch { code = ""; }
-  const site = location.origin + location.pathname.replace(/onboarding\/?(index\.html)?$/, "");
+  const site = location.origin + location.pathname.replace(/people\/?(index\.html)?$/, "");
   const body = `Hi ${o ? o.name.split(" ")[0] : "there"},\n\nWelcome to ${S.workspace.name}! We use Pulse for timesheets, requests and onboarding.\n\n1. Open ${site}\n2. Choose "Join with code" and enter: ${code || "(ask an admin for the contractor code)"}\n3. Use ${o?.email ? "this email address (" + o.email + ")" : "your work email"} so your onboarding checklist shows up.\n\nYou'll see your checklist, the projects you log time to, and can raise requests for equipment or access.\n\nThanks,\n${firstName()}`;
   $("#drawerTitle").textContent = o ? `Invite ${o.name}` : "Invite contractors and consultants";
   $("#drawerBody").innerHTML = `
@@ -234,25 +235,26 @@ async function Template() {
 }
 
 /* ================================================================ router */
-const routes = { people: People, mine: Mine, template: Template };
+const routes = { openings: Openings, candidates: Candidates, interviews: Interviews, people: People, mine: Mine, template: Template, "hiring-setup": HiringSetup };
 window.addEventListener("hashchange", route);
 function route() {
   if (!S.profile) return;
-  const [name] = location.hash.replace(/^#\/?/, "").split("/");
-  const key = routes[name] ? name : isStaff() ? "people" : "mine";
+  const [path, qs] = location.hash.replace(/^#\/?/, "").split("?");
+  const [name] = path.split("/");
+  const key = routes[name] && (isStaff() || name === "mine") ? name : isStaff() ? "candidates" : "mine";
   $$("#nav a[data-r]").forEach((a) => a.classList.toggle("on", a.dataset.r === key));
   document.body.classList.remove("nav-open"); closeDrawer();
   $("#main").innerHTML = `<p class="muted">Loading…</p>`;
-  Promise.resolve(routes[key]()).catch((e) => ($("#main").innerHTML = /onboardings|onb_|schema cache|does not exist/i.test(e.message)
-    ? `<section class="panel"><h2>One-time setup needed</h2><p>Onboarding needs the latest database update.</p></section>` : `<div class="empty">Couldn't load this page: ${esc(e.message)}</div>`));
+  Promise.resolve(routes[key](qs)).catch((e) => ($("#main").innerHTML = /onboardings|onb_|hire_|schema cache|does not exist/i.test(e.message)
+    ? `<section class="panel"><h2>One-time setup needed</h2><p>People needs the latest database update (an admin runs the latest schema in Supabase).</p></section>` : `<div class="empty">Couldn't load this page: ${esc(e.message)}</div>`));
   $("#main").focus({ preventScroll: true });
 }
 async function boot() {
   if (!sb) { $("#setup").hidden = false; return; }
   try {
     if (!(await requireMember())) return;
-    if (!isStaff()) $$('#nav a[data-r="people"], #nav a[data-r="template"]').forEach((a) => a.remove());
-    else if (!isAdmin()) $$('#nav a[data-r="template"]').forEach((a) => a.remove());
+    if (!isStaff()) $$('#nav a[data-r]:not([data-r="mine"]), #nav .nav-label').forEach((a) => a.remove());
+    else if (!isAdmin()) $$('#nav a[data-r="template"], #nav a[data-r="hiring-setup"]').forEach((a) => a.remove());
     showShell(); route();
   } catch (e) { showShell(); $("#main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
 }

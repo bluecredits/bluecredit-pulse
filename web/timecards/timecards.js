@@ -6,7 +6,7 @@
 const TC = { week: null, projects: [], mine: new Set(), entries: [], sheet: null, from: null, to: null };
 const icon = (name, cls = "ic") => `<svg class="${cls}"><use href="#i-${name}"/></svg>`;
 const isAdmin = () => S.profile?.role === "admin";
-const isStaff = () => S.profile && S.profile.role !== "contractor";
+const isStaff = () => S.profile && isStaffRole(S.profile.role);
 const nameOf = (id) => S.team.find((p) => p.id === id)?.display_name || "Former member";
 const hrs = (n) => (Math.round((+n || 0) * 100) / 100).toLocaleString("en-US", { maximumFractionDigits: 2 });
 const weekOf = (iso) => { const d = new Date(iso + "T12:00:00"); const dow = (d.getDay() + 6) % 7; d.setDate(d.getDate() - dow); return d.toLocaleDateString("en-CA"); };
@@ -186,11 +186,11 @@ async function editProject(p) {
     <label>Status<select name="status">${["Active", "Paused", "Closed"].map((s) => `<option ${s === (p?.status || "Active") ? "selected" : ""}>${s}</option>`).join("")}</select></label>
     <label>Billable rate per hour (USD)<input name="rate" type="number" min="0" step="0.01" value="${p?.rate ?? ""}"></label>
     <label>Budget (hours)<input name="budget_hours" type="number" min="0" step="0.5" value="${p?.budget_hours ?? ""}"></label>
-    <label>Approver <small class="muted">(besides admins)</small><select name="approver_id"><option value="">Admins only</option>${active.filter((m) => m.role !== "contractor").map((m) => `<option value="${m.id}" ${m.id === p?.approver_id ? "selected" : ""}>${esc(m.display_name)}</option>`).join("")}</select></label>
+    <label>Approver <small class="muted">(besides admins)</small><select name="approver_id"><option value="">Admins only</option>${active.filter((m) => isStaffRole(m.role)).map((m) => `<option value="${m.id}" ${m.id === p?.approver_id ? "selected" : ""}>${esc(m.display_name)}</option>`).join("")}</select></label>
     <label class="check"><input type="checkbox" name="billable" ${p?.billable !== false ? "checked" : ""}> Billable</label>
     <label class="check" style="grid-column:1/-1"><input type="checkbox" name="limited" ${p?.limited ? "checked" : ""}> Only the people below can log time (otherwise all staff can, plus anyone below)</label>
     <fieldset class="people-pick" style="grid-column:1/-1"><legend>People on this project <small class="muted">rate overrides the project rate</small></legend>
-      ${active.map((m) => `<div class="pp-row"><label class="check"><input type="checkbox" data-pp="${m.id}" ${on(m.id) ? "checked" : ""}> ${esc(m.display_name)} ${m.role === "contractor" ? '<span class="pill s-high">Contractor</span>' : ""}</label>
+      ${active.map((m) => `<div class="pp-row"><label class="check"><input type="checkbox" data-pp="${m.id}" ${on(m.id) ? "checked" : ""}> ${esc(m.display_name)} ${!isStaffRole(m.role) ? `<span class="pill s-high">${roleName(m.role)}</span>` : ""}</label>
         <input type="number" min="0" step="0.01" placeholder="Rate" data-pprate="${m.id}" value="${on(m.id)?.rate ?? ""}" aria-label="Rate for ${esc(m.display_name)}"></div>`).join("")}</fieldset>
     <label style="grid-column:1/-1">Notes<textarea name="notes" rows="2">${esc(p?.notes || "")}</textarea></label>
     <div class="actions-row" style="grid-column:1/-1"><button class="btn primary">Save</button>${p ? `<button class="btn danger" type="button" id="delProj">Delete</button>` : ""}</div></form>`;

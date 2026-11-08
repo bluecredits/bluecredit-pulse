@@ -179,6 +179,7 @@ const HELP_TOPICS = ["review", "contacts", "funding", "opportunities", "projects
 function helpTopic() {
   const seg = location.pathname.replace(/\/index\.html$/, "/").split("/").filter(Boolean).pop() || "";
   if (seg === "agreements") return "documents";
+  if (seg === "portal") return "start/portal";
   if (seg === "admin") return /billing/.test(location.hash) ? "billing" : "admin";
   if (seg === "opportunities") { const m = location.hash.match(/#\/help\/?(\w*)/); return "opportunities" + (m && m[1] ? "/" + m[1] : ""); }
   return HELP_TOPICS.includes(seg) ? seg : "";
@@ -193,7 +194,18 @@ function addHelpBtn() {
   at ? at.before(a) : bar.appendChild(a);
 }
 // Apps launcher (grid button, top right) on every page
-const launcherApps = () => PULSE_APPS.filter((a) => (!a.staff || S.profile?.role !== "contractor") && CFG.apps?.[a.key] !== false);
+// Roles: admins and members are staff and see the business records; employees and contractors use the employee portal
+// (their own checklist, policies, devices, hours and requests) and never see contacts, pipeline, funding or bids.
+const ROLES = {
+  admin: { name: "Admin", blurb: "Everything, plus settings, billing and the team." },
+  member: { name: "Member", blurb: "Every app, including contacts, pipeline, funding and bids." },
+  employee: { name: "Employee", blurb: "The employee portal: checklist, policies, contracts, devices, hours, requests and their projects." },
+  contractor: { name: "Contractor", blurb: "Like an employee, for contractors and consultants. Free; doesn't count as a user." },
+};
+const isStaffRole = (r) => r === "admin" || r === "member";
+const roleName = (r) => ROLES[r]?.name || r || "";
+const PORTAL = HUB + "portal/";
+const launcherApps = () => PULSE_APPS.filter((a) => (!a.staff || isStaffRole(S.profile?.role)) && CFG.apps?.[a.key] !== false);
 function buildAppsMenu() {
   const host = $("#appsMenu"); if (!host || !S.profile) return;
   const here = location.pathname.replace(/\/index\.html$/, "/");
@@ -201,7 +213,7 @@ function buildAppsMenu() {
       const name = a.key === "chief" ? S.workspace?.config?.chief_name || a.name : a.name;
       const lock = !hasApp(a.key) ? `<small class="plan-badge">${PLANS[appPlan(a.key)].name}</small>` : "";
       return `<a role="menuitem" href="${href}" class="app-tile ${on ? "on" : ""} ${lock ? "locked" : ""}" data-app="${a.key}"><span class="hub-ic ${a.key === "chief" ? "ai" : ""}"><svg class="ic"><use href="#i-${a.icon}"/></svg></span><span>${esc(name)}</span>${lock}</a>`; }).join("")}</div>
-    <a class="apps-all" role="menuitem" href="${HUB}">Open the apps page</a>`;
+    ${isStaffRole(S.profile.role) ? `<a class="apps-all" role="menuitem" href="${HUB}">Open the apps page</a>` : `<a class="apps-all" role="menuitem" href="${PORTAL}">Back to my portal</a>`}`;
 }
 document.addEventListener("click", (e) => {
   const btn = $("#appsBtn"), m = $("#appsMenu"); if (!btn || !m) return;
@@ -219,11 +231,11 @@ function addFooter() {
 function buildUserMenu() {
   const m = $("#userMenu"); if (!m || !S.profile) return;
   const p = S.profile, admin = p.role === "admin", ic = (n) => `<svg class="ic"><use href="#i-${n}"/></svg>`;
-  const role = { admin: "Admin", member: "Member", contractor: "Contractor" }[p.role] || p.role;
+  const role = roleName(p.role);
   const item = (href, icon, label) => `<a role="menuitem" href="${href}">${ic(icon)}<span>${label}</span></a>`;
   m.innerHTML = `<div class="menu-head"><b>${esc(p.display_name)}</b><span>${esc(S.user?.email || p.email || "")}</span><small>${esc(role)}${S.workspace ? " · " + esc(S.workspace.name) : ""}</small></div>
-    ${item(HUB, "grid", "All apps")}
-    ${admin ? `<div class="menu-sep"></div><div class="menu-label">Admin</div>${item(HUB + "admin/#/settings", "cog", "Workspace settings")}${item(HUB + "admin/#/team", "team", "Team, roles and codes")}${item(HUB + "admin/#/billing", "banknotes", "Plan and billing")}${item(HUB + "review/#/activity", "clock", "Activity log")}` : ""}
+    ${isStaffRole(p.role) ? item(HUB, "grid", "All apps") + item(PORTAL, "home", "My portal") : item(PORTAL, "home", "My portal")}
+    ${admin ? `<div class="menu-sep"></div><div class="menu-label">Admin</div>${item(HUB + "admin/#/settings", "cog", "Workspace settings")}${item(HUB + "admin/#/team", "team", "Team and access")}${item(HUB + "admin/#/billing", "banknotes", "Plan and billing")}${item(HUB + "review/#/activity", "clock", "Activity log")}` : ""}
     <div class="menu-sep"></div>
     ${CFG.apps?.scheduler !== false ? item(HUB + "scheduler/#/connect", "calendar", "Connect my calendar") : ""}
     ${item(HUB + "?reset=1", "key", "Change password")}
@@ -242,7 +254,8 @@ document.addEventListener("keydown", (e) => {
 });
 document.addEventListener("click", async (e) => {
   if (!e.target.closest("[data-signout]")) return;
-  await sb.auth.signOut(); location.href = HUB;
+  const portal = (S.profile && !isStaffRole(S.profile.role)) || /\/portal\/?(index\.html)?$/.test(location.pathname);
+  await sb.auth.signOut(); location.href = portal ? PORTAL : HUB;
 });
 document.addEventListener("click", (e) => {
   if (e.target.closest("#menuBtn")) document.body.classList.toggle("nav-open");

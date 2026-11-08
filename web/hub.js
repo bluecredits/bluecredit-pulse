@@ -64,7 +64,7 @@ function planBanner() {
 function welcome() {
   setTimeout(async () => { try { $("#welcomeCode").textContent = await db.rpc("get_company_code"); } catch { /* shown on Team page */ } }, 0);
   return `<section class="panel welcome"><h2>Your ${esc(S.workspace.name)} workspace is ready</h2>
-    <p>Invite your team: send them this site and the company code below. They choose <b>Join with code</b>.</p>
+    <p>Invite your team: send staff this site and the company code below. They choose <b>Join with code</b>. Employees who only need their own checklist, policies, hours and requests use the employee portal: copy their invite from <a href="./admin/#/team">Team and access</a>.</p>
     <div class="code-box"><b id="welcomeCode">…</b><button class="btn" id="copyWelcome">Copy</button></div>
     <p class="muted" style="margin-bottom:0">Next: add your logo and adjust your lists in <a href="./admin/#/settings">Workspace settings</a>, or import contacts in <a href="./contacts/">Contacts</a>.</p></section>`;
 }
@@ -79,12 +79,12 @@ function linkTiles() {
     <a class="hub-app" href="${esc(l.url)}" target="_blank" rel="noopener"><div class="hub-ic ${l.kind === "ai" ? "ai" : "ext"}">${icon(l.kind === "ai" ? "sparkles" : l.kind === "talent" ? "team" : "link")}</div>
       <div class="hub-body"><h3>${esc(l.label || "Link")} <svg class="ic ext-ic"><use href="#i-external"/></svg></h3><p>${esc(l.note || new URL(l.url).hostname)}</p></div></a>`).join("")}</div></section>`;
 }
-const myApps = () => APPS.filter((a) => (!a.staff || S.profile?.role !== "contractor") && CFG.apps?.[a.key] !== false);
+const myApps = () => APPS.filter((a) => (!a.staff || isStaffRole(S.profile?.role)) && CFG.apps?.[a.key] !== false);
 function icon(name, cls = "ic") { return `<svg class="${cls}"><use href="#i-${name}"/></svg>`; }
 async function loadStats() {
   loadAppStats();
   const stat = (n, label, href, alert, preset) => `<span class="hub-stat ${alert && n ? "alert" : ""}" ${href ? `data-href="${href}"` : ""} ${preset ? `data-preset="${preset}"` : ""}><b>${Number(n).toLocaleString()}</b> ${label}</span>`;
-  if (S.profile.role === "contractor") return deskStats(stat);
+  if (!isStaffRole(S.profile.role)) return deskStats(stat);
   db.rpc("dashboard_data", { p_owner: firstName() }).then((d) => {
     const k = d.kpis;
     $("#stats-review").innerHTML = [stat(d.due_soon.length, `deadline${d.due_soon.length === 1 ? "" : "s"} in 14 days`, "./review/#/dashboard", false),
@@ -116,12 +116,12 @@ function loadAppStats() {
     const act = ps.filter((r) => r.status === "Active"), attn = act.filter((r) => r.health !== "On track").length, due = mine.filter((t) => t.due && new Date(t.due) - Date.now() < 3 * 864e5).length;
     fill("projects", hstat(act.length, "active projects", "./projects/") + (attn ? hstat(attn, "need attention", "./projects/", true) : "") + hstat(mine.length, "tasks assigned to you", "./projects/#/mytasks", due > 0));
   }).catch(() => fill("projects", ""));
-  if (S.profile.role !== "contractor") Promise.all([db.rpc("fed_status", {}), db.rpc("fed_counts", {})]).then(([st, n]) => {
+  if (isStaffRole(S.profile.role)) Promise.all([db.rpc("fed_status", {}), db.rpc("fed_counts", {})]).then(([st, n]) => {
     const bs = n.by_source || {};
     fill("opportunities", (st.has_key || st.has_bidmatch ? hstat((bs["SAM.gov"] || 0) + (bs.BidMatch || 0), "new contracts and bids", "./opportunities/#/contracts", false) : `<span class="hub-stat alert" data-href="./opportunities/#/settings"><b>Add</b> your SAM.gov key</span>`)
       + hstat(bs["Grants.gov"] || 0, "new grants", "./opportunities/#/grants", false));
   }).catch(() => fill("opportunities", ""));
-  if (S.profile.role !== "contractor") Promise.all([hasApp("agreements") ? sb.from("agreements").select("status, end_date") : Promise.resolve({ data: [] }),
+  if (isStaffRole(S.profile.role)) Promise.all([hasApp("agreements") ? sb.from("agreements").select("status, end_date") : Promise.resolve({ data: [] }),
       sb.from("doc_compliance").select("due_date, status").eq("status", "Open")]).then(([{ data, error }, comp]) => {
     if (error) return fill("documents", "");
     const soon = (comp.data || []).filter((c) => c.due_date && (new Date(c.due_date) - Date.now()) / 864e5 <= 30).length;
@@ -139,11 +139,11 @@ function loadAppStats() {
     const mine = (st || []).some((x) => x.user_id === S.user.id && x.status === "connected"), n = new Set((st || []).filter((x) => x.status === "connected").map((x) => x.user_id)).size;
     fill("scheduler", (mine ? "" : `<span class="hub-stat alert" data-href="./scheduler/#/connect"><b>Connect</b> your calendar</span>`) + hstat(n, `of ${S.team.filter((p) => p.active).length} calendars linked`, "./scheduler/"));
   }).catch(() => fill("scheduler", ""));
-  Promise.all([sb.from("onboardings").select("status, checklist, user_id"), S.profile.role === "contractor" || !hasApp("hiring") ? Promise.resolve(null) : db.rpc("hire_summary", {}).catch(() => null),
+  Promise.all([sb.from("onboardings").select("status, checklist, user_id"), !isStaffRole(S.profile.role) || !hasApp("hiring") ? Promise.resolve(null) : db.rpc("hire_summary", {}).catch(() => null),
       db.rpc("my_policies", {}).catch(() => [])]).then(([{ data, error }, h, pol]) => {
     if (error) return fill("people", "");
     const toSign = (pol || []).filter((p) => p.requires_ack && !p.acked_at).length, polStat = toSign ? hstat(toSign, toSign === 1 ? "policy to read and certify" : "policies to read and certify", "./people/#/policies", true) : "";
-    if (S.profile.role === "contractor") {
+    if (!isStaffRole(S.profile.role)) {
       const mine = (data || []).filter((o) => o.user_id === S.user.id).flatMap((o) => o.checklist || []).filter((i) => i.who === "them");
       return fill("people", polStat + hstat(mine.filter((i) => !i.done).length, "of your checklist items left", "./people/#/mine", true));
     }
@@ -173,7 +173,7 @@ let authMode = "signin";
 function renderPricing() {
   const el = $("#pricing"); if (!el || el.dataset.done) return; el.dataset.done = "1";
   const name = (k) => FEATURE_NAMES[k] || PULSE_APPS.find((a) => a.key === k)?.name || k;
-  el.innerHTML = `<h2>Simple pricing</h2><p class="muted">Per staff user per month. Contractors and consultants are free. Pay yearly and get 2 months free.</p>
+  el.innerHTML = `<h2>Simple pricing</h2><p class="muted">Per user per month (admins, members and employees). Contractors and consultants are free. Pay yearly and get 2 months free.</p>
     <div class="price-grid">${PLAN_ORDER.map((k, i) => { const p = PLANS[k];
       return `<div class="price-card ${k === "pro" ? "best" : ""}">${k === "pro" ? `<span class="price-flag">Most popular</span>` : ""}<h3>${p.name}</h3>
         <p class="price"><b>$${p.price}</b> /user/month</p><p class="muted small">${esc(p.blurb)}</p>
@@ -202,10 +202,11 @@ function renderLanding() {
     <ol class="land-steps">
       <li><b>Start a workspace</b><span>Name your company and pick a starting setup. You get 14 days of Pro, no card needed.</span></li>
       <li><b>Bring in what you have</b><span>Import your contacts and lists from a spreadsheet. If you sell to government, add your NAICS codes and keywords and matching work shows up the next morning.</span></li>
-      <li><b>Invite the team</b><span>Share the company code with staff and the contractor code with consultants. Everyone signs in once.</span></li>
+      <li><b>Invite the team</b><span>Staff who run the business get the company code. Everyone else signs in to the employee portal for their checklist, policies, contract, devices, hours and requests. Contractors are free.</span></li>
     </ol></section>`;
   const faq = [
-    ["Who counts as a user?", "Admins and members (your staff). Contractors and consultants are free."],
+    ["Who counts as a user?", "Admins, members and employees. Contractors and consultants are free."],
+    ["Do employees see our pipeline and contacts?", "No. Employees sign in to the employee portal: their onboarding checklist, policies to certify, contracts to sign, devices, hours, requests and the projects they're on. Only admins and members see contacts, pipeline, funding and bids."],
     ["What happens when the trial ends?", "Apps outside your plan show a lock until an admin chooses a plan. Nothing is deleted."],
     ["Is Pulse a CRM?", "It includes one: contacts, follow-ups and a pipeline. Pulse also runs what comes after the deal (projects, agreements, timecards, hiring), which a CRM alone doesn't."],
     ["Do I have to sell to government?", "No. Opportunities is there for firms that bid on public work; every other app works for any small company."],
@@ -323,6 +324,13 @@ async function afterSignIn(isNew = false) {
   }
   if (!prof.active) { await sb.auth.signOut(); showAuth("signin"); authErr(new Error("This account is turned off. Ask an admin to turn it back on.")); return; }
   S.profile = prof;
+  // employees and contractors live in the employee portal; send them on to the app they were heading for, if they can use it
+  if (!isStaffRole(prof.role)) {
+    const next = new URLSearchParams(location.search).get("next"), app = PULSE_APPS.find((a) => a.key === next || a.href === `./${next}/`);
+    const hash = /^#\//.test(location.hash) ? location.hash : "";
+    location.replace(app && !app.staff ? app.href + hash : next === "portal" ? PORTAL + hash : PORTAL);
+    return;
+  }
   await loadWorkspace();
   S.team = must(await sb.from("profiles").select("*").order("display_name"));
   $("#login").hidden = true; $("#setup").hidden = true;

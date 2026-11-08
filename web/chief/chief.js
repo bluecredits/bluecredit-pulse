@@ -7,7 +7,7 @@ const CH = { history: [] };
 try { CH.history = JSON.parse(sessionStorage.getItem("chief:history") || "[]"); } catch { CH.history = []; }
 const icon = (name, cls = "ic") => `<svg class="${cls}"><use href="#i-${name}"/></svg>`;
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
-const isStaff = () => S.profile && S.profile.role !== "contractor";
+const isStaff = () => S.profile && isStaffRole(S.profile.role);
 const chiefName = () => S.workspace?.config?.chief_name || "Chief of Staff";
 const saveHistory = () => { try { sessionStorage.setItem("chief:history", JSON.stringify(CH.history.slice(-20))); } catch { /* private mode */ } };
 function problem(e) {

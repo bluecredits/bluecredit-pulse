@@ -20,13 +20,17 @@ const TOPICS = [
       { id: "what", title: "What Pulse is", html: `<p>Pulse is an all-in-one workspace for small firms, a simple CRM plus everything after the deal: find and win work (Business Review, Contacts, Funding, Opportunities), deliver it (Projects, Agreements, People) and run the team day to day (Timecards, Tickets, Scheduler, Chief of Staff). One sign-in opens every app; the <b>All apps</b> grid at the top right of every page switches between them.</p>` },
       { id: "join", title: "Get in", html: steps(
           ["Start a workspace", `On the ${app("", "Pulse home page")} choose <b>Start a workspace</b>, enter your company name and your details. You become its admin. New workspaces get 14 days of Pro free.`],
-          ["Or join your company", `Ask your admin for the company code and choose <b>Join with code</b>. Contractors and consultants get a separate contractor code.`],
+          ["Or join your company", `Staff: ask your admin for the company code and choose <b>Join with code</b>. Employees, contractors and consultants: open the link in your welcome email, which takes you to the ${app("portal/", "employee portal")} with your code filled in.`],
           ["Confirm your email", `If Pulse sends a confirmation email, open the link in it, then sign in.`]) },
       { id: "roles", title: "Roles: who sees what", html: `<div class="table-wrap"><table class="help-table"><thead><tr><th>Role</th><th>How they join</th><th>What they see</th></tr></thead><tbody>
           <tr><td><b>Admin</b></td><td>Started the workspace, or promoted by an admin</td><td>Every app, plus team, codes, settings, plan and billing</td></tr>
           <tr><td><b>Member</b></td><td>Company code</td><td>Every app in your plan</td></tr>
-          <tr><td><b>Contractor</b></td><td>Contractor code</td><td>Timecards for their projects, their onboarding checklist, Tickets, Scheduler and their project tasks</td></tr></tbody></table></div>
+          <tr><td><b>Employee</b></td><td>Employee code (the invite link)</td><td>The employee portal: their onboarding checklist, policies to certify, contracts to sign, devices, hours, requests and the projects they're on. Never contacts, pipeline, funding or bids.</td></tr>
+          <tr><td><b>Contractor</b></td><td>Contractor code (the invite link)</td><td>The same as an employee, for people outside the payroll. Free.</td></tr></tbody></table></div>
         <p>Each company's data is private to that company: Pulse checks the workspace on every row in the database, not just in the screens.</p>` },
+      { id: "portal", title: "The employee portal", html: `<p>Employees and contractors sign in at ${app("portal/", "the employee portal")}. It opens on what needs doing: contracts to sign, policies to certify, onboarding steps, devices to confirm and last week's timesheet. Quick actions ask for time off, equipment, IT help or an expense; <b>My requests</b> shows where each one stands.</p>
+          <p>First time? Use the link in your welcome email, or open the portal, choose <b>First time here</b> and enter the code. Sign up with the email your employer has for you, so your checklist and contract find you.</p>
+          <p>Admins and members can open their own portal too: your name (top right) → <b>My portal</b>.</p>` },
       { id: "account", title: "Your account", html: `<ul>
           <li><b>Forgot your password?</b> On the sign-in page choose <b>Forgot password?</b> and follow the email.</li>
           <li><b>Change your password:</b> your name (top right) → <b>Change password</b>.</li>
@@ -198,18 +202,19 @@ const TOPICS = [
   { id: "admin", group: "admin", icon: "cog", title: "Team and workspace settings", blurb: "Invite people, roles, codes, lists, logo and apps.",
     sections: [
       { id: "team", title: "Invite and manage the team", html: steps(
-          ["Share the code", `Your name → <b>Team, roles and codes</b>. Copy the company code (members) or the contractor code and send it.`],
-          ["Set roles", `Promote a member to admin or change someone to contractor.`],
+          ["Add new hires in People first", `${app("people/#/people", "People → Team &amp; onboarding")} with their work email, so their checklist, contract and devices are waiting.`],
+          ["Send the invite", `Your name → <b>Team and access</b>. There are three codes: <b>Staff</b> (members, every app), <b>Employees</b> (the employee portal) and <b>Contractors</b> (the portal, free). <b>Invite…</b> writes the welcome email with a link that fills the code in.`],
+          ["Set roles", `Change anyone's role from the drop-down: Admin, Member, Employee or Contractor. Moving someone to Employee or Contractor takes away contacts, pipeline, funding and bids.`],
           ["Remove access", `<b>Change code</b> stops new sign-ups with the old code. <b>Turn off</b> removes someone immediately.`]) },
       { id: "settings", title: "Workspace settings", html: `<p>Your name → <b>Workspace settings</b>: company name and logo, the lists used in drop-downs, which apps are on, and the Chief of Staff's name.</p>` }] },
 
   { id: "billing", group: "admin", icon: "banknotes", title: "Plans and billing", blurb: "Starter, Pro and Enterprise; the free trial; paying.",
     sections: [
-      { id: "plans", title: "Plans", html: `<div class="table-wrap"><table class="help-table"><thead><tr><th>Plan</th><th>Per staff user / month</th><th>Apps</th></tr></thead><tbody>
+      { id: "plans", title: "Plans", html: `<div class="table-wrap"><table class="help-table"><thead><tr><th>Plan</th><th>Per user / month</th><th>Apps</th></tr></thead><tbody>
           <tr><td>${plan("Starter")}</td><td>$3</td><td>Business Review, Contacts, Funding, Timecards, Tickets, People (team and onboarding), Documents (policies, sign-offs and the compliance calendar). Up to 10 users.</td></tr>
           <tr><td>${plan("Pro")}</td><td>$6</td><td>Everything in Starter, plus Opportunities, Projects, Agreements and e-signing, Invoices and Hiring.</td></tr>
           <tr><td>${plan("Enterprise")}</td><td>$10</td><td>Everything in Pro, plus Chief of Staff and Scheduler. Priority support.</td></tr></tbody></table></div>
-        <p>Contractors and consultants are free. Paying yearly costs 10 months.</p>` },
+        <p>Admins, members and employees count as users. Contractors and consultants are free. Paying yearly costs 10 months.</p>` },
       { id: "trial", title: "Free trial", html: `<p>Every new workspace gets 14 days of Pro, no card needed. When the trial ends, apps outside your plan show a lock until an admin chooses a plan; nothing is deleted.</p>` },
       { id: "pay", title: "Choose or change a plan", html: steps(
           ["Open Plan and billing", `Your name (top right) → <b>Plan and billing</b> (admins).`],

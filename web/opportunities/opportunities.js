@@ -399,7 +399,7 @@ async function boot() {
   if (!sb) { $("#setup").hidden = false; return; }
   try {
     if (!(await requireMember())) return;
-    if (S.profile.role === "contractor") { location.replace("../"); return; }
+    if (!isStaffRole(S.profile.role)) { location.replace("../"); return; }
     showShell(); route();
   } catch (e) { showShell(); $("#main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
 }

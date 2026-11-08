@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Employee portal · Pulse</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../style.css?v=20261108m">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3C11 11 7 15.5 7 20a9 9 0 0 0 18 0c0-4.5-4-9-9-17z' fill='%233B82F6'/%3E%3C/svg%3E">
+</head>
+<body class="hub-page portal-page">
+<script src="../icons.js?v=20261108m"></script>
+<div id="setup" class="login" hidden>
+  <div class="login-card"><h1>Almost there</h1><p>This site isn't connected to its database yet.</p></div>
+</div>
+
+<!-- Employee sign-in: no marketing, just the way in -->
+<div id="login" class="login portal-login" hidden>
+  <div class="login-card">
+    <a class="bc-lockup" href="../" aria-label="BlueCredit Pulse"><img src="../logo.png" alt="BlueCredit"><span class="s">Pulse</span></a>
+    <h1>Employee portal</h1>
+    <p class="muted" id="pLead">Your checklist, policies, contracts, devices, hours and requests in one place.</p>
+    <div class="tabs auth-tabs" id="pTabs" role="tablist">
+      <button role="tab" data-mode="signin" aria-selected="true">Sign in</button>
+      <button role="tab" data-mode="join" aria-selected="false">First time here</button>
+    </div>
+    <form id="pSignin" class="auth-form" data-mode="signin">
+      <label>Work email<input name="email" type="email" autocomplete="email" required></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="btn primary" type="submit">Sign in</button>
+      <button class="link" type="button" id="pForgot">Forgot password?</button>
+    </form>
+    <form id="pJoin" class="auth-form" data-mode="join" hidden>
+      <p class="muted">Use the code from your welcome email. You only need it once.</p>
+      <label>Code<input name="code" autocomplete="off" placeholder="ACME-XXXX-XXXX" required></label>
+      <label>Your full name<input name="name" autocomplete="name" required></label>
+      <label>Work email<input name="email" type="email" autocomplete="email" required>
+        <small class="muted">Use the email your employer has for you, so your checklist and contract find you.</small></label>
+      <label>Choose a password<input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+      <button class="btn primary" type="submit">Create my login</button>
+    </form>
+    <form id="pFinish" class="auth-form" data-mode="finish" hidden>
+      <p class="muted">You're signed in. Enter the code from your welcome email to finish.</p>
+      <label>Code<input name="code" autocomplete="off" required></label>
+      <label>Your full name<input name="name" autocomplete="name" required></label>
+      <button class="btn primary" type="submit">Finish</button>
+      <button class="link" type="button" data-signout>Use a different account</button>
+    </form>
+    <form id="pReset" class="auth-form" data-mode="reset" hidden>
+      <p class="muted">Choose a new password.</p>
+      <label>New password<input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+      <button class="btn primary" type="submit">Save new password</button>
+    </form>
+    <p class="error" id="authError" role="alert"></p>
+    <p class="notice" id="authNotice" role="status"></p>
+    <p class="muted small portal-foot">Running the company? <a href="../">Sign in to Pulse</a> · <a href="mailto:support@bluecredits.org">Support</a></p>
+  </div>
+</div>
+
+<header class="topbar" id="topbar" hidden>
+  <a class="bc-lockup" href="./" aria-label="Employee portal"><img src="../logo.png" alt="BlueCredit"><span class="s">Pulse</span></a>
+  <span class="crumb">Employee portal</span>
+  <span class="spacer"></span>
+  <div class="apps-menu"><button class="apps-btn" id="appsBtn" type="button" title="Apps" aria-label="Apps" aria-haspopup="menu" aria-expanded="false" aria-controls="appsMenu"><svg class="ic"><use href="#i-grid"/></svg><span>Apps</span></button>
+    <div class="menu apps-pop" id="appsMenu" role="menu" hidden></div></div>
+  <div class="user-menu"><button class="user" id="userBtn" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="userMenu"><span id="whoami"></span><div class="avatar" id="avatar"></div><svg class="ic chev"><use href="#i-chevron-right"/></svg></button>
+    <div class="menu" id="userMenu" role="menu" hidden></div></div>
+</header>
+<div id="shell" class="hub" hidden>
+  <main id="main" class="hub-main" tabindex="-1"></main>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>window.PULSE_HUB = "../";</script>
+<script src="../config.js?v=20261108m"></script>
+<script src="../core.js?v=20261108m"></script>
+<script src="./portal.js?v=20261108m"></script>
+</body>
+</html>

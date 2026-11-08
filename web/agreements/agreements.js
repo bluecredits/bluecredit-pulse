@@ -8,7 +8,7 @@ const A = window.PULSE_AGREEMENTS;
 const AG = { tab: "open", q: "", form: null };
 const icon = (name, cls = "ic") => `<svg class="${cls}"><use href="#i-${name}"/></svg>`;
 const isAdmin = () => S.profile?.role === "admin";
-const isStaff = () => S.profile && S.profile.role !== "contractor";
+const isStaff = () => S.profile && isStaffRole(S.profile.role);
 const ref = (a) => "AGR-" + String(a.number || a.id).padStart(4, "0");
 const SITE = () => location.origin + location.pathname.replace(/agreements\/?(index\.html)?$/, "");
 const STATUS_PILL = { Draft: "Draft", "Out for signature": "Submitted", Active: "Active", Expired: "Dormant", Terminated: "Lost", "Closed out": "Won", Voided: "Dropped", Declined: "Lost" };

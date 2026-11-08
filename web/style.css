@@ -1121,3 +1121,51 @@ section.certify { padding: 18px 20px; } div.certify { margin-top: 14px; padding:
 .pos-form.is-ai .pos-ai-toggle{border-style:solid;border-color:#8b5cf6;background:linear-gradient(135deg,#f5f3ff,#ede9fe)}
 .pos-form.is-ai input,.pos-form.is-ai select,.pos-form.is-ai textarea{border-color:#c4b5fd}
 .pos-ai-toggle .org-ai{position:static}
+
+/* ================= Employee portal ================= */
+.portal-login .login-card { width: min(440px, 100%); }
+.portal-login .bc-lockup { margin-bottom: 6px; }
+.portal-login h1 { margin: 6px 0 2px; }
+.portal-login .auth-tabs { margin: 14px 0 6px; }
+.portal-login small.muted { display: block; font-weight: 400; margin-top: 2px; }
+.portal-foot { margin: 16px 0 0; text-align: center; }
+.portal-hero { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.portal-logo { max-height: 48px; max-width: 160px; object-fit: contain; }
+.portal-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+.portal-grid h2 { display: flex; align-items: baseline; gap: 8px; }
+.portal-grid h2 small { color: var(--muted); font-weight: 500; }
+.portal-grid h2 a.small { margin-left: auto; font: 500 13px var(--font-ui); }
+.todo-list { list-style: none; margin: 0; padding: 0; }
+.todo-list li { display: grid; grid-template-columns: 22px 1fr auto; gap: 12px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line-2); }
+.todo-list li:first-child { border-top: 0; padding-top: 4px; }
+.todo-list li > .ic { color: var(--blue); }
+.portal-clear { display: flex; gap: 14px; align-items: center; padding: 6px 0; }
+.portal-clear > .ic { width: 34px; height: 34px; color: #16a34a; background: var(--green-1); border-radius: 50%; padding: 7px; flex: none; }
+.portal-clear div { display: grid; gap: 2px; }
+.qa-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.qa { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); font-weight: 550; font-size: 14px; text-decoration: none; background: #fff; transition: border-color .15s, background .15s; }
+.qa:hover { border-color: var(--blue-1); background: var(--blue-0); color: var(--blue); }
+.qa .ic { color: var(--blue); flex: none; }
+.req-list { list-style: none; margin: 0; padding: 0; }
+.req-list li { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line-2); }
+.req-list li:first-child { border-top: 0; padding-top: 0; }
+.req-list a { flex: 1; min-width: 0; display: grid; gap: 1px; color: var(--ink); text-decoration: none; }
+.req-list a:hover b { color: var(--blue); }
+.portal-stat p { margin: 0 0 10px; } .portal-stat p b { font: 700 30px/1 var(--font-ui); color: var(--ink); margin-right: 4px; }
+.portal-person { display: grid; gap: 2px; margin: 0 0 12px; }
+@media (max-width: 860px) { .portal-grid { grid-template-columns: 1fr; } .todo-list li { grid-template-columns: 22px 1fr; } .todo-list li .btn { grid-column: 2; justify-self: start; } .portal-logo { display: none; } }
+
+/* ================= Team and access ================= */
+.invite-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-bottom: 12px; }
+.invite-card { border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: grid; gap: 8px; align-content: start; }
+.invite-card.employee { border-color: var(--blue-1); background: var(--blue-0); }
+.invite-card h3 { margin: 0; font-size: 15px; display: flex; align-items: center; gap: 6px; }
+.invite-card h3 .ic { width: 16px; height: 16px; color: var(--blue); }
+.invite-card p { margin: 0; }
+.invite-card .code-box b { font-size: 16px; padding: 8px 12px; }
+.invite-card .actions-row { margin: 0; }
+.tab-c { background: var(--line-2); color: var(--muted); border-radius: 999px; font-size: 11px; padding: 0 6px; line-height: 18px; margin-left: 2px; }
+.role-sel { width: auto; min-width: 128px; padding: 6px 10px; }
+.role-matrix td, .role-matrix th { text-align: center; } .role-matrix td:first-child, .role-matrix th:first-child { text-align: left; }
+.role-matrix .ic { color: #16a34a; width: 18px; height: 18px; }
+.portal-hero { margin-bottom: 22px; }

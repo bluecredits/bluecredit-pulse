@@ -79,7 +79,7 @@ Object.assign(db, {
 
 async function afterSignIn() {
   const who = await requireMember(); if (!who) return;
-  if (who.profile.role === "contractor") { location.replace(HUB); return; }  // business records are staff-only
+  if (!isStaffRole(who.profile.role)) { location.replace(HUB); return; }  // business records are staff-only
   await loadTeam();
   showShell();
   route();
@@ -778,35 +778,92 @@ async function Activity() {
   wireCommon($("#main"));
 }
 
-/* ================================================================ team */
+/* ================================================================ team and access */
+// Who can sign in and what each person sees. Three ways in: the company code (members: every app), the employee code
+// (the employee portal) and the contractor code (the portal, free). Admins change anyone's role here.
+const ROLE_SEES = [
+  ["Contacts, pipeline, funding and bids", ["admin", "member"]],
+  ["Projects", ["admin", "member"], "only projects they're on"],
+  ["Documents", ["admin", "member"], "sign their own contracts, read policies"],
+  ["People", ["admin", "member"], "own checklist, policies, devices, org chart"],
+  ["Timecards", ["admin", "member"], "their own hours"],
+  ["Tickets", ["admin", "member"], "their own requests"],
+  ["Settings, billing, team", ["admin"]],
+];
+const ricon = (n) => `<svg class="ic"><use href="#i-${n}"/></svg>`;
+function inviteText(kind, code) {
+  const root = new URL(HUB, location.href).href, ws = S.workspace?.name || "our company";
+  if (kind === "member") return `Hi,\n\nI've added you to ${ws} on Pulse.\n\n1. Open ${root}\n2. Choose "Join with code" and enter: ${code}\n3. Use your work email and choose a password.\n\nYou only need the code once.`;
+  const link = `${root}portal/?code=${encodeURIComponent(code)}`;
+  return `Hi,\n\nWelcome to ${ws}! We use Pulse for onboarding, company policies, ${kind === "employee" ? "contracts, timesheets and requests like time off or equipment" : "contracts, timesheets and requests"}.\n\nCreate your login here (the code is filled in for you):\n${link}\n\nUse your work email so your checklist and contract find you. After that, sign in any time at ${root}portal/\n\nIf the link doesn't work, open ${root}portal/, choose "First time here" and enter the code: ${code}`;
+}
 async function Team() {
   await loadTeam();
   const admin = S.profile.role === "admin";
-  let code = "";
-  if (admin) { try { code = await db.rpc("get_company_code"); } catch { code = ""; } }
+  const code = async (fn) => { try { return await db.rpc(fn); } catch { return null; } };
+  const [cm, ce, cc] = admin ? await Promise.all([code("get_company_code"), code("get_employee_code"), code("get_contractor_code")]) : [];
+  const T = Team, f = T.filter || "all", q = (T.q || "").toLowerCase();
+  const act = S.team.filter((p) => p.active), count = (r) => act.filter((p) => p.role === r).length;
+  const tabs = [["all", "Everyone", act.length], ["admin", "Admins", count("admin")], ["member", "Members", count("member")], ["employee", "Employees", count("employee")], ["contractor", "Contractors", count("contractor")], ["off", "Turned off", S.team.length - act.length]];
+  const rows = S.team.filter((p) => (f === "all" ? p.active : f === "off" ? !p.active : p.active && p.role === f) && (!q || `${p.display_name} ${p.email || ""}`.toLowerCase().includes(q)));
+  const card = (kind, title, blurb, c, extra = "") => `<div class="invite-card ${kind}"><h3>${title}</h3><p class="muted small">${blurb}</p>
+    ${c ? `<div class="code-box"><b data-code="${kind}">${esc(c)}</b><button class="btn small" data-copycode="${kind}">Copy code</button></div>
+      <div class="actions-row"><button class="btn small primary" data-invite="${kind}">${ricon("send")}Invite…</button><button class="btn small" data-newcode="${kind}">Change code</button></div>${extra}`
+      : `<p class="notice-bar alert small">${ricon("alert")}<span>Needs the database update <code>fix_20261108k_employees.sql</code>.</span></p>`}</div>`;
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>Team</h1><p class="muted">${admin ? "Share the company code with new teammates. They join from the sign-in page." : "Ask an admin for the company code to invite someone."}</p></div></div>
-    ${admin ? `<section class="panel"><h2>Company code</h2>
-      <div class="code-box"><b id="code">${esc(code)}</b><button class="btn" id="copyCode">Copy</button><button class="btn" id="newCode">Change code</button></div>
-      <p class="muted" style="margin-bottom:0">Changing the code only affects new sign-ups. People already on the team keep their access. Turn someone off below to remove them.</p></section>` : ""}
-    <section class="panel"><h2>Members <small>${S.team.filter((p) => p.active).length} active</small></h2>
+    <div class="page-head"><div><h1>Team and access</h1><p class="muted">${admin ? "Who can sign in, and what each person sees. Change anyone's role below; it takes effect the next time they open a page." : "Everyone on your team. Ask an admin to invite someone."}</p></div></div>
+    ${admin ? `<section class="panel"><h2>Invite people</h2><div class="invite-grid">
+      ${card("member", "Staff", "Runs the business: every app, including contacts, pipeline, funding and bids. Counts as a user.", cm)}
+      ${card("employee", `Employees ${ricon("home")}`, "The employee portal: their checklist, policies, contracts to sign, devices, hours, requests and projects. Counts as a user.", ce,
+        `<p class="small" style="margin:8px 0 0">Portal sign-in: <a href="${HUB}portal/" target="_blank" rel="noopener">${esc(new URL(HUB, location.href).href)}portal/</a></p>`)}
+      ${card("contractor", "Contractors and consultants", "The same portal, for people outside the payroll. Free.", cc)}
+    </div><p class="muted small" style="margin-bottom:0">Changing a code only affects new sign-ups. People already on the team keep their access. Add new hires in <a href="../people/#/people">People</a> with the same email first, so their checklist, contract and devices are waiting when they sign in.</p></section>` : ""}
+    <section class="panel"><h2>People</h2>
+      <div class="row" style="flex-wrap:wrap;gap:10px;margin-bottom:12px"><div class="tabs" role="tablist">${tabs.map(([k, l, n]) => `<button class="tab ${k === f ? "on" : ""}" data-tf="${k}" role="tab" aria-selected="${k === f}">${l} <span class="tab-c">${n}</span></button>`).join("")}</div>
+        <input type="search" id="teamQ" placeholder="Search name or email" value="${esc(T.q || "")}" style="max-width:240px;margin-left:auto"></div>
       <div class="table-wrap" style="border:0"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Joined</th>${admin ? "<th></th>" : ""}</tr></thead><tbody>
-      ${S.team.map((p) => `<tr style="cursor:default"><td style="font-weight:550">${esc(p.display_name)}${p.id === S.user.id ? ' <span class="muted">(you)</span>' : ""}</td><td>${esc(p.email || "")}</td>
-        <td>${p.role === "admin" ? `<span class="pill s-active">Admin</span>` : "Member"}</td><td>${p.active ? pill("Active") : pill("Dropped").replace("Dropped", "Turned off")}</td>
-        <td class="date">${short(p.created_at)}</td>
-        ${admin ? `<td>${p.id === S.user.id ? "" : `<button class="btn small" data-role="${p.id}" data-to="${p.role === "admin" ? "member" : "admin"}" data-active="${p.active}">${p.role === "admin" ? "Make member" : "Make admin"}</button>
-          <button class="btn small ${p.active ? "danger" : ""}" data-toggle="${p.id}" data-role-now="${p.role}" data-active="${p.active}">${p.active ? "Turn off" : "Turn on"}</button>`}</td>` : ""}</tr>`).join("")}
+      ${rows.map((p) => { const self = p.id === S.user.id;
+        return `<tr style="cursor:default"><td style="font-weight:550">${esc(p.display_name)}${self ? ' <span class="muted">(you)</span>' : ""}</td><td>${esc(p.email || "")}</td>
+        <td>${admin && !self ? `<select class="role-sel" data-uid="${p.id}" data-active="${p.active}" aria-label="Role for ${esc(p.display_name)}">${Object.keys(ROLES).map((r) => `<option value="${r}" ${r === p.role ? "selected" : ""}>${ROLES[r].name}</option>`).join("")}</select>`
+          : `<span class="pill ${p.role === "admin" ? "s-active" : ""}">${esc(roleName(p.role))}</span>`}</td>
+        <td>${p.active ? pill("Active") : pill("Dropped").replace("Dropped", "Turned off")}</td><td class="date">${short(p.created_at)}</td>
+        ${admin ? `<td>${self ? "" : `<button class="btn small ${p.active ? "danger" : ""}" data-toggle="${p.id}" data-role-now="${p.role}" data-active="${p.active}">${p.active ? "Turn off" : "Turn on"}</button>`}</td>` : ""}</tr>`; }).join("")
+        || `<tr><td colspan="6" class="empty">Nobody here.</td></tr>`}
+      </tbody></table></div></section>
+    <section class="panel"><h2>What each role sees</h2><div class="table-wrap" style="border:0"><table class="role-matrix"><thead><tr><th></th>${Object.keys(ROLES).map((r) => `<th>${ROLES[r].name}</th>`).join("")}</tr></thead><tbody>
+      ${ROLE_SEES.map(([area, full, part]) => `<tr><td>${esc(area)}</td>${Object.keys(ROLES).map((r) => `<td>${full.includes(r) ? ricon("check") : part ? `<small class="muted">${esc(part)}</small>` : `<span class="muted">—</span>`}</td>`).join("")}</tr>`).join("")}
+      <tr><td>Starts at</td>${Object.keys(ROLES).map((r) => `<td><small class="muted">${isStaffRole(r) ? "All apps page" : "Employee portal"}</small></td>`).join("")}</tr>
       </tbody></table></div></section>
     <section class="panel"><h2>Your name</h2><div class="add-action" style="grid-template-columns:1fr auto;max-width:420px;margin:0">
       <input id="myName" value="${esc(S.profile.display_name)}" aria-label="Your name"><button class="btn" id="saveName">Save</button></div>
       <p class="muted" style="margin-bottom:0">Your first name is what shows as owner and in the activity log.</p></section>`;
-  $("#copyCode")?.addEventListener("click", async () => { await navigator.clipboard.writeText($("#code").textContent); toast("Code copied"); });
-  $("#newCode")?.addEventListener("click", async () => {
-    if (!confirm("Make a new company code? The old one stops working for new sign-ups.")) return;
-    try { $("#code").textContent = await db.rpc("rotate_company_code", { p_code: null }); toast("New code ready"); } catch (e) { toast(e.message); }
-  });
-  $$("[data-role]").forEach((b) => b.addEventListener("click", async () => {
-    try { await db.rpc("set_member", { p_id: b.dataset.role, p_role: b.dataset.to, p_active: b.dataset.active === "true" }); Team(); } catch (e) { toast(e.message); }
+  const codes = { member: cm, employee: ce, contractor: cc }, kinds = { member: "team", employee: "employee", contractor: "contractor" };
+  $$("[data-tf]").forEach((b) => b.addEventListener("click", () => { T.filter = b.dataset.tf; Team(); }));
+  $("#teamQ").addEventListener("change", (e) => { T.q = e.target.value; Team(); });
+  $$("[data-copycode]").forEach((b) => b.addEventListener("click", async () => { await navigator.clipboard.writeText(codes[b.dataset.copycode]); toast("Code copied"); }));
+  $$("[data-newcode]").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm("Make a new code? The old one stops working for new sign-ups.")) return;
+    try { await db.rpc("rotate_company_code", { p_code: null, p_kind: kinds[b.dataset.newcode] }); toast("New code ready"); Team(); } catch (e) { toast(e.message); }
+  }));
+  $$("[data-invite]").forEach((b) => b.addEventListener("click", () => {
+    const k = b.dataset.invite, body = inviteText(k, codes[k]), subj = `Your ${S.workspace?.name || ""} ${k === "member" ? "Pulse" : "employee portal"} login`.replace(/\s+/g, " ");
+    $("#drawerTitle").textContent = { member: "Invite staff", employee: "Invite employees", contractor: "Invite contractors and consultants" }[k];
+    $("#drawerBody").innerHTML = `<p class="muted" style="margin-top:0">Send this from your own email. ${k === "member" ? "They'll see every app." : "They'll land in the employee portal and see only their own things."}</p>
+      <label>To (optional)<input id="invTo" type="email" placeholder="name@company.com"></label>
+      <label style="margin-top:10px">Message<textarea id="invBody" rows="14">${esc(body)}</textarea></label>
+      <div class="actions-row" style="margin-top:10px"><button class="btn" id="copyMsg">Copy message</button><a class="btn primary" id="mailIt">${ricon("send")}Open in email</a></div>`;
+    openDrawer();
+    const mail = () => ($("#mailIt").href = `mailto:${encodeURIComponent($("#invTo").value.trim())}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent($("#invBody").value)}`);
+    mail(); $("#invTo").addEventListener("input", mail); $("#invBody").addEventListener("input", mail);
+    $("#copyMsg").addEventListener("click", async () => { await navigator.clipboard.writeText($("#invBody").value); toast("Message copied"); });
+  }));
+  $$(".role-sel").forEach((sel) => sel.addEventListener("change", async () => {
+    const p = S.team.find((x) => x.id === sel.dataset.uid), to = sel.value;
+    const warn = to === "admin" ? `Make ${p.display_name} an admin? Admins can change settings, billing and everyone's access.`
+      : isStaffRole(p.role) && !isStaffRole(to) ? `Move ${p.display_name} to the ${ROLES[to].name.toLowerCase()} portal? They'll stop seeing contacts, pipeline, funding and bids.` : "";
+    if (warn && !confirm(warn)) { sel.value = p.role; return; }
+    try { await db.rpc("set_member", { p_id: p.id, p_role: to, p_active: sel.dataset.active === "true" }); toast(`${p.display_name} is now ${/^[AEIOU]/.test(ROLES[to].name) ? "an" : "a"} ${ROLES[to].name.toLowerCase()}`); Team(); }
+    catch (e) { sel.value = p.role; toast(/role|check/i.test(e.message) && to === "employee" ? "The Employee role needs the database update fix_20261108k_employees.sql." : e.message); }
   }));
   $$("[data-toggle]").forEach((b) => b.addEventListener("click", async () => {
     const on = b.dataset.active === "true";

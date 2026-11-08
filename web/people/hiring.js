@@ -43,7 +43,7 @@ const HF = { opening: "", q: "", closed: false };
 const daysIn = (ts) => Math.max(0, Math.floor((Date.now() - Date.parse(ts)) / 864e5));
 const staleAt = (stage) => (stage === "Applied" ? 3 : 7);
 const applyUrl = (o) => location.origin + location.pathname.replace(/people\/?(index\.html)?$/, "") + "apply/?t=" + o.apply_token;
-const staffList = () => S.team.filter((p) => p.active && p.role !== "contractor");
+const staffList = () => S.team.filter((p) => p.active && isStaffRole(p.role));
 const fill = (t, c, o) => t.replace(/\{(\w+)\}/g, (m, k) => ({ first: (c.name || "").split(" ")[0], name: c.name, role: o?.title || "the", company: S.workspace?.name || "", me: firstName(),
   scheduler: location.origin + location.pathname.replace(/people\/?(index\.html)?$/, "") + "scheduler/" }[k] ?? m));
 const avg = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);

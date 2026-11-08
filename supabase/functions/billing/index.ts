@@ -42,7 +42,7 @@ async function stripe(d: Deps, path: string, params?: Record<string, string>, me
   return out;
 }
 async function seats(d: Deps, ws: string) {
-  const rows = await rest(d, `profiles?workspace_id=eq.${ws}&active=eq.true&role=in.(admin,member)&select=id`);
+  const rows = await rest(d, `profiles?workspace_id=eq.${ws}&active=eq.true&role=in.(admin,member,employee)&select=id`);
   return Math.max(1, rows.length);
 }
 

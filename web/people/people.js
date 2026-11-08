@@ -7,7 +7,7 @@
 const OB = { tab: "onboarding", q: "" };
 const icon = (name, cls = "ic") => `<svg class="${cls}"><use href="#i-${name}"/></svg>`;
 const isAdmin = () => S.profile?.role === "admin";
-const isStaff = () => S.profile && S.profile.role !== "contractor";
+const isStaff = () => S.profile && isStaffRole(S.profile.role);
 const nameOf = (id) => S.team.find((p) => p.id === id)?.display_name || "";
 const KINDS = ["Contractor", "Consultant", "Employee", "Intern", "Advisor"];
 const UNITS = { hour: "/hour", day: "/day", month: "/month", year: "/year", fixed: " fixed" };
@@ -64,7 +64,7 @@ async function People() {
 }
 
 async function editPerson(o) {
-  const owners = S.team.filter((p) => p.active && p.role !== "contractor");
+  const owners = S.team.filter((p) => p.active && isStaffRole(p.role));
   const P = await orgPositions(), curPos = o && P ? P.find((x) => x.onboarding_id === o.id || (o.user_id && x.user_id === o.user_id)) : null;
   $("#drawerTitle").textContent = o ? `Edit ${o.name}` : "Add person";
   $("#drawerBody").innerHTML = `<form id="obForm" class="form-grid">
@@ -182,25 +182,34 @@ async function openPerson(id) {
 }
 
 // What to send someone so they can join: the site, the contractor code, and what they'll see
-async function inviteBox(o) {
+// Invite someone being onboarded: employees and interns get the employee code, everyone else the contractor code.
+// Either way they sign in to the employee portal; the link fills the code in for them.
+async function inviteBox(o, kind) {
+  kind = kind || (o && ["Employee", "Intern"].includes(o.kind) ? "employee" : "contractor");
   let code = "";
-  try { code = isAdmin() ? await db.rpc("get_contractor_code") : ""; } catch { code = ""; }
-  const site = location.origin + location.pathname.replace(/people\/?(index\.html)?$/, "");
-  const body = `Hi ${o ? o.name.split(" ")[0] : "there"},\n\nWelcome to ${S.workspace.name}! We use Pulse for timesheets, requests and onboarding.\n\n1. Open ${site}\n2. Choose "Join with code" and enter: ${code || "(ask an admin for the contractor code)"}\n3. Use ${o?.email ? "this email address (" + o.email + ")" : "your work email"} so your onboarding checklist shows up.\n\nYou'll see your checklist, the projects you log time to, and can raise requests for equipment or access.\n\nThanks,\n${firstName()}`;
-  $("#drawerTitle").textContent = o ? `Invite ${o.name}` : "Invite contractors and consultants";
+  try { code = isAdmin() ? await db.rpc(kind === "employee" ? "get_employee_code" : "get_contractor_code") : ""; } catch { code = ""; }
+  const root = new URL(HUB, location.href).href, link = code ? `${root}portal/?code=${encodeURIComponent(code)}` : `${root}portal/`;
+  const body = `Hi ${o ? o.name.split(" ")[0] : "there"},\n\nWelcome to ${S.workspace.name}! We use Pulse for onboarding, company policies, contracts, timesheets and requests.\n\nCreate your login here${code ? " (the code is filled in for you)" : ""}:\n${link}\n\nUse ${o?.email ? "this email address (" + o.email + ")" : "your work email"} so your checklist and contract find you. After that, sign in any time at ${root}portal/\n\n${code ? `If the link doesn't work, open ${root}portal/, choose "First time here" and enter the code: ${code}\n\n` : ""}Thanks,\n${firstName()}`;
+  const label = kind === "employee" ? "employee" : "contractor";
+  $("#drawerTitle").textContent = o ? `Invite ${o.name}` : kind === "employee" ? "Invite employees" : "Invite contractors and consultants";
   $("#drawerBody").innerHTML = `
-    <p class="muted">Contractors and consultants join with the <b>contractor code</b>. They only see Timecards (their own projects), their onboarding checklist, Tickets and the Scheduler: never your contacts, pipeline or funding.</p>
-    ${isAdmin() ? `<div class="code-box"><b id="ccode">${esc(code)}</b><button class="btn" id="copyCode">Copy code</button><button class="btn" id="newCcode">Change</button></div>` : `<p>Ask an admin for the contractor code.</p>`}
-    <label style="margin-top:14px">Message<textarea id="invBody" rows="12">${esc(body)}</textarea></label>
+    <div class="tabs" role="tablist" style="margin-bottom:12px"><button role="tab" data-ik="employee" aria-selected="${kind === "employee"}">Employee</button><button role="tab" data-ik="contractor" aria-selected="${kind !== "employee"}">Contractor or consultant</button></div>
+    <p class="muted">${kind === "employee" ? "Employees" : "Contractors and consultants (free)"} sign in to the <b>employee portal</b>: their onboarding checklist, policies, contracts to sign, devices, hours and requests. Never your contacts, pipeline, funding or bids.</p>
+    ${isAdmin() ? (code ? `<div class="code-box"><b id="ccode">${esc(code)}</b><button class="btn" id="copyCode">Copy code</button><button class="btn" id="newCcode">Change</button></div>`
+      : `<p class="notice-bar alert small">The ${label} code needs the database update <code>fix_20261108k_employees.sql</code>.</p>`) : `<p>Ask an admin for the ${label} code.</p>`}
+    <label style="margin-top:14px">Message<textarea id="invBody" rows="13">${esc(body)}</textarea></label>
     <div class="actions-row" style="margin-top:10px"><button class="btn" id="copyMsg">Copy message</button>
-      <a class="btn primary" href="mailto:${encodeURIComponent(o?.email || "")}?subject=${encodeURIComponent("Join " + S.workspace.name + " on Pulse")}&body=${encodeURIComponent(body)}" id="mailIt">${icon("send")}Open in email</a></div>`;
+      <a class="btn primary" href="#" id="mailIt">${icon("send")}Open in email</a></div>`;
   openDrawer();
+  const subj = `Your ${S.workspace.name} employee portal login`;
+  const mail = () => ($("#mailIt").href = `mailto:${encodeURIComponent(o?.email || "")}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent($("#invBody").value)}`);
+  mail(); $("#invBody").addEventListener("input", mail);
+  $$("[data-ik]").forEach((b) => b.addEventListener("click", () => inviteBox(o, b.dataset.ik)));
   $("#copyCode")?.addEventListener("click", async () => { await navigator.clipboard.writeText(code); toast("Code copied"); });
   $("#copyMsg").addEventListener("click", async () => { await navigator.clipboard.writeText($("#invBody").value); toast("Message copied"); });
-  $("#invBody").addEventListener("input", () => { $("#mailIt").href = `mailto:${encodeURIComponent(o?.email || "")}?subject=${encodeURIComponent("Join " + S.workspace.name + " on Pulse")}&body=${encodeURIComponent($("#invBody").value)}`; });
   $("#newCcode")?.addEventListener("click", async () => {
-    if (!confirm("Make a new contractor code? The old one stops working for new sign-ups.")) return;
-    try { await db.rpc("rotate_company_code", { p_code: null, p_kind: "contractor" }); inviteBox(o); } catch (e) { toast(e.message); }
+    if (!confirm(`Make a new ${label} code? The old one stops working for new sign-ups.`)) return;
+    try { await db.rpc("rotate_company_code", { p_code: null, p_kind: kind }); inviteBox(o, kind); } catch (e) { toast(e.message); }
   });
 }
 

@@ -6,7 +6,7 @@
 const PJ = { tab: "overview", filter: "active" };
 const icon = (name, cls = "ic") => `<svg class="${cls}"><use href="#i-${name}"/></svg>`;
 const isAdmin = () => S.profile?.role === "admin";
-const isStaff = () => S.profile && S.profile.role !== "contractor";
+const isStaff = () => S.profile && isStaffRole(S.profile.role);
 const nameOf = (id) => S.team.find((p) => p.id === id)?.display_name || "";
 const firstOf = (id) => nameOf(id).split(" ")[0];
 const usd = (n) => n == null || n === "" ? "—" : "$" + Math.round(+n).toLocaleString("en-US");
@@ -47,7 +47,7 @@ async function Portfolio() {
 async function New() {
   if (!isStaff()) return Portfolio();
   const won = must(await sb.from("opportunities").select("id, title, agency, value, stage").eq("stage", "Won").order("updated_at", { ascending: false }).limit(200));
-  const staff = S.team.filter((p) => p.active && p.role !== "contractor");
+  const staff = S.team.filter((p) => p.active && isStaffRole(p.role));
   $("#main").innerHTML = `<div class="page-head"><div><h1>New project</h1><p class="muted">Start from a won opportunity, or from scratch.</p></div></div>
     <section class="panel"><form id="npForm" class="form-grid">
       <label style="grid-column:1/-1">From a won opportunity<select name="opp"><option value="">None, start from scratch</option>${won.map((o) => `<option value="${o.id}">${esc(o.title)}${o.agency ? " · " + esc(o.agency) : ""}</option>`).join("")}</select></label>
@@ -220,7 +220,7 @@ async function TaskList(p) {
 }
 async function editTask(p, t, ms) {
   const people = must(await sb.from("project_people").select("user_id").eq("project_id", p.id)).map((x) => x.user_id);
-  const team = S.team.filter((x) => x.active && (x.role !== "contractor" || people.includes(x.id)));
+  const team = S.team.filter((x) => x.active && (isStaffRole(x.role) || people.includes(x.id)));
   const ro = t && !isStaff();   // contractors can only move their own task between columns
   $("#drawerTitle").textContent = t ? "Task" : "New task";
   $("#drawerBody").innerHTML = `<form id="tkForm" class="form-grid"><label style="grid-column:1/-1">Title<input name="title" required value="${esc(t?.title || "")}" ${ro ? "readonly" : ""}></label>
@@ -251,7 +251,7 @@ async function Team(p) {
   const ids = [...new Set([...pp.map((x) => x.user_id), ...loggers, p.manager_id].filter(Boolean))];
   $("#ptab").innerHTML = `<section class="panel" style="padding:0"><div class="table-wrap"><table><thead><tr><th>Person</th><th>Role</th><th class="num">Hours</th>${isStaff() ? '<th class="num">Rate</th><th>Onboarding</th>' : ""}</tr></thead><tbody>
     ${ids.map((uid) => { const m = S.team.find((x) => x.id === uid), link = pp.find((x) => x.user_id === uid), o = onb.find((x) => x.user_id === uid);
-      return `<tr style="cursor:default"><td><b>${esc(m?.display_name || "Former member")}</b>${m?.role === "contractor" ? ' <span class="pill s-high">Contractor</span>' : ""}</td>
+      return `<tr style="cursor:default"><td><b>${esc(m?.display_name || "Former member")}</b>${m && !isStaffRole(m.role) ? ` <span class="pill s-high">${roleName(m.role)}</span>` : ""}</td>
         <td>${uid === p.manager_id ? "Project manager" : link ? "Assigned" : "Logged time"}</td><td class="num">${hours(uid).toLocaleString()}</td>
         ${isStaff() ? `<td class="num">${link?.rate ? usd(link.rate) : p.rate ? usd(p.rate) : "—"}</td><td>${o ? `<a href="../people/#/people">${esc(o.status)}</a>` : ""}</td>` : ""}</tr>`; }).join("") || `<tr><td colspan="5" class="empty">Nobody yet.</td></tr>`}</tbody></table></div></section>
     ${isAdmin() ? `<p class="muted small">Add or remove people, set their rates and who can log time in <a href="../timecards/#/projects">Timecards → Projects</a>. Bring on a new contractor in <a href="../people/#/people">People</a>.</p>` : ""}`;
@@ -316,7 +316,7 @@ async function Risks(p) {
   $$("[data-risk]").forEach((r) => r.addEventListener("click", () => editRisk(p, rows.find((x) => x.id === +r.dataset.risk))));
 }
 function editRisk(p, x) {
-  const staff = S.team.filter((m) => m.active && m.role !== "contractor");
+  const staff = S.team.filter((m) => m.active && isStaffRole(m.role));
   $("#drawerTitle").textContent = x ? `${x.kind}` : "Add risk or issue";
   $("#drawerBody").innerHTML = `<form id="rForm" class="form-grid"><label>Type<select name="kind">${["Risk", "Issue", "Decision", "Change"].map((k) => `<option ${k === x?.kind ? "selected" : ""}>${k}</option>`).join("")}</select></label>
     <label>Impact<select name="impact">${["Low", "Medium", "High"].map((k) => `<option ${k === (x?.impact || "Medium") ? "selected" : ""}>${k}</option>`).join("")}</select></label>
@@ -382,7 +382,7 @@ function printUpdate(p, u, r) {
 
 /* ---------------- edit and close out */
 function editProject(p) {
-  const staff = S.team.filter((x) => x.active && x.role !== "contractor");
+  const staff = S.team.filter((x) => x.active && isStaffRole(x.role));
   $("#drawerTitle").textContent = "Edit project";
   $("#drawerBody").innerHTML = `<form id="epForm" class="form-grid"><label style="grid-column:1/-1">Name<input name="name" required value="${esc(p.name)}"></label>
     <label>Client<input name="client" value="${esc(p.client || "")}"></label><label>Code<input name="code" value="${esc(p.code || "")}"></label>

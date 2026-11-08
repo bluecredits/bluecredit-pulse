@@ -39,6 +39,7 @@ function applyFilters(query, entity, params) {
       query = query.or(`${f}.is.null,${f}.not.in.${pgList(String(v).split("|"))}`);
     } else if (k.endsWith("__gte") && k.slice(0, -5) in types) query = query.gte(k.slice(0, -5), v);
     else if (k.endsWith("__lte") && k.slice(0, -5) in types) query = query.lte(k.slice(0, -5), v);
+    else if (k === "__active" && v in types && "deadline" in types) query = query.or(`${v}.eq.Submitted,deadline.is.null,deadline.gte.${today()}`);
   }
   const q = (params.q || "").trim();
   if (q) {
@@ -164,7 +165,7 @@ async function Dashboard() {
       <div class="actions-row"><a class="btn primary" href="#/reviews">Start today's review</a></div></div>
     <div class="kpis">
       ${kpiCard("#/opportunities", "", "Active opportunities", k.active_opps, "Identified → submitted", "briefcase")}
-      ${kpiCard("#/funding", "", "Active funding", k.active_funding, "Applications in progress", "banknotes")}
+      ${kpiCard("#/funding", "", "Active funding", k.active_funding, k.missed_funding ? `In progress · ${k.missed_funding} missed their deadline` : "Applications in progress", "banknotes")}
       ${kpiCard("#/opportunities", "stage=Submitted", "Awaiting decision", k.submitted, "Submitted, no outcome yet", "send")}
       ${kpiCard("#/opportunities", "stage=Won", "Won", k.won, "Opportunities and funding", "trophy")}
       ${kpiCard("#/actions", "", "Open actions", k.open_actions, k.overdue_actions ? `${k.overdue_actions} overdue` : "None overdue", k.overdue_actions ? "alert" : "check", k.overdue_actions > 0)}
@@ -249,8 +250,8 @@ function wireCommon(root, onChange) {
 /* ================================================================ list pages */
 const LIST_STATE = {};
 const PRESETS = {
-  opportunities: [["Active (identified → submitted)", "stage=Identified|Qualifying|Pursuing|Submitted"], ["Due in 30 days", "__due30"], ["Past due, no outcome", "__stale"], ["All", ""]],
-  funding: [["Active applications", "status=Identified|Pursuing|Submitted"], ["All applications (not catalog)", "status__not=Catalog"], ["Catalog — open deadlines", "__catalogopen"], ["Catalog — everything", "status=Catalog"], ["All", ""]],
+  opportunities: [["Active (deadline not passed, or submitted)", "__oppactive"], ["Due in 30 days", "__due30"], ["Past due, no outcome", "__stale"], ["All", ""]],
+  funding: [["Active applications (deadline not passed, or submitted)", "__fundactive"], ["Missed deadline, not submitted", "__fundmissed"], ["All applications (not catalog)", "status__not=Catalog"], ["Catalog — open deadlines", "__catalogopen"], ["Catalog — everything", "status=Catalog"], ["All", ""]],
   contacts: [["Working contacts", "__working"], ["Follow-ups due", "__followups"], ["All", ""]],
   actions: [["Open", "status=Open"], ["Done", "status=Done"], ["All", ""]],
   resources: [["All", ""]],
@@ -260,6 +261,10 @@ function presetParams(key) {
   if (key === "__due30") return { stage: "Identified|Qualifying|Pursuing|Submitted", deadline__gte: t, deadline__lte: addDays(t, 30) };
   if (key === "__stale") return { stage: "Identified|Qualifying|Pursuing", deadline__lte: addDays(t, -1) };
   if (key === "__catalogopen") return { status: "Catalog", deadline__gte: t };
+  // active = submitted (waiting on an outcome), or still before its deadline (or no deadline)
+  if (key === "__fundactive" || key === "status=Identified|Pursuing|Submitted") return { status: "Identified|Pursuing|Submitted", __active: "status" };
+  if (key === "__oppactive" || key === "stage=Identified|Qualifying|Pursuing|Submitted") return { stage: "Identified|Qualifying|Pursuing|Submitted", __active: "stage" };
+  if (key === "__fundmissed") return { status: "Identified|Pursuing", deadline__lte: addDays(t, -1) };
   if (key === "__working") return S.ws?.working_exclude?.length ? { category__not: S.ws.working_exclude.join("|") } : {};
   if (key === "__followups") return { next_step_date__lte: t, status__not: "Do Not Contact|Dormant" };
   return Object.fromEntries(new URLSearchParams(key));
@@ -271,7 +276,9 @@ async function ListPage(entity) {
   const pre = sessionStorage.getItem("preset:" + entity);
   if (pre !== null) {
     sessionStorage.removeItem("preset:" + entity); st.offset = 0; st.q = "";
-    if (PRESETS[entity].some(([, v]) => v === pre)) { st.preset = pre; st.extra = {}; }
+    const map = { "status=Identified|Pursuing|Submitted": "__fundactive", "stage=Identified|Qualifying|Pursuing|Submitted": "__oppactive" };
+    const want = map[pre] || pre;
+    if (PRESETS[entity].some(([, v]) => v === want)) { st.preset = want; st.extra = {}; }
     else { st.preset = ""; st.extra = presetParams(pre); }
   }
   const views = $$(`#nav a[data-r="${entity}"][data-preset]`);  // sidebar links that are views of this list

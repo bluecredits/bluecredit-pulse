@@ -628,8 +628,11 @@ begin
   if not is_member() then raise exception 'Not a member'; end if;
   return jsonb_build_object(
     'kpis', jsonb_build_object(
-      'active_opps', (select count(*) from opportunities where stage = any (ao)),
-      'active_funding', (select count(*) from funding where status = any (af)),
+      -- active = still in play: submitted (waiting on an outcome), or the deadline hasn't passed (or there isn't one)
+      'active_opps', (select count(*) from opportunities where stage = any (ao) and (stage = 'Submitted' or deadline is null or deadline >= t)),
+      'active_funding', (select count(*) from funding where status = any (af) and (status = 'Submitted' or deadline is null or deadline >= t)),
+      'missed_funding', (select count(*) from funding where status in ('Identified', 'Pursuing') and deadline < t),
+      'missed_opps', (select count(*) from opportunities where stage in ('Identified', 'Qualifying', 'Pursuing') and deadline < t),
       'submitted', (select count(*) from opportunities where stage = 'Submitted') + (select count(*) from funding where status = 'Submitted'),
       'won', (select count(*) from opportunities where stage = 'Won') + (select count(*) from funding where status = 'Won'),
       'open_actions', (select count(*) from actions where status = 'Open'),
@@ -749,12 +752,12 @@ begin
         'funding_submitted_by_date', (select count(*) from funding where submitted_date between since and t)),
       'by_owner', coalesce((select jsonb_agg(x order by x.active_opps + x.active_funding desc) from (
           select coalesce(nullif(owner, ''), 'Unassigned') owner,
-                 count(*) filter (where src = 'o' and st = any (ao)) active_opps,
-                 count(*) filter (where src = 'f' and st = any (af)) active_funding,
+                 count(*) filter (where src = 'o' and st = any (ao) and (st = 'Submitted' or dl is null or dl >= t)) active_opps,
+                 count(*) filter (where src = 'f' and st = any (af) and (st = 'Submitted' or dl is null or dl >= t)) active_funding,
                  count(*) filter (where st = 'Submitted') submitted,
                  count(*) filter (where st = 'Won') won
-            from (select owner, stage st, 'o' src from opportunities
-                  union all select owner, status, 'f' from funding where coalesce(status, '') <> 'Catalog') u
+            from (select owner, stage st, 'o' src, deadline dl from opportunities
+                  union all select owner, status, 'f', deadline from funding where coalesce(status, '') <> 'Catalog') u
            group by 1) x), '[]'));
   end if;
 

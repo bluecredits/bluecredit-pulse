@@ -90,7 +90,7 @@ async function loadStats() {
     $("#stats-review").innerHTML = [stat(d.due_soon.length, `deadline${d.due_soon.length === 1 ? "" : "s"} in 14 days`, "./review/#/dashboard", false),
       stat(k.open_actions, "open actions", "./review/#/actions", k.overdue_actions), stat(k.active_opps, "active opportunities", "./review/#/opportunities")].join("");
     const fundDue = d.due_soon.filter((r) => r.entity === "funding").length;
-    $("#stats-funding").innerHTML = [stat(k.active_funding, "active applications", "./funding/#/funding", false, "status=Identified|Pursuing|Submitted"),
+    $("#stats-funding").innerHTML = [stat(k.active_funding, "active applications", "./funding/#/funding", false, "__fundactive"),
       stat(fundDue, `funding deadline${fundDue === 1 ? "" : "s"} in 14 days`, "./funding/#/funding", true)].join("");
     $("#stats-contacts").innerHTML = stat(k.followups_due, "follow-ups due", "./contacts/#/contacts", true, "__followups") + ($("#stats-contacts").dataset.total || "");
   }).catch(() => ["review", "funding", "contacts"].forEach((k) => ($("#stats-" + k).innerHTML = "")));

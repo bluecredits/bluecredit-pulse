@@ -1027,22 +1027,22 @@ begin
   if t.status not in ('Pending approval', 'Open') then raise exception 'This request can''t be edited any more. Add a comment instead.'; end if;
   if p ? 'title' and nullif(trim(p ->> 'title'), '') is distinct from t.title then
     if nullif(trim(p ->> 'title'), '') is null then raise exception 'Add a short title.'; end if;
-    changed := changed || 'title'; t.title := trim(p ->> 'title'); end if;
+    changed := array_append(changed, 'title'::text); t.title := trim(p ->> 'title'); end if;
   if p ? 'description' and nullif(trim(p ->> 'description'), '') is distinct from t.description then
-    changed := changed || 'details'; t.description := nullif(trim(p ->> 'description'), ''); end if;
+    changed := array_append(changed, 'details'::text); t.description := nullif(trim(p ->> 'description'), ''); end if;
   if p ? 'priority' and coalesce(nullif(p ->> 'priority', ''), 'Normal') is distinct from t.priority then
-    changed := changed || 'priority'; t.priority := coalesce(nullif(p ->> 'priority', ''), 'Normal'); end if;
+    changed := array_append(changed, 'priority'::text); t.priority := coalesce(nullif(p ->> 'priority', ''), 'Normal'); end if;
   if p ? 'amount' and nullif(regexp_replace(coalesce(p ->> 'amount', ''), '[$,\s]', '', 'g'), '')::numeric is distinct from t.amount then
-    changed := changed || 'amount'; t.amount := nullif(regexp_replace(coalesce(p ->> 'amount', ''), '[$,\s]', '', 'g'), '')::numeric; end if;
+    changed := array_append(changed, 'amount'::text); t.amount := nullif(regexp_replace(coalesce(p ->> 'amount', ''), '[$,\s]', '', 'g'), '')::numeric; end if;
   if p ? 'start_date' and nullif(p ->> 'start_date', '')::date is distinct from t.start_date then
-    changed := changed || 'dates'; t.start_date := nullif(p ->> 'start_date', '')::date; end if;
+    changed := array_append(changed, 'dates'::text); t.start_date := nullif(p ->> 'start_date', '')::date; end if;
   if p ? 'end_date' and nullif(p ->> 'end_date', '')::date is distinct from t.end_date then
-    if not 'dates' = any (changed) then changed := changed || 'dates'; end if; t.end_date := nullif(p ->> 'end_date', '')::date; end if;
+    if not 'dates' = any (changed) then changed := array_append(changed, 'dates'::text); end if; t.end_date := nullif(p ->> 'end_date', '')::date; end if;
   if t.end_date is not null and t.start_date is not null and t.end_date < t.start_date then raise exception 'The end date is before the start date.'; end if;
   if p ? 'reference' and nullif(trim(p ->> 'reference'), '') is distinct from t.reference then
-    changed := changed || 'reference'; t.reference := nullif(trim(p ->> 'reference'), ''); end if;
+    changed := array_append(changed, 'reference'::text); t.reference := nullif(trim(p ->> 'reference'), ''); end if;
   if p ? 'needed_by' and nullif(p ->> 'needed_by', '')::date is distinct from t.needed_by then
-    changed := changed || 'needed-by date'; t.needed_by := nullif(p ->> 'needed_by', '')::date; end if;
+    changed := array_append(changed, 'needed-by date'::text); t.needed_by := nullif(p ->> 'needed_by', '')::date; end if;
   if p ? 'approver_id' and t.status = 'Pending approval' and nullif(p ->> 'approver_id', '')::uuid is distinct from t.approver_id then
     v_appr := desk_pick_approver(t.requester_id, nullif(p ->> 'approver_id', '')::uuid);
     if v_appr is distinct from t.approver_id then

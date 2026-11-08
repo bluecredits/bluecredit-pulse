@@ -4232,6 +4232,7 @@ create table if not exists public.gh_people (
   login text not null, user_id uuid references public.profiles (id) on delete cascade,
   primary key (workspace_id, login)
 );
+alter table public.gh_people add column if not exists label text;   -- who it is when they have no Pulse login (e.g. a shared dev account)
 -- the Pulse for GitHub app: one row, set once by the Pulse operator after registering the app (see deploy/GITHUB_APP.md)
 create table if not exists public.gh_app (
   id int primary key default 1 check (id = 1), slug text not null, relay_url text not null, secret_id uuid, updated_at timestamptz default now()
@@ -4253,6 +4254,7 @@ alter table public.project_milestones add column if not exists gh_link_id bigint
 alter table public.project_milestones add column if not exists gh_repo text;
 alter table public.project_milestones add column if not exists gh_number int;
 alter table public.project_milestones add column if not exists gh_url text;
+alter table public.project_milestones add column if not exists gh_closed date;   -- closed on GitHub
 create unique index if not exists ux_ms_gh on public.project_milestones (project_id, lower(gh_repo), gh_number) where gh_number is not null;
 
 alter table public.gh_config enable row level security;
@@ -4384,11 +4386,13 @@ begin
   for m in select * from jsonb_array_elements(case when jsonb_typeof(p_body) = 'array' then p_body else '[]' end) loop
     if l.milestone is not null and coalesce(m ->> 'title', '') not ilike '%' || l.milestone || '%' then continue; end if;
     insert into project_milestones (workspace_id, project_id, name, due_date, done_at, notes, sort, gh_link_id, gh_repo, gh_number, gh_url)
-    values (l.workspace_id, l.project_id, left(m ->> 'title', 200) || case when many then ' · ' || split_part(l.repo, '/', 2) else '' end,
+    values (l.workspace_id, l.project_id, left(btrim(regexp_replace(m ->> 'title', '\s+', ' ', 'g')), 200) || case when many then ' · ' || split_part(l.repo, '/', 2) else '' end,
             (m ->> 'due_on')::timestamptz::date, case when m ->> 'state' = 'closed' then coalesce((m ->> 'closed_at')::timestamptz::date, current_date) end,
             left(nullif(m ->> 'description', ''), 2000), (m ->> 'number')::int, l.id, l.repo, (m ->> 'number')::int, m ->> 'html_url')
     on conflict (project_id, lower(gh_repo), gh_number) where gh_number is not null do update
-      set name = excluded.name, due_date = excluded.due_date, done_at = excluded.done_at, notes = excluded.notes, gh_url = excluded.gh_url;
+      set name = excluded.name, due_date = excluded.due_date, notes = excluded.notes, gh_url = excluded.gh_url;
+    update project_milestones set gh_closed = case when m ->> 'state' = 'closed' then coalesce((m ->> 'closed_at')::timestamptz::date, current_date) end
+     where project_id = l.project_id and lower(gh_repo) = lower(l.repo) and gh_number = (m ->> 'number')::int;
     n := n + 1;
   end loop;
   return n;
@@ -4412,7 +4416,8 @@ begin
     who := coalesce(i #>> '{assignee,login}', i #>> '{assignees,0,login}');
     st := case when i ->> 'state' = 'closed' then 'Done'
                when exists (select 1 from unnest(labs) x where x ~ '^(status[: /-]*)?blocked$') then 'Blocked'
-               when who is not null or exists (select 1 from unnest(labs) x where x ~ '^(status[: /-]*)?(in[ -]?progress|doing|wip|in[ -]?review|review)$') then 'Doing'
+               when exists (select 1 from unnest(labs) x where x ~ '^(status[: /-]*)?(in[ -]?progress|doing|wip|in[ -]?review|review)$')
+                 or (who is not null and (i ->> 'updated_at')::timestamptz > now() - interval '14 days') then 'Doing'
                else 'To do' end;
     pri := case when exists (select 1 from unnest(labs) x where x ~ '(urgent|critical|blocker|\mp0\M|priority[: /-]*(urgent|critical))') then 'Urgent'
                 when exists (select 1 from unnest(labs) x where x ~ '(\mhigh\M|\mp1\M)') then 'High'
@@ -4421,7 +4426,7 @@ begin
                                gh_link_id, gh_repo, gh_number, gh_url, gh_assignee, gh_labels)
     values (l.workspace_id, l.project_id,
             (select id from project_milestones where project_id = l.project_id and lower(gh_repo) = lower(l.repo) and gh_number = (i #>> '{milestone,number}')::int),
-            left(coalesce(nullif(i ->> 'title', ''), 'Issue #' || num), 300), left(nullif(i ->> 'body', ''), 4000), st, pri,
+            left(btrim(regexp_replace(coalesce(nullif(i ->> 'title', ''), 'Issue #' || num), '\s+', ' ', 'g')), 300), left(nullif(i ->> 'body', ''), 4000), st, pri,
             (select user_id from gh_people where workspace_id = l.workspace_id and lower(login) = lower(who)),
             case when st = 'Done' then (i ->> 'closed_at')::timestamptz end, num, l.id, l.repo, num, i ->> 'html_url', who, labs)
     on conflict (project_id, lower(gh_repo), gh_number) where gh_number is not null do update
@@ -4497,6 +4502,11 @@ begin
       update gh_links set sync_started_at = null, last_sync_at = now(), next_sync_at = now() + interval '20 minutes',
              last_status = 'Couldn''t sync' where id = l.id;
     else
+      perform set_config('pulse.gh_sync', 'on', true);
+      update project_milestones m set done_at = coalesce(m.gh_closed,
+               (select case when count(*) > 0 and bool_and(t.status = 'Done') then max(t.done_at)::date end from project_tasks t where t.milestone_id = m.id))
+       where m.gh_link_id = l.id and m.done_at is distinct from coalesce(m.gh_closed,
+               (select case when count(*) > 0 and bool_and(t.status = 'Done') then max(t.done_at)::date end from project_tasks t where t.milestone_id = m.id));
       update gh_links set sync_started_at = null, sync_full = false, synced_until = l.sync_started_at, last_sync_at = now(), last_error = null,
              next_sync_at = now() + make_interval(mins => coalesce((select every_min from gh_config where workspace_id = p_ws), 10)),
              issues = (select count(*) from project_tasks t where t.gh_link_id = l.id),
@@ -4544,7 +4554,7 @@ begin
     'every_min', coalesce(c.every_min, 10), 'last_error', coalesce(c.last_error, (select last_error from gh_conns where workspace_id = w and last_error is not null order by id limit 1)),
     'method', (select case when bool_and(method = 'app') then 'app' when bool_or(method = 'app') then 'mixed' else 'token' end from gh_conns where workspace_id = w),
     'app', a.slug is not null, 'app_slug', a.slug, 'links', (select count(*) from gh_links where workspace_id = w),
-    'people', (select coalesce(jsonb_agg(jsonb_build_object('login', x.login, 'user_id', g.user_id) order by lower(x.login)), '[]')
+    'people', (select coalesce(jsonb_agg(jsonb_build_object('login', x.login, 'user_id', g.user_id, 'label', g.label) order by lower(x.login)), '[]')
                  from (select distinct on (lower(gh_assignee)) gh_assignee login from project_tasks where workspace_id = w and gh_assignee is not null
                        union select login from gh_people where workspace_id = w) x
                  left join gh_people g on g.workspace_id = w and lower(g.login) = lower(x.login)));
@@ -4669,7 +4679,7 @@ begin
 end $$;
 
 -- match a GitHub username to a person in Pulse; their issues are assigned to them from then on
-create or replace function public.gh_map_person(p_login text, p_user uuid) returns void
+create or replace function public.gh_map_person(p_login text, p_user uuid, p_label text default null) returns void
 language plpgsql volatile security definer set search_path = public as $$
 declare w uuid := staff_ws();
 begin
@@ -4677,11 +4687,13 @@ begin
     raise exception 'Only admins and project managers can match GitHub people.';
   end if;
   if p_user is not null and not exists (select 1 from profiles where id = p_user and workspace_id = w) then raise exception 'That person isn''t on your team.'; end if;
-  if p_user is null then delete from gh_people where workspace_id = w and lower(login) = lower(p_login);
-  else insert into gh_people (workspace_id, login, user_id) values (w, trim(p_login), p_user) on conflict (workspace_id, login) do update set user_id = excluded.user_id; end if;
+  if p_user is null and nullif(trim(p_label), '') is null then delete from gh_people where workspace_id = w and lower(login) = lower(p_login);
+  else insert into gh_people (workspace_id, login, user_id, label) values (w, trim(p_login), p_user, nullif(trim(p_label), ''))
+       on conflict (workspace_id, login) do update set user_id = excluded.user_id, label = coalesce(excluded.label, case when excluded.user_id is null then gh_people.label end); end if;
   perform set_config('pulse.gh_sync', 'on', true);
   update project_tasks set assignee_id = p_user where workspace_id = w and lower(gh_assignee) = lower(p_login);
 end $$;
+drop function if exists public.gh_map_person(text, uuid);
 
 -- ---------------------------------------------------------------- the Pulse for GitHub app
 -- operator, once, after registering the app and deploying the github function (run in the SQL Editor):
@@ -4761,10 +4773,10 @@ revoke execute on function public.gh_pick(uuid, text), public.gh_get(gh_conns, t
 grant execute on function public.gh_app_connect(text, bigint, text), public.gh_app_event(bigint, text, text) to service_role;
 revoke execute on function public.gh_status(), public.gh_set_token(text, bigint), public.gh_refresh_repos(), public.gh_disconnect(bigint), public.gh_set_every(int),
   public.gh_link_add(bigint, text, text, text), public.gh_link_remove(bigint), public.gh_sync_project(bigint, boolean), public.gh_poll(bigint),
-  public.gh_map_person(text, uuid), public.gh_install_url() from public, anon;
+  public.gh_map_person(text, uuid, text), public.gh_install_url() from public, anon;
 grant execute on function public.gh_status(), public.gh_set_token(text, bigint), public.gh_refresh_repos(), public.gh_disconnect(bigint), public.gh_set_every(int),
   public.gh_link_add(bigint, text, text, text), public.gh_link_remove(bigint), public.gh_sync_project(bigint, boolean), public.gh_poll(bigint),
-  public.gh_map_person(text, uuid), public.gh_install_url() to authenticated;
+  public.gh_map_person(text, uuid, text), public.gh_install_url() to authenticated;
 
 -- the timer
 do $$ begin

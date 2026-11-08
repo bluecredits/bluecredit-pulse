@@ -48,8 +48,12 @@ async function New() {
   if (!isStaff()) return Portfolio();
   const won = must(await sb.from("opportunities").select("id, title, agency, value, stage").eq("stage", "Won").order("updated_at", { ascending: false }).limit(200));
   const staff = S.team.filter((p) => p.active && isStaffRole(p.role));
-  $("#main").innerHTML = `<div class="page-head"><div><h1>New project</h1><p class="muted">Start from a won opportunity, or from scratch.</p></div></div>
+  const gh = typeof ghRepoChoices === "function" ? await db.rpc("gh_status", {}).catch(() => null) : null;
+  const ghFirst = gh?.connected && /github=1/.test(location.hash);
+  $("#main").innerHTML = `<div class="page-head"><div><h1>New project</h1><p class="muted">${gh?.connected ? "Start from GitHub repositories, a won opportunity, or from scratch." : "Start from a won opportunity, or from scratch."}</p></div></div>
     <section class="panel"><form id="npForm" class="form-grid">
+      ${gh?.connected ? `<fieldset class="gh-np" style="grid-column:1/-1"><legend>${icon("code")} Track work from GitHub <small class="muted">(optional: tick the repositories; their issues and milestones fill the project)</small></legend>
+        <div class="gh-pick">${ghRepoChoices(gh, [], "check")}</div></fieldset>` : ""}
       <label style="grid-column:1/-1">From a won opportunity<select name="opp"><option value="">None, start from scratch</option>${won.map((o) => `<option value="${o.id}">${esc(o.title)}${o.agency ? " · " + esc(o.agency) : ""}</option>`).join("")}</select></label>
       <label>Project name<input name="name" required></label><label>Client<input name="client"></label>
       <label>Code / contract number<input name="code"></label><label>Project manager<select name="manager_id">${staff.map((p) => `<option value="${p.id}" ${p.id === S.user.id ? "selected" : ""}>${esc(p.display_name)}</option>`).join("")}</select></label>
@@ -60,6 +64,12 @@ async function New() {
       <label class="check" style="grid-column:1/-1"><input type="checkbox" name="starter" checked> Add starter milestones (Kickoff, Midpoint review, Final deliverable, Close-out)</label>
       <div class="actions-row" style="grid-column:1/-1"><button class="btn primary">Create project</button></div></form></section>`;
   const f = $("#npForm");
+  $$("[name=ghrepo]", f).forEach((c) => c.addEventListener("change", () => {
+    const picked = $$("[name=ghrepo]:checked", f).map((x) => x.value);
+    if (picked.length) { f.starter.checked = false; if (!f.name.value || f.name.dataset.auto) { f.name.value = picked.map((x) => x.split("/")[1]).join(" + "); f.name.dataset.auto = "1"; } f.client.value ||= picked[0].split("/")[0]; }
+  }));
+  f.name.addEventListener("input", () => delete f.name.dataset.auto);
+  if (ghFirst) f.name.focus();
   f.opp.addEventListener("change", () => { const o = won.find((x) => String(x.id) === f.opp.value); if (!o) return; f.name.value ||= o.title; f.client.value ||= o.agency || ""; if (o.value) f.contract_value.value ||= o.value; });
   f.addEventListener("submit", async (e) => {
     e.preventDefault(); const d = Object.fromEntries(new FormData(f));
@@ -74,6 +84,12 @@ async function New() {
           .map(([name, due, deliverable], i) => ({ project_id: p.id, name, due_date: due, deliverable, sort: i }))));
       }
       if (d.manager_id && isAdmin()) { try { must(await sb.from("project_people").insert({ project_id: p.id, user_id: d.manager_id })); } catch { /* already on it */ } }
+      const picked = $$("[name=ghrepo]:checked", f).map((x) => x.value);
+      if (picked.length) {
+        $("button.primary", f).textContent = "Reading GitHub…";
+        for (const repo of picked) await db.rpc("gh_link_add", { p_project: p.id, p_repo: repo });
+        await ghWait(p.id); toast("Project created from GitHub"); location.hash = `#/p/${p.id}/board`; return;
+      }
       toast("Project created"); location.hash = `#/p/${p.id}`;
     } catch (err) { toast(err.message); }
   });
@@ -88,6 +104,7 @@ async function Project(id, tab) {
   if (!p) { $("#main").innerHTML = `<div class="empty">Project not found.</div>`; return; }
   const [roll] = await db.rpc("project_rollup", { p_id: id });
   PJ.p = p; PJ.roll = roll;
+  PJ.ghl = Object.fromEntries(((await sb.from("gh_people").select("login, label").then((x) => x.data || [], () => [])) || []).filter((x) => x.label).map((x) => [x.login.toLowerCase(), x.label]));
   const tabs = TABS.filter((t) => !t[3] || isStaff());
   if (!tabs.some((t) => t[0] === PJ.tab)) PJ.tab = "overview";
   $("#main").innerHTML = `
@@ -169,10 +186,11 @@ async function loadTasks(p) {
     sb.from("project_milestones").select("id, name").eq("project_id", p.id).order("due_date").then(must)]);
   return { tasks, ms };
 }
+const ghWho = (login) => PJ.ghl?.[String(login).toLowerCase()] || "@" + login;
 const canMove = (t) => !isGhTask(t) && (isStaff() || t.assignee_id === S.user.id);
 function taskCard(t, ms) {
   return `<article class="task ${t.due_date && t.due_date < today() && t.status !== "Done" ? "late" : ""} pri-${t.priority.toLowerCase()}" draggable="${canMove(t)}" data-task="${t.id}">
-    <b>${esc(t.title)}</b><div class="task-meta">${isGhTask(t) ? `<span class="gh-chip" title="GitHub issue">${icon("code")}${esc(ghRef(t))}</span>` : ""}${!t.assignee_id && t.gh_assignee ? `<span class="muted">@${esc(t.gh_assignee)}</span>` : ""}${t.assignee_id ? `<span class="avatar mini" title="${esc(nameOf(t.assignee_id))}">${esc(nameOf(t.assignee_id).split(/\s+/).map((w) => w[0]).slice(0, 2).join(""))}</span>` : ""}
+    <b>${esc(t.title)}</b><div class="task-meta">${isGhTask(t) ? `<span class="gh-chip" title="GitHub issue">${icon("code")}${esc(ghRef(t))}</span>` : ""}${!t.assignee_id && t.gh_assignee ? `<span class="muted">${esc(ghWho(t.gh_assignee))}</span>` : ""}${t.assignee_id ? `<span class="avatar mini" title="${esc(nameOf(t.assignee_id))}">${esc(nameOf(t.assignee_id).split(/\s+/).map((w) => w[0]).slice(0, 2).join(""))}</span>` : ""}
     ${t.due_date ? `<span>${short(t.due_date)}</span>` : ""}${t.priority !== "Normal" ? `<span class="pri">${esc(t.priority)}</span>` : ""}${t.milestone_id ? `<span class="muted">${esc(ms.find((m) => m.id === t.milestone_id)?.name || "")}</span>` : ""}</div></article>`;
 }
 async function Board(p) {
@@ -208,7 +226,7 @@ async function TaskList(p) {
     <select id="lfW"><option value="">Anyone</option>${S.team.filter((x) => x.active).map((x) => `<option value="${x.id}">${esc(x.display_name)}</option>`).join("")}</select>
     ${isStaff() ? `<button class="btn small primary" id="newTask">${icon("plus")}New task</button>` : ""}<button class="btn small" id="csvTasks">Export CSV</button></div>
     <section class="panel" style="padding:0"><div class="table-wrap"><table><thead><tr><th>Task</th><th>Status</th><th>Assignee</th><th>Milestone</th><th>Priority</th><th>Due</th></tr></thead><tbody>
-    ${show.map((t) => `<tr data-task="${t.id}" tabindex="0"><td><b>${esc(t.title)}</b>${isGhTask(t) ? ` <span class="gh-chip">${icon("code")}${esc(ghRef(t))}</span>` : ""}</td><td>${esc(t.status)}</td><td>${esc(nameOf(t.assignee_id) || (t.gh_assignee ? "@" + t.gh_assignee : ""))}</td><td>${esc(ms.find((m) => m.id === t.milestone_id)?.name || "")}</td>
+    ${show.map((t) => `<tr data-task="${t.id}" tabindex="0"><td><b>${esc(t.title)}</b>${isGhTask(t) ? ` <span class="gh-chip">${icon("code")}${esc(ghRef(t))}</span>` : ""}</td><td>${esc(t.status)}</td><td>${esc(nameOf(t.assignee_id) || (t.gh_assignee ? ghWho(t.gh_assignee) : ""))}</td><td>${esc(ms.find((m) => m.id === t.milestone_id)?.name || "")}</td>
       <td>${esc(t.priority)}</td><td class="date">${t.due_date ? dueCell(t.due_date, t.status !== "Done") : ""}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">No tasks.</td></tr>`}</tbody></table></div></section>`;
   $("#lfS").value = PJ.lf.status; $("#lfW").value = PJ.lf.who;
   $("#lfS").addEventListener("change", (e) => { PJ.lf.status = e.target.value; TaskList(p); });
@@ -248,7 +266,7 @@ function ghTaskView(p, t, ms) {
   $("#drawerTitle").textContent = ghRef(t);
   $("#drawerBody").innerHTML = `<div class="gh-task"><h3 style="margin:0 0 6px">${esc(t.title)}</h3>
     <p><span class="pill">${esc(t.status)}</span> ${t.priority !== "Normal" ? `<span class="pill s-high">${esc(t.priority)}</span>` : ""} ${(t.gh_labels || []).map((l) => `<span class="tag">${esc(l)}</span>`).join(" ")}</p>
-    <dl class="gh-dl"><dt>Assignee</dt><dd>${esc(nameOf(t.assignee_id) || (t.gh_assignee ? "@" + t.gh_assignee + " (not matched to anyone in Pulse yet)" : "Nobody"))}</dd>
+    <dl class="gh-dl"><dt>Assignee</dt><dd>${esc(nameOf(t.assignee_id) || (t.gh_assignee ? ghWho(t.gh_assignee) + (PJ.ghl?.[t.gh_assignee.toLowerCase()] ? ` (@${t.gh_assignee})` : " (not matched to anyone in Pulse yet)") : "Nobody"))}</dd>
       <dt>Milestone</dt><dd>${esc(ms.find((m) => m.id === t.milestone_id)?.name || "None")}</dd>${t.done_at ? `<dt>Closed</dt><dd>${short(t.done_at)}</dd>` : ""}<dt>Repository</dt><dd>${esc(t.gh_repo)}</dd></dl>
     ${t.description ? `<div class="gh-body">${mdDoc(t.description.slice(0, 2500))}</div>` : ""}
     ${isStaff() ? `<label style="margin-top:12px">Estimate (hours, Pulse only)<input type="number" step="any" id="ghEst" value="${t.estimate_hours ?? ""}"></label>` : ""}
@@ -458,7 +476,7 @@ async function MyTasks() {
 window.addEventListener("hashchange", route);
 function route() {
   if (!S.profile) return;
-  const parts = location.hash.replace(/^#\/?/, "").split("/");
+  const parts = location.hash.replace(/^#\/?/, "").split("?")[0].split("/");
   const key = { portfolio: 1, mytasks: 1, new: 1, p: 1 }[parts[0]] ? parts[0] : "portfolio";
   $$("#nav a[data-r]").forEach((a) => a.classList.toggle("on", a.dataset.r === (key === "p" ? "portfolio" : key)));
   document.body.classList.remove("nav-open"); closeDrawer();

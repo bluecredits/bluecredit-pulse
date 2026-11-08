@@ -81,18 +81,23 @@ function ghConnected(st, links, pname) {
       ${links.map((l) => `<tr data-href="../projects/#/p/${l.project_id}/github"><td><b>${esc(pname(l.project_id))}</b></td><td>${esc(l.repo)}</td><td>${esc([l.milestone && "milestone " + l.milestone, l.label && "label " + l.label].filter(Boolean).join(", ") || "everything")}</td>
         <td>${l.issues}</td><td>${l.last_error ? `<span class="pill s-lost" title="${esc(l.last_error)}">Problem</span>` : esc(l.last_status || "")} <small class="muted">${ghAgo(l.last_sync_at)}</small></td></tr>`).join("")}</tbody></table></div>`
       : `<p class="muted">No projects linked yet. Open a project in <a href="../projects/">Projects</a> → <b>GitHub</b> tab and link a repository.</p>`}
-    <div class="actions-row" style="margin-top:14px"><a class="btn primary" href="../projects/">${ghIc("briefcase")}Open Projects</a></div>`;
+    <div class="actions-row" style="margin-top:14px"><a class="btn primary" href="../projects/#/new?github=1">${ghIc("plus")}New project from GitHub</a><a class="btn" href="../projects/">${ghIc("briefcase")}Open Projects</a></div>`;
 }
 function ghPeopleTable(st, only) {
   const people = only ? st.people.filter((p) => only.has(p.login.toLowerCase())) : st.people;
-  return `<div class="table-wrap" style="border:0"><table class="gh-people"><thead><tr><th>GitHub username</th><th>Person in Pulse</th></tr></thead><tbody>
-    ${people.map((p) => `<tr><td><a href="https://github.com/${encodeURIComponent(p.login)}" target="_blank" rel="noopener">@${esc(p.login)}</a></td>
-      <td><select data-ghlogin="${esc(p.login)}" aria-label="Pulse person for ${esc(p.login)}"><option value="">Not matched</option>${S.team.filter((u) => u.active).map((u) => `<option value="${u.id}" ${u.id === p.user_id ? "selected" : ""}>${esc(u.display_name)}</option>`).join("")}</select></td></tr>`).join("")}</tbody></table></div>`;
+  const guess = (login) => { const l = login.toLowerCase().replace(/[^a-z]/g, ""); return S.team.find((u) => u.active && u.display_name.toLowerCase().split(/\s+/).some((w) => w.length > 2 && l.includes(w))); };
+  return `<div class="table-wrap" style="border:0"><table class="gh-people"><thead><tr><th>GitHub username</th><th>Who it is</th></tr></thead><tbody>
+    ${people.map((p) => { const g = !p.user_id && !p.label ? guess(p.login) : null;
+      return `<tr><td><a href="https://github.com/${encodeURIComponent(p.login)}" target="_blank" rel="noopener">@${esc(p.login)}</a></td>
+      <td><div class="gh-who"><select data-ghlogin="${esc(p.login)}" aria-label="Pulse person for ${esc(p.login)}"><option value="">${p.label ? "Not in Pulse" : "Not matched"}</option>${S.team.filter((u) => u.active).map((u) => `<option value="${u.id}" ${u.id === p.user_id ? "selected" : ""}>${esc(u.display_name)}</option>`).join("")}</select>
+        ${p.user_id ? "" : `<input data-ghlabel="${esc(p.login)}" value="${esc(p.label || "")}" placeholder="or type who it is (e.g. Chifundo, shared dev account)">`}
+        ${g ? `<button class="btn small" data-ghguess="${esc(p.login)}" data-uid="${g.id}">${esc(g.display_name)}?</button>` : ""}</div></td></tr>`; }).join("")}</tbody></table></div>`;
 }
 function wirePeople(root, after) {
-  $$("[data-ghlogin]", root).forEach((sel) => sel.addEventListener("change", async () => {
-    try { await db.rpc("gh_map_person", { p_login: sel.dataset.ghlogin, p_user: sel.value || null }); toast(sel.value ? "Matched" : "Unmatched"); after?.(); } catch (e) { toast(e.message); }
-  }));
+  const save = async (login, user, label) => { try { await db.rpc("gh_map_person", { p_login: login, p_user: user || null, p_label: label || null }); toast(user ? "Matched" : label ? "Saved" : "Cleared"); after?.(); } catch (e) { toast(e.message); } };
+  $$("[data-ghlogin]", root).forEach((sel) => sel.addEventListener("change", () => save(sel.dataset.ghlogin, sel.value, null)));
+  $$("[data-ghlabel]", root).forEach((inp) => inp.addEventListener("change", () => save(inp.dataset.ghlabel, null, inp.value.trim())));
+  $$("[data-ghguess]", root).forEach((b) => b.addEventListener("click", () => save(b.dataset.ghguess, b.dataset.uid, null)));
 }
 function wireIntegrations(st) {
   $$("#ghApp").forEach((b) => b.addEventListener("click", async (e) => { e.target.disabled = true; try { location.href = await db.rpc("gh_install_url", {}); } catch (err) { toast(err.message); e.target.disabled = false; } }));
@@ -151,20 +156,27 @@ async function GitHubTab(p) {
           Updates ${st.method === "app" ? "arrive as soon as GitHub changes" : `every ${st.every_min} minutes`}.</p>`
         : `<p class="muted">Nothing linked yet. Link a repository below; you can link several, and narrow each to one milestone (for example <b>MVP</b>, <b>Alpha</b> or <b>Beta</b>) so this project tracks exactly that release.</p>`}
     </section>
-    ${manage ? `<section class="panel"><h2>Link a repository</h2>
-      <form id="ghLinkForm" class="form-grid">
-        <label style="grid-column:1/-1">Repository<input name="repo" list="ghRepoList" required placeholder="owner/name, or paste the GitHub link" autocomplete="off">
-          <datalist id="ghRepoList">${repos.map((r) => `<option value="${esc(r)}">`).join("")}</datalist></label>
-        <label>Only this milestone <small class="muted">(optional)</small><input name="milestone" placeholder="e.g. MVP"></label>
-        <label>Only this label <small class="muted">(optional)</small><input name="label" placeholder="e.g. it-ops"></label>
-        <div class="actions-row" style="grid-column:1/-1"><button class="btn primary">${ghIc("plus")}Link and sync</button></div></form>
-      <p class="muted small">Issues → tasks: closed = Done, label <code>blocked</code> = Blocked, assigned or labelled <code>in progress</code> = Doing, otherwise To do. Labels like <code>urgent</code>, <code>high</code>/<code>P1</code> or <code>low</code> set priority. Pull requests aren't tasks.</p></section>` : ""}
+    ${manage ? `<section class="panel"><h2>${links.length ? "Add another repository" : "Pick the repositories for this project"}</h2>
+      <div class="gh-pick">${ghRepoChoices(st, links.map((l) => l.repo.toLowerCase()))}</div>
+      <details class="gh-more"><summary>Only part of a repository, or one that isn't listed</summary>
+        <form id="ghLinkForm" class="form-grid" style="margin-top:10px">
+          <label style="grid-column:1/-1">Repository<input name="repo" list="ghRepoList" required placeholder="owner/name, or paste the GitHub link" autocomplete="off">
+            <datalist id="ghRepoList">${repos.map((r) => `<option value="${esc(r)}">`).join("")}</datalist></label>
+          <label>Only this milestone<input name="milestone" placeholder="e.g. MVP"></label>
+          <label>Only this label<input name="label" placeholder="e.g. it-ops"></label>
+          <div class="actions-row" style="grid-column:1/-1"><button class="btn primary">${ghIc("plus")}Link and sync</button></div></form></details>
+      <p class="muted small" style="margin-bottom:0">Closed issues = Done, label <code>blocked</code> = Blocked, labelled <code>in progress</code> or assigned and active this fortnight = Doing, otherwise To do. A milestone is done when all its issues are closed.</p></section>` : ""}
     ${logins.size ? `<section class="panel"><h2>People ${unmatched ? `<small class="pill s-high">${unmatched} to match</small>` : ""}</h2><p class="muted">Match GitHub usernames to people so tasks show who's on them.</p>${ghPeopleTable(st, logins)}</section>` : ""}`;
   $("#ghSync")?.addEventListener("click", async (e) => {
     e.target.disabled = true; e.target.innerHTML = `${ghIc("clock")}Syncing…`;
     try { await db.rpc("gh_sync_project", { p_project: p.id, p_full: e.shiftKey }); await ghWait(p.id, (r) => r.links.forEach((l) => { const c = $(`[data-ghstat="${l.id}"]`); if (c) c.innerHTML = ghLinkStatus(l); })); toast("GitHub synced"); reload(); }
     catch (err) { toast(err.message); e.target.disabled = false; }
   });
+  $$("[data-ghpick]", host).forEach((b) => b.addEventListener("click", async () => {
+    b.disabled = true; b.innerHTML = `${ghIc("clock")}Reading…`;
+    try { await db.rpc("gh_link_add", { p_project: p.id, p_repo: b.dataset.ghpick }); await ghWait(p.id); toast(`${b.dataset.ghpick} linked`); reload(); }
+    catch (err) { toast(err.message); b.disabled = false; b.textContent = "Link"; }
+  }));
   $("#ghLinkForm")?.addEventListener("submit", async (e) => {
     e.preventDefault(); const f = new FormData(e.target), b = $("button", e.target); b.disabled = true; b.textContent = "Linking…";
     try {
@@ -177,6 +189,14 @@ async function GitHubTab(p) {
     try { await db.rpc("gh_link_remove", { p_link: +b.dataset.ghunlink }); toast("Unlinked"); reload(); } catch (err) { toast(err.message); }
   }));
   wirePeople(host, () => GitHubTab(p));
+}
+// the connected repositories as one-click choices (already-linked ones left out), most recently active first
+function ghRepoChoices(st, linked = [], mode = "button") {
+  const list = (st.repos || []).filter((r) => !linked.includes(r.full_name.toLowerCase()));
+  if (!list.length) return `<p class="muted small" style="margin:0">${(st.repos || []).length ? "Every repository Pulse can see is linked." : "No repositories yet. Check the connection in Admin → Integrations."}</p>`;
+  return list.map((r) => mode === "check"
+    ? `<label class="gh-repo"><input type="checkbox" name="ghrepo" value="${esc(r.full_name)}">${ghIc(r.private ? "key" : "globe")}<span><b>${esc(r.full_name.split("/")[1])}</b><small class="muted">${esc(r.full_name.split("/")[0])}</small></span></label>`
+    : `<div class="gh-repo">${ghIc(r.private ? "key" : "globe")}<span><b>${esc(r.full_name.split("/")[1])}</b><small class="muted">${esc(r.full_name.split("/")[0])}</small></span><button class="btn small" data-ghpick="${esc(r.full_name)}">Link</button></div>`).join("");
 }
 function ghLinkStatus(l) {
   if (l.sync_started_at) return `<span class="pill">Syncing…</span>`;

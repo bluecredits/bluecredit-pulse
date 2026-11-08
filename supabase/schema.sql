@@ -3353,6 +3353,11 @@ declare out date[] := '{}'; m text[]; d date; a int; b int;
 begin
   for m in select regexp_matches(coalesce(p, ''), '(\d{4})-(\d{1,2})-(\d{1,2})', 'g') loop
     begin out := out || make_date(m[1]::int, m[2]::int, m[3]::int); exception when others then null; end; end loop;
+  -- 07/24/26: two-digit years
+  for m in select regexp_matches(coalesce(p, ''), '\m(\d{1,2})/(\d{1,2})/(\d{2})\M(?![/\d])', 'g') loop
+    a := m[1]::int; b := m[2]::int;
+    begin out := out || case when a > 12 then make_date(2000 + m[3]::int, b, a) when b > 12 or p_order = 'MDY' then make_date(2000 + m[3]::int, a, b) else make_date(2000 + m[3]::int, b, a) end;
+    exception when others then null; end; end loop;
   -- 06/11/2025: day first or month first? A weekday next to it ("Wed, 06/11/2025") settles it; otherwise the source's setting
   for m in select regexp_matches(coalesce(p, ''), '(?:(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*\.?,?\s*)?\m(\d{1,2})[/.](\d{1,2})[/.](\d{4})\M', 'gi') loop
     a := m[2]::int; b := m[3]::int;
@@ -3433,18 +3438,27 @@ begin
       -- the row's cells as plain text (the tag of each cell, with its attributes, is dropped whole)
       cells := array(select x from (select src_text(c) x, o from regexp_split_to_table(r, '(?i)<t[dh](\s[^>]*)?>') with ordinality z(c, o)) q where o > 1 and x is not null order by o);
       rowtxt := array_to_string(cells, ' · ');
-      if rowtxt is null or length(rowtxt) < 15 then continue; end if;
       l := src_abs(substring(r from '(?is)<a\s[^>]*href\s*=\s*["'']([^"'']+)'), s.url);
+      -- header rows ("Due Date · Title · Location")
+      if r ~* '^[^>]*class\s*=\s*["''][^"'']*(rowtitle|header|heading|thead)' or (l is null and length(coalesce(rowtxt, '')) < 80
+         and rowtxt ~* '^(due|closing|title|solicitation|description|status|date|tender|ref)' and rowtxt !~ '\d{4}') then continue; end if;
+      if rowtxt is null or length(rowtxt) < 4 then continue; end if;
+      -- a row without a link that follows a listing row is that listing's details ("Scope: …")
+      if l is null and jsonb_array_length(items) > 0 and (items -> -1 ->> 'row') is not null then
+        items := jsonb_set(items, array[(jsonb_array_length(items) - 1)::text, 'text'], to_jsonb(left(concat_ws(' · ', items -> -1 ->> 'text', rowtxt), 900)));
+        continue;
+      end if;
+      if length(rowtxt) < 12 then continue; end if;
       -- the title: the row's link text if it reads like one, otherwise the longest cell
       atxt := src_text(regexp_replace(split_part(regexp_replace(coalesce(substring(r from '(?is)(<a\s.*)'), ''), '</a\s*>', '</a>', 'gi'), '</a>', 1), '^<a[^>]*>', ''));
-      t := case when length(atxt) >= 15 then atxt else (select x from unnest(cells) x order by length(x) desc limit 1) end;
+      t := case when length(atxt) >= 6 and atxt !~* '^(download|view|details|more|read more|click here|pdf|open)$' then atxt else (select x from unnest(cells) x order by length(x) desc limit 1) end;
       -- contact and NAICS codes when the row has them
       ph := substring(rowtxt from '(\(?\d{3}\)?[-. ]\d{3}[-. ]\d{4})');
       em := substring(rowtxt from '([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})');
       nm := (select x from unnest(cells) with ordinality q(x, o) where length(x) between 4 and 40 and x ~ '^[A-Z][a-z]+( [A-Z][a-z.''-]+){1,3}$'
               and o > 1 and o < cardinality(cells) + 1 order by o desc limit 1);
       nc := array(select distinct g[1] from regexp_matches(rowtxt, '\m([1-9]\d{5})\M\s*[:–-]', 'g') g);
-      items := items || jsonb_build_object('title', t, 'link', l, 'text', left(coalesce(nullif(trim(both ' ·' from replace(rowtxt, t, '')), ''), rowtxt), 900), 'row', true, 'naics', to_jsonb(nc),
+      items := items || jsonb_build_object('title', t, 'link', l, 'text', left(coalesce(nullif(trim(both ' ·' from regexp_replace(replace(rowtxt, t, ''), '(\s*·\s*)+', ' · ', 'g')), ''), rowtxt), 900), 'row', true, 'naics', to_jsonb(nc),
                                            'contact', case when ph is not null or em is not null then jsonb_build_object('name', nm, 'phone', ph, 'email', em) end);
     end loop;
     for r in select x from regexp_split_to_table(p_body, '(?i)<a\s') with ordinality z(x, i) where i > 1 limit 2000 loop
@@ -3460,7 +3474,7 @@ begin
   -- store
   for it in select * from jsonb_array_elements(items) loop
     t := left(it ->> 'title', 400); l := it ->> 'link';
-    if t is null or length(t) < 8 then continue; end if;
+    if t is null or length(t) < 6 or t ~* '^[a-z_-]+\s*=\s*["'']' then continue; end if;
     key := lower(coalesce(l, t));
     if key = any (seen) then continue; end if;
     seen := seen || key;

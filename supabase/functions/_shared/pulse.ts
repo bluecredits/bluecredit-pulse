@@ -31,6 +31,12 @@ export async function caller(req: Request, d: Deps): Promise<Member> {
   return { id: u.id, email: u.email, workspace_id: p.workspace_id, role: p.role, display_name: p.display_name, token };
 }
 
+// ---------------------------------------------------------------- plan check (Scheduler and Chief of Staff are Enterprise apps)
+export async function needPlan(d: Deps, workspace: string, app: "scheduler" | "chief") {
+  const ok = await rest(d, "rpc/ws_has_app_for", { method: "POST", body: JSON.stringify({ p_ws: workspace, p_app: app }) });
+  if (ok !== true) throw new HttpError(402, "This app is part of the Enterprise plan. An admin can upgrade in Admin → Billing.");
+}
+
 // ---------------------------------------------------------------- database (PostgREST)
 // With the service key by default (bypasses row-level security: only use for rows the function owns),
 // or as the person with `asUser` (row-level security applies).

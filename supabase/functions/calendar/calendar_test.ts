@@ -140,3 +140,10 @@ Deno.test("signed-out and not-configured cases", async () => {
   const d2 = { fetch: (() => { throw new Error("no"); }) as unknown as typeof fetch, env: { ...env, GOOGLE_CLIENT_ID: "" }, now: () => T0 };
   void d2;
 });
+
+Deno.test("plans: a company without Enterprise gets a clear 402 from the scheduler", async () => {
+  const w = world(); (w.db.t as any).__rpc_ws_has_app_for = () => false;
+  const r = await w.post("jwt-ann", { action: "sync" });
+  eq(r.status, 402);
+  assert(JSON.stringify(await r.json()).includes("Enterprise"), "says which plan");
+});

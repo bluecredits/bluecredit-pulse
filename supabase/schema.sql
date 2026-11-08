@@ -446,6 +446,114 @@ create policy members_read on public.workspaces for select to authenticated usin
 revoke all on public.workspaces from authenticated, anon;
 grant select (id, name, logo_url, template, config, plan, created_at) on public.workspaces to authenticated;
 
+-- ---------------------------------------------------------------- plans and billing
+-- Starter ($3), Pro ($6), Enterprise ($10) per staff user per month; contractors are free.
+--   plan          = the plan the company pays for (or was given: comped)
+--   paid_until    = end of the paid period (Stripe sets it; an operator sets it for invoiced companies)
+--   trial_ends_at = new workspaces get 14 days of Pro
+-- The effective plan decides which apps work (ws_has_app); it is checked in the database, not only on screen.
+alter table public.workspaces add column if not exists trial_ends_at timestamptz;
+alter table public.workspaces add column if not exists paid_until timestamptz;
+alter table public.workspaces add column if not exists comped boolean not null default false;
+alter table public.workspaces add column if not exists billing_cycle text not null default 'month';
+alter table public.workspaces add column if not exists billing_email text;
+alter table public.workspaces add column if not exists stripe_customer_id text;
+alter table public.workspaces add column if not exists stripe_subscription_id text;
+alter table public.workspaces add column if not exists plan_note text;
+update public.workspaces set plan = 'starter' where plan not in ('starter', 'pro', 'enterprise');
+alter table public.workspaces alter column plan set default 'starter';
+alter table public.workspaces alter column trial_ends_at set default (now() + interval '14 days');
+alter table public.workspaces drop constraint if exists workspaces_plan_check;
+alter table public.workspaces add constraint workspaces_plan_check check (plan in ('starter', 'pro', 'enterprise'));
+alter table public.workspaces drop constraint if exists workspaces_cycle_check;
+alter table public.workspaces add constraint workspaces_cycle_check check (billing_cycle in ('month', 'year'));
+
+-- Pulse operators (BlueCredit staff who run the service) can set any company's plan
+create table if not exists public.pulse_operators (email text primary key);
+alter table public.pulse_operators enable row level security;
+revoke all on public.pulse_operators from anon, authenticated;
+insert into public.pulse_operators (email) values ('barasa@bluecredits.org') on conflict do nothing;
+-- existing companies: 14 days of Pro from today; the operators' own company (BlueCredit) is on Enterprise, comped
+update public.workspaces set trial_ends_at = now() + interval '14 days' where trial_ends_at is null;
+update public.workspaces set plan = 'enterprise', comped = true, plan_note = coalesce(plan_note, 'Operator company (comped)')
+ where not comped and id in (select p.workspace_id from public.profiles p join public.pulse_operators o on lower(o.email) = lower(p.email));
+create or replace function public.is_operator() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from pulse_operators o join profiles p on lower(p.email) = lower(o.email) where p.id = auth.uid() and p.active) $$;
+
+create or replace function public.plan_rank(p text) returns int language sql immutable as $$
+  select case p when 'enterprise' then 3 when 'pro' then 2 else 1 end $$;
+-- which plan each app needs (anything not listed is in Starter)
+create or replace function public.app_plan(p_app text) returns text language sql immutable as $$
+  select case when p_app in ('opportunities', 'projects', 'agreements', 'hiring') then 'pro'
+              when p_app in ('chief', 'scheduler') then 'enterprise' else 'starter' end $$;
+create or replace function public.ws_plan_for(p_ws uuid) returns text
+language sql stable security definer set search_path = public as $$
+  select case when w.comped then w.plan
+              when plan_rank(case when w.paid_until > now() then w.plan else 'starter' end) >= plan_rank(case when w.trial_ends_at > now() then 'pro' else 'starter' end)
+                then case when w.paid_until > now() then w.plan else 'starter' end
+              else 'pro' end
+    from workspaces w where w.id = p_ws $$;
+create or replace function public.ws_has_app_for(p_ws uuid, p_app text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce(plan_rank(ws_plan_for(p_ws)) >= plan_rank(app_plan(p_app)), false) $$;
+create or replace function public.ws_has_app(p_app text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select ws_has_app_for(ws(), p_app) $$;
+create or replace function public.plan_require(p_app text) returns void
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not ws_has_app(p_app) then
+    raise exception 'This app is part of the % plan. An admin can upgrade in Admin → Billing.', initcap(app_plan(p_app));
+  end if;
+end $$;
+
+-- what the Billing page and the app locks show
+create or replace function public.billing_status() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object(
+    'plan', w.plan, 'effective', ws_plan_for(w.id), 'comped', w.comped, 'paid_until', w.paid_until,
+    'trial_ends_at', w.trial_ends_at, 'trial_days_left', greatest(0, ceil(extract(epoch from (w.trial_ends_at - now())) / 86400))::int,
+    'cycle', w.billing_cycle, 'billing_email', w.billing_email, 'has_stripe', w.stripe_customer_id is not null, 'note', w.plan_note,
+    'seats', (select count(*) from profiles p where p.workspace_id = w.id and p.active and p.role in ('admin', 'member')),
+    'contractors', (select count(*) from profiles p where p.workspace_id = w.id and p.active and p.role = 'contractor'),
+    'operator', is_operator())
+    from workspaces w where w.id = ws() $$;
+
+-- operators: set a company's plan (invoiced, comped, or a trial extension)
+create or replace function public.billing_set_plan(p_ws uuid, p_plan text, p_paid_until timestamptz default null,
+    p_comped boolean default false, p_trial_ends timestamptz default null, p_note text default null) returns void
+language plpgsql volatile security definer set search_path = public as $$
+begin
+  if not is_operator() then raise exception 'Only Pulse operators can change a plan directly.'; end if;
+  if p_plan not in ('starter', 'pro', 'enterprise') then raise exception 'Unknown plan %', p_plan; end if;
+  update workspaces set plan = p_plan, paid_until = p_paid_until, comped = coalesce(p_comped, false),
+      trial_ends_at = coalesce(p_trial_ends, trial_ends_at), plan_note = coalesce(p_note, plan_note) where id = p_ws;
+  if not found then raise exception 'Workspace not found.'; end if;
+end $$;
+-- operators: every company and its plan
+create or replace function public.billing_workspaces() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select case when is_operator() then coalesce(jsonb_agg(jsonb_build_object('id', w.id, 'name', w.name, 'plan', w.plan, 'effective', ws_plan_for(w.id),
+    'comped', w.comped, 'paid_until', w.paid_until, 'trial_ends_at', w.trial_ends_at, 'note', w.plan_note, 'created_at', w.created_at,
+    'seats', (select count(*) from profiles p where p.workspace_id = w.id and p.active and p.role in ('admin', 'member'))) order by w.created_at), '[]') end
+    from workspaces w $$;
+-- admins: billing email and cycle (the plan itself changes through payment or an operator)
+create or replace function public.billing_contact(p_email text, p_cycle text) returns void
+language plpgsql volatile security definer set search_path = public as $$
+begin
+  if not is_admin() then raise exception 'Only admins can change billing details.'; end if;
+  if p_email is not null and p_email !~* '^[^@\s]+@[^@\s]+\.[a-z]{2,}$' then raise exception 'Please enter a valid billing email.'; end if;
+  update workspaces set billing_email = nullif(trim(p_email), ''), billing_cycle = case when p_cycle in ('month', 'year') then p_cycle else billing_cycle end where id = ws();
+end $$;
+revoke execute on function public.billing_set_plan(uuid, text, timestamptz, boolean, timestamptz, text), public.billing_workspaces(),
+  public.billing_contact(text, text), public.billing_status(), public.plan_require(text), public.ws_has_app(text),
+  public.ws_has_app_for(uuid, text), public.ws_plan_for(uuid), public.is_operator() from public, anon;
+grant execute on function public.billing_set_plan(uuid, text, timestamptz, boolean, timestamptz, text), public.billing_workspaces(),
+  public.billing_contact(text, text), public.billing_status(), public.plan_require(text), public.ws_has_app(text), public.is_operator() to authenticated;
+grant execute on function public.ws_has_app_for(uuid, text), public.ws_plan_for(uuid) to anon, authenticated;
+
+
 drop policy if exists members_read on public.profiles;
 create policy members_read on public.profiles for select to authenticated using (workspace_id = ws() or id = auth.uid());
 drop policy if exists own_name on public.profiles;
@@ -1468,6 +1576,7 @@ create or replace function public.hire_upload(p_candidate bigint, p_name text, p
 language plpgsql volatile security definer set search_path = public as $$
 declare fid bigint; w uuid;
 begin
+  perform plan_require('hiring');
   if not hire_lead(p_candidate) then raise exception 'Only the hiring manager, the owner or an admin can add files.'; end if;
   if length(p_b64) > 10000000 then raise exception 'That file is too big (7 MB at most).'; end if;
   select workspace_id into w from hire_candidates where id = p_candidate;
@@ -1481,7 +1590,7 @@ end $$;
 create or replace function public.hire_opening_public(p_token text) returns jsonb
 language sql stable security definer set search_path = public as $$
   select jsonb_build_object('title', o.title, 'kind', o.kind, 'schedule', o.schedule, 'location', o.location, 'remote', o.remote, 'description', o.description,
-           'must_haves', o.must_haves, 'pay', o.pay, 'company', w.name, 'open', o.status = 'Open')
+           'must_haves', o.must_haves, 'pay', o.pay, 'company', w.name, 'open', o.status = 'Open' and ws_has_app_for(o.workspace_id, 'hiring'))
     from hire_openings o join workspaces w on w.id = o.workspace_id
    where o.apply_token = p_token and length(coalesce(p_token, '')) >= 32 and o.status in ('Open', 'On hold', 'Filled', 'Closed') $$;
 
@@ -1492,7 +1601,7 @@ language plpgsql volatile security definer set search_path = public as $$
 declare o hire_openings; cid bigint;
 begin
   select * into o from hire_openings where apply_token = p_token and length(coalesce(p_token, '')) >= 32;
-  if not found or o.status <> 'Open' then raise exception 'This position is not taking applications right now.'; end if;
+  if not found or o.status <> 'Open' or not ws_has_app_for(o.workspace_id, 'hiring') then raise exception 'This position is not taking applications right now.'; end if;
   if coalesce(trim(p_name), '') = '' or coalesce(p_email, '') !~* '^[^@\s]+@[^@\s]+\.[a-z]{2,}$' then raise exception 'Please enter your name and a valid email address.'; end if;
   if coalesce(p_file_b64, '') = '' then raise exception 'Please attach your resume.'; end if;
   if length(p_file_b64) > 7000000 then raise exception 'Your resume is too big (5 MB at most).'; end if;
@@ -1517,6 +1626,7 @@ create or replace function public.hire_mark_hired(p_candidate bigint, p_start da
 language plpgsql volatile security definer set search_path = public as $$
 declare c hire_candidates; o hire_openings; oid bigint;
 begin
+  perform plan_require('hiring');
   if not hire_lead(p_candidate) then raise exception 'Only the hiring manager, the owner or an admin can mark someone hired.'; end if;
   select * into c from hire_candidates where id = p_candidate;
   select * into o from hire_openings where id = c.opening_id;
@@ -1535,7 +1645,7 @@ end $$;
 -- counts for the landing page and the People app
 create or replace function public.hire_summary() returns jsonb
 language sql stable security definer set search_path = public as $$
-  select jsonb_build_object(
+  select case when not ws_has_app('hiring') then '{}'::jsonb else jsonb_build_object(
     'open_roles', (select count(*) from hire_openings where workspace_id = staff_ws() and status = 'Open'),
     'to_review', (select count(*) from hire_candidates c where c.workspace_id = staff_ws() and c.stage = 'Applied' and hire_can(c.id)),
     'in_process', (select count(*) from hire_candidates c where c.workspace_id = staff_ws() and c.stage in ('Screen', 'Interview', 'Work sample', 'Final', 'Offer') and hire_can(c.id)),
@@ -1543,7 +1653,7 @@ language sql stable security definer set search_path = public as $$
         and coalesce(i.scheduled_at, now()) <= now() + interval '1 hour'
         and not exists (select 1 from hire_scores s where s.interview_id = i.id and s.interviewer_id = auth.uid() and s.submitted_at is not null)),
     'my_interviews', (select count(*) from hire_interviews i where i.workspace_id = staff_ws() and auth.uid() = any (i.interviewer_ids)
-        and i.status = 'Scheduled' and i.scheduled_at between now() and now() + interval '7 days')) $$;
+        and i.status = 'Scheduled' and i.scheduled_at between now() and now() + interval '7 days')) end $$;
 
 revoke execute on function public.hire_scored(bigint) from public, anon;
 grant execute on function public.hire_scored(bigint) to authenticated;
@@ -1664,6 +1774,7 @@ declare
   t date := (now() at time zone coalesce(nullif(p_tz, ''), 'UTC'))::date;
   me text := member_name(); wk date := week_of(t); staff boolean := staff_ws() is not null;
 begin
+  perform plan_require('chief');
   if ws() is null then raise exception 'Join a workspace first.'; end if;
   return jsonb_build_object(
     'today', t, 'weekday', to_char(t, 'FMDay'), 'timezone', p_tz,
@@ -1844,6 +1955,7 @@ create or replace function public.agr_save(p jsonb) returns bigint
 language plpgsql volatile security definer set search_path = public as $$
 declare a agreements; v_id bigint := nullif(p ->> 'id', '')::bigint;
 begin
+  perform plan_require('agreements');
   if staff_ws() is null then raise exception 'Only team members can prepare agreements.'; end if;
   if coalesce(trim(p ->> 'title'), '') = '' then raise exception 'Give the agreement a title.'; end if;
   if v_id is not null then
@@ -1881,6 +1993,7 @@ create or replace function public.agr_send(p_id bigint, p_signers jsonb, p_days 
 language plpgsql volatile security definer set search_path = public as $$
 declare a agreements; s jsonb; tok text; out jsonb := '[]'; v_uid uuid;
 begin
+  perform plan_require('agreements');
   a := agr_get(p_id);
   if a.status <> 'Draft' then raise exception 'Only drafts can be sent.'; end if;
   if coalesce(a.body_html, '') = '' then raise exception 'The agreement has no text yet.'; end if;
@@ -1909,6 +2022,7 @@ create or replace function public.agr_new_link(p_signer bigint) returns text
 language plpgsql volatile security definer set search_path = public as $$
 declare s agreement_signers; a agreements; tok text := pulse_token();
 begin
+  perform plan_require('agreements');
   select * into s from agreement_signers where id = p_signer; a := agr_get(s.agreement_id);
   if a.status <> 'Out for signature' or s.status in ('Signed', 'Declined') then raise exception 'This signer can''t get a new link.'; end if;
   update agreement_signers set token_hash = pulse_sha256(tok), token_expires_at = now() + interval '30 days' where id = p_signer;
@@ -1995,6 +2109,7 @@ create or replace function public.agr_void(p_id bigint, p_reason text) returns v
 language plpgsql volatile security definer set search_path = public as $$
 declare a agreements;
 begin
+  perform plan_require('agreements');
   a := agr_get(p_id);
   if a.status not in ('Draft', 'Out for signature', 'Declined') then raise exception 'Only unsigned agreements can be voided. End an active one instead.'; end if;
   if coalesce(trim(p_reason), '') = '' then raise exception 'Add a reason.'; end if;
@@ -2007,6 +2122,7 @@ create or replace function public.agr_upload_signed(p_id bigint, p_name text, p_
 language plpgsql volatile security definer set search_path = public as $$
 declare a agreements;
 begin
+  perform plan_require('agreements');
   a := agr_get(p_id);
   if a.status in ('Voided', 'Closed out') then raise exception 'This agreement is %.', lower(a.status); end if;
   if length(coalesce(p_b64, '')) > 14000000 then raise exception 'Files up to 10 MB, please.'; end if;
@@ -2037,6 +2153,7 @@ create or replace function public.agr_sign_member(p_id bigint, p_name text, p_ti
 language plpgsql volatile security definer set search_path = public as $$
 declare s agreement_signers; tok text := pulse_token();
 begin
+  perform plan_require('agreements');
   select * into s from agreement_signers where agreement_id = p_id and user_id = auth.uid() and status not in ('Signed', 'Declined') order by sign_order limit 1;
   if not found then raise exception 'You aren''t waiting to sign this agreement.'; end if;
   update agreement_signers set token_hash = pulse_sha256(tok), token_expires_at = now() + interval '1 hour' where id = s.id;
@@ -2047,6 +2164,7 @@ create or replace function public.agr_end(p_id bigint, p_status text, p_reason t
 language plpgsql volatile security definer set search_path = public as $$
 declare a agreements;
 begin
+  perform plan_require('agreements');
   a := agr_get(p_id);
   if a.status <> 'Active' then raise exception 'Only active agreements can be ended.'; end if;
   if p_status not in ('Expired', 'Terminated') then raise exception 'Choose Expired or Terminated.'; end if;
@@ -2067,6 +2185,7 @@ create or replace function public.agr_closeout(p_id bigint, p_items jsonb, p_not
 language plpgsql volatile security definer set search_path = public as $$
 declare a agreements;
 begin
+  perform plan_require('agreements');
   a := agr_get(p_id);
   if a.status not in ('Expired', 'Terminated', 'Active') then raise exception 'Close-out applies to active, expired or terminated agreements.'; end if;
   if jsonb_typeof(p_items) <> 'array' then raise exception 'Bad checklist.'; end if;
@@ -2085,6 +2204,7 @@ create or replace function public.agr_copy(p_id bigint) returns bigint
 language plpgsql volatile security definer set search_path = public as $$
 declare a agreements; v_id bigint;
 begin
+  perform plan_require('agreements');
   a := agr_get(p_id);
   v_id := agr_save(jsonb_build_object('template_key', a.template_key, 'template_name', a.template_name, 'kind', a.kind, 'title', a.title,
     'party_name', a.party_name, 'party_email', a.party_email, 'fields', a.fields, 'body_html', a.body_html, 'onboarding_id', a.onboarding_id,
@@ -2820,7 +2940,8 @@ create or replace function public.fed_tick() returns void
 language plpgsql volatile security definer set search_path = public as $$
 declare w uuid;
 begin
-  for w in select workspace_id from fed_config where enabled or exists (select 1 from fed_calls x where x.workspace_id = fed_config.workspace_id and x.status = 'pending') loop
+  for w in select workspace_id from fed_config where ws_has_app_for(workspace_id, 'opportunities')
+              and (enabled or exists (select 1 from fed_calls x where x.workspace_id = fed_config.workspace_id and x.status = 'pending')) loop
     begin perform fed_tick_ws(w); exception when others then
       update fed_config set last_error = 'Internal error: ' || sqlerrm where workspace_id = w; end;
   end loop;
@@ -2831,6 +2952,7 @@ create or replace function public.fed_status() returns jsonb
 language plpgsql stable security definer set search_path = public as $$
 declare w uuid := staff_ws(); c fed_config; has_net boolean; has_cron boolean; has_vault boolean; job boolean := false;
 begin
+  perform plan_require('opportunities');
   if w is null then raise exception 'Only team members can use Federal opportunities.'; end if;
   select * into c from fed_config where workspace_id = w;
   has_net := exists (select 1 from pg_extension where extname = 'pg_net');
@@ -2853,6 +2975,7 @@ create or replace function public.fed_save_config(p jsonb) returns jsonb
 language plpgsql volatile security definer set search_path = public as $$
 declare w uuid := staff_ws();
 begin
+  perform plan_require('opportunities');
   if w is null or not is_admin() then raise exception 'Only admins can change Federal settings.'; end if;
   insert into fed_config (workspace_id) values (w) on conflict do nothing;
   update fed_config set enabled = coalesce((p ->> 'enabled')::boolean, enabled), every_min = coalesce((p ->> 'every_min')::int, every_min),
@@ -2865,6 +2988,7 @@ create or replace function public.fed_set_key(p_key text) returns jsonb
 language plpgsql volatile security definer set search_path = public as $$
 declare w uuid := staff_ws(); c fed_config; k text := trim(coalesce(p_key, '')); sid uuid;
 begin
+  perform plan_require('opportunities');
   if w is null or not is_admin() then raise exception 'Only admins can change the SAM.gov API key.'; end if;
   if k !~ '^SAM-[0-9A-Za-z-]{20,}$' then raise exception 'That doesn''t look like a SAM.gov public API key (it starts with SAM-).'; end if;
   insert into fed_config (workspace_id) values (w) on conflict do nothing;
@@ -2886,6 +3010,7 @@ create or replace function public.fed_set_bidmatch(p_link text) returns jsonb
 language plpgsql volatile security definer set search_path = public as $$
 declare w uuid := staff_ws(); c fed_config; k text := trim(coalesce(p_link, '')); sid uuid;
 begin
+  perform plan_require('opportunities');
   if w is null or not is_admin() then raise exception 'Only admins can change the MyBidMatch link.'; end if;
   insert into fed_config (workspace_id) values (w) on conflict do nothing;
   select * into c from fed_config where workspace_id = w;
@@ -2912,6 +3037,7 @@ create or replace function public.fed_clear_key() returns jsonb
 language plpgsql volatile security definer set search_path = public as $$
 declare w uuid := staff_ws(); sid uuid;
 begin
+  perform plan_require('opportunities');
   if w is null or not is_admin() then raise exception 'Only admins can change the SAM.gov API key.'; end if;
   select key_secret_id into sid from fed_config where workspace_id = w;
   if sid is not null then begin execute 'delete from vault.secrets where id = $1' using sid; exception when others then null; end; end if;
@@ -2923,6 +3049,7 @@ create or replace function public.fed_run_now() returns jsonb
 language plpgsql volatile security definer set search_path = public as $$
 declare w uuid := staff_ws();
 begin
+  perform plan_require('opportunities');
   if w is null then raise exception 'Only team members can use Federal opportunities.'; end if;
   if exists (select 1 from fed_calls where workspace_id = w and created_at > now() - interval '2 minutes' and request_id is not null) then
     raise exception 'A check started less than two minutes ago; results arrive within a few minutes.';
@@ -2937,6 +3064,7 @@ create or replace function public.fed_preview(p jsonb) returns jsonb
 language plpgsql stable security definer set search_path = public as $$
 declare w uuid := staff_ws(); s fed_searches;
 begin
+  perform plan_require('opportunities');
   if w is null then raise exception 'Only team members can use Federal opportunities.'; end if;
   s := jsonb_populate_record(null::fed_searches, p || jsonb_build_object('workspace_id', w, 'active', true));
   s.size := coalesce(s.size, 'any'); s.open_only := coalesce(s.open_only, true); s.source := coalesce(s.source, 'SAM.gov'); s.aln := coalesce(s.aln, '{}');
@@ -2951,6 +3079,7 @@ create or replace function public.fed_apply_search(p_id bigint) returns int
 language plpgsql volatile security definer set search_path = public as $$
 declare w uuid := staff_ws();
 begin
+  perform plan_require('opportunities');
   if w is null or not exists (select 1 from fed_searches where id = p_id and workspace_id = w) then raise exception 'Search not found.'; end if;
   insert into fed_config (workspace_id) values (w) on conflict do nothing;
   -- first grants search: fetch Grants.gov now instead of waiting for the next scheduled check
@@ -2968,6 +3097,7 @@ create or replace function public.fed_set_status(p_notices text[], p_status text
 language plpgsql volatile security definer set search_path = public as $$
 declare w uuid := staff_ws();
 begin
+  perform plan_require('opportunities');
   if w is null then raise exception 'Only team members can use Federal opportunities.'; end if;
   if p_status not in ('New', 'Saved', 'Dismissed') then raise exception 'Unknown status.'; end if;
   update fed_notices set status = p_status, status_by = member_name() where workspace_id = w and notice_id = any (p_notices) and status <> 'Added';
@@ -3012,6 +3142,7 @@ create or replace function public.fed_save_contact(p_notice text, p_email text d
 language plpgsql volatile security definer set search_path = public as $$
 declare w uuid := staff_ws(); n fed_notices;
 begin
+  perform plan_require('opportunities');
   if w is null then raise exception 'Only team members can save contacts.'; end if;
   select * into n from fed_notices where workspace_id = w and notice_id = p_notice;
   if not found then raise exception 'Notice not found.'; end if;
@@ -3046,6 +3177,7 @@ create or replace function public.fed_profile(p_source text) returns jsonb
 language plpgsql volatile security definer set search_path = public as $$
 declare w uuid := staff_ws();
 begin
+  perform plan_require('opportunities');
   if w is null then raise exception 'Only team members can use Opportunities.'; end if;
   if p_source not in ('SAM.gov', 'Grants.gov') then raise exception 'Unknown source %', p_source; end if;
   insert into fed_config (workspace_id) values (w) on conflict do nothing;
@@ -3056,6 +3188,7 @@ create or replace function public.fed_add_to_opportunities(p_notice text, p_kind
 language plpgsql volatile security definer set search_path = public as $$
 declare w uuid := staff_ws(); n fed_notices; oid bigint;
 begin
+  perform plan_require('opportunities');
   if w is null then raise exception 'Only team members can add opportunities.'; end if;
   select * into n from fed_notices where workspace_id = w and notice_id = p_notice for update;
   if not found then raise exception 'Notice not found.'; end if;
@@ -3086,7 +3219,7 @@ language sql stable security definer set search_path = public as $$
                     and c ? 'email' and lower(ct.email) = lower(c ->> 'email') limit 1), '{}')), '[]') from jsonb_array_elements(n.contacts) c) contacts,
                (select array_agg(m.search_id) from fed_matches m where m.workspace_id = n.workspace_id and m.notice_id = n.notice_id) searches
           from fed_notices n
-         where n.workspace_id = staff_ws() and n.source = coalesce(p_source, 'SAM.gov') and (p_status = 'All' or n.status = p_status)
+         where n.workspace_id = staff_ws() and ws_has_app('opportunities') and n.source = coalesce(p_source, 'SAM.gov') and (p_status = 'All' or n.status = p_status)
            and ((n.source = 'BidMatch' and p_search is null) or (n.status <> 'New' and p_search is null)
                 or exists (select 1 from fed_matches m where m.workspace_id = n.workspace_id and m.notice_id = n.notice_id and (p_search is null or m.search_id = p_search)))
          order by case when p_sort = 'due' then n.response_deadline end nulls last, n.posted_date desc nulls last, n.first_seen desc
@@ -3095,13 +3228,13 @@ language sql stable security definer set search_path = public as $$
 create or replace function public.fed_counts() returns jsonb
 language sql stable security definer set search_path = public as $$
   select jsonb_build_object('new', (select count(distinct n.notice_id) from fed_notices n join fed_matches m on m.workspace_id = n.workspace_id and m.notice_id = n.notice_id
-                                     where n.workspace_id = staff_ws() and n.status = 'New'),
+                                     where n.workspace_id = staff_ws() and ws_has_app('opportunities') and n.status = 'New'),
     'by_source', coalesce((select jsonb_object_agg(source, c) from (select n.source, count(*) c from fed_notices n
-                                     where n.workspace_id = staff_ws() and n.status = 'New'
+                                     where n.workspace_id = staff_ws() and ws_has_app('opportunities') and n.status = 'New'
                                        and (n.source = 'BidMatch' or exists (select 1 from fed_matches m where m.workspace_id = n.workspace_id and m.notice_id = n.notice_id))
                                      group by n.source) z), '{}'),
     'by_search', coalesce((select jsonb_object_agg(search_id, c) from (select m.search_id, count(*) c from fed_matches m join fed_notices n on n.workspace_id = m.workspace_id and n.notice_id = m.notice_id
-                                     where m.workspace_id = staff_ws() and n.status = 'New' group by m.search_id) z), '{}')) $$;
+                                     where m.workspace_id = staff_ws() and ws_has_app('opportunities') and n.status = 'New' group by m.search_id) z), '{}')) $$;
 revoke execute on function public.fed_list(text, text, bigint, text, int), public.fed_counts() from public, anon;
 grant execute on function public.fed_list(text, text, bigint, text, int), public.fed_counts() to authenticated;
 
@@ -3110,6 +3243,7 @@ create or replace function public.fed_add_to_funding(p_notice text) returns bigi
 language plpgsql volatile security definer set search_path = public as $$
 declare w uuid := staff_ws(); n fed_notices; fid bigint;
 begin
+  perform plan_require('opportunities');
   if w is null then raise exception 'Only team members can add funding.'; end if;
   select * into n from fed_notices where workspace_id = w and notice_id = p_notice for update;
   if not found then raise exception 'Grant not found.'; end if;
@@ -3144,6 +3278,24 @@ revoke execute on function public.fed_save_contact(text, text), public.fed_profi
 grant execute on function public.fed_save_contact(text, text), public.fed_profile(text) to authenticated;
 -- every workspace that uses Opportunities gets its profiles (built from its searches)
 select public.fed_profile_ws(c.workspace_id, x.src) from public.fed_config c, (values ('SAM.gov'), ('Grants.gov')) x(src);
+
+-- ---------------------------------------------------------------- plan locks on the paid apps' tables
+-- Restrictive policies are ANDed with each table's own rules: on a lower plan the data stays, but can't be opened.
+do $$ declare t record; begin
+  for t in select * from (values
+      ('fed_config', 'opportunities'), ('fed_searches', 'opportunities'), ('fed_notices', 'opportunities'), ('fed_matches', 'opportunities'),
+      ('fed_calls', 'opportunities'), ('fed_bm_docs', 'opportunities'),
+      ('project_milestones', 'projects'), ('project_tasks', 'projects'), ('project_costs', 'projects'), ('project_risks', 'projects'), ('project_updates', 'projects'),
+      ('agreement_templates', 'agreements'), ('agreements', 'agreements'), ('agreement_signers', 'agreements'), ('agreement_events', 'agreements'), ('agreement_files', 'agreements'),
+      ('hire_openings', 'hiring'), ('hire_candidates', 'hiring'), ('hire_files', 'hiring'), ('hire_interviews', 'hiring'), ('hire_scores', 'hiring'), ('hire_events', 'hiring'),
+      ('calendar_accounts', 'scheduler'), ('busy_blocks', 'scheduler'), ('meetings', 'scheduler'),
+      ('reminders', 'chief'), ('chief_briefs', 'chief'), ('chief_usage', 'chief')) v(tbl, app) loop
+    if to_regclass('public.' || t.tbl) is not null then
+      execute format('drop policy if exists plan_gate on public.%I', t.tbl);
+      execute format('create policy plan_gate on public.%I as restrictive for all to authenticated using (public.ws_has_app(%L)) with check (public.ws_has_app(%L))', t.tbl, t.app, t.app);
+    end if;
+  end loop;
+end $$;
 
 -- the timer itself: every 5 minutes (each workspace's own schedule decides when it actually calls SAM.gov)
 do $$ begin

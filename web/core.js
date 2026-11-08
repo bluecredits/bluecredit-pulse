@@ -77,14 +77,42 @@ async function requireMember() {
   S.user = user; S.profile = prof;
   await loadWorkspace();
   if (!S.team.length) S.team = must(await sb.from("profiles").select("*").order("display_name"));
+  const app = pageApp();
+  if (app && PULSE_APPS.some((a) => a.key === app) && !hasApp(app)) { showShell(); $("#main").innerHTML = lockedPanel(app); return null; }
   return { user, profile: prof };
 }
 // The company this person belongs to: name, logo, starter pack and saved settings. Shows it in the top bar.
 const WS_COLS = "id, name, logo_url, template, config, plan, created_at";
 async function loadWorkspace() {
   S.workspace = must(await sb.from("workspaces").select(WS_COLS).maybeSingle());
+  // the plan decides which apps open (the database enforces it too); null = billing not set up yet, so nothing is locked
+  try { const r = await sb.rpc("billing_status"); S.billing = r.error ? null : r.data; } catch { S.billing = null; }
   applyBrand();
   return S.workspace;
+}
+
+/* ---------------------------------------------------------------- plans
+   Per staff user per month; contractors and consultants are free. Yearly = 10 months (2 free). */
+const PLANS = {
+  starter: { name: "Starter", price: 3, blurb: "Run the business day to day.", apps: ["review", "contacts", "funding", "timecards", "tickets", "people"], limit: "Up to 10 users" },
+  pro: { name: "Pro", price: 6, blurb: "Find and win work, deliver it, hire.", apps: ["opportunities", "projects", "agreements", "hiring"], limit: "Unlimited users" },
+  enterprise: { name: "Enterprise", price: 10, blurb: "Everything, with your AI chief of staff.", apps: ["chief", "scheduler"], limit: "Unlimited users, priority support" },
+};
+const PLAN_ORDER = ["starter", "pro", "enterprise"];
+const appPlan = (key) => PLAN_ORDER.find((p) => PLANS[p].apps.includes(key)) || "starter";
+const planRank = (p) => Math.max(0, PLAN_ORDER.indexOf(p));
+const hasApp = (key) => !S.billing || planRank(S.billing.effective) >= planRank(appPlan(key));
+const planApps = (p) => PLAN_ORDER.slice(0, planRank(p) + 1).flatMap((k) => PLANS[k].apps);
+// the app this page belongs to, from its folder (/opportunities/ → "opportunities")
+const pageApp = () => (location.pathname.match(/\/([a-z]+)\/(?:index\.html)?$/) || [])[1];
+// shown instead of an app the plan doesn't include
+function lockedPanel(key, what) {
+  const need = PLANS[appPlan(key)], admin = S.profile?.role === "admin";
+  return `<section class="panel plan-lock"><div class="plan-lock-ic"><svg class="ic"><use href="#i-key"/></svg></div>
+    <h1>${esc(what || PULSE_APPS.find((a) => a.key === key)?.name || "This app")} is part of ${need.name}</h1>
+    <p class="muted">${esc(S.workspace?.name || "Your workspace")} is on <b>${esc(PLANS[S.billing?.effective]?.name || "Starter")}</b>. ${need.name} is $${need.price} per user per month and adds ${need.apps.map((k) => esc(k === "hiring" ? "Hiring" : PULSE_APPS.find((a) => a.key === k)?.name || k)).join(", ")}.</p>
+    <p class="muted small">Nothing has been deleted: everything saved here comes back as soon as you upgrade.</p>
+    ${admin ? `<a class="btn primary" href="${HUB}admin/#/billing">See plans and upgrade</a>` : `<p><b>Ask an admin</b> to upgrade in Admin → Billing.</p>`}</section>`;
 }
 function applyBrand() {
   const w = S.workspace; if (!w) return;
@@ -125,7 +153,8 @@ function buildAppsMenu() {
   const here = location.pathname.replace(/\/index\.html$/, "/");
   host.innerHTML = `<div class="apps-grid">${launcherApps().map((a) => { const href = HUB + a.href.replace(/^\.\//, ""), on = here.endsWith(a.href.replace(/^\./, ""));
       const name = a.key === "chief" ? S.workspace?.config?.chief_name || a.name : a.name;
-      return `<a role="menuitem" href="${href}" class="app-tile ${on ? "on" : ""}" data-app="${a.key}"><span class="hub-ic ${a.key === "chief" ? "ai" : ""}"><svg class="ic"><use href="#i-${a.icon}"/></svg></span><span>${esc(name)}</span></a>`; }).join("")}</div>
+      const lock = !hasApp(a.key) ? `<small class="plan-badge">${PLANS[appPlan(a.key)].name}</small>` : "";
+      return `<a role="menuitem" href="${href}" class="app-tile ${on ? "on" : ""} ${lock ? "locked" : ""}" data-app="${a.key}"><span class="hub-ic ${a.key === "chief" ? "ai" : ""}"><svg class="ic"><use href="#i-${a.icon}"/></svg></span><span>${esc(name)}</span>${lock}</a>`; }).join("")}</div>
     <a class="apps-all" role="menuitem" href="${HUB}">Open the apps page</a>`;
 }
 document.addEventListener("click", (e) => {
@@ -148,7 +177,7 @@ function buildUserMenu() {
   const item = (href, icon, label) => `<a role="menuitem" href="${href}">${ic(icon)}<span>${label}</span></a>`;
   m.innerHTML = `<div class="menu-head"><b>${esc(p.display_name)}</b><span>${esc(S.user?.email || p.email || "")}</span><small>${esc(role)}${S.workspace ? " · " + esc(S.workspace.name) : ""}</small></div>
     ${item(HUB, "grid", "All apps")}
-    ${admin ? `<div class="menu-sep"></div><div class="menu-label">Admin</div>${item(HUB + "admin/#/settings", "cog", "Workspace settings")}${item(HUB + "admin/#/team", "team", "Team, roles and codes")}${item(HUB + "review/#/activity", "clock", "Activity log")}` : ""}
+    ${admin ? `<div class="menu-sep"></div><div class="menu-label">Admin</div>${item(HUB + "admin/#/settings", "cog", "Workspace settings")}${item(HUB + "admin/#/team", "team", "Team, roles and codes")}${item(HUB + "admin/#/billing", "banknotes", "Plan and billing")}${item(HUB + "review/#/activity", "clock", "Activity log")}` : ""}
     <div class="menu-sep"></div>
     ${CFG.apps?.scheduler !== false ? item(HUB + "scheduler/#/connect", "calendar", "Connect my calendar") : ""}
     ${item(HUB + "?reset=1", "key", "Change password")}

@@ -12,7 +12,7 @@
 // Secrets: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, MS_CLIENT_ID, MS_CLIENT_SECRET, CALENDAR_SECRET (signs links and
 // encrypts tokens), SITE_URL (where Pulse is served, e.g. https://pulse.bluecredits.org), CRON_SECRET.
 // SUPABASE_URL, SUPABASE_ANON_KEY and SUPABASE_SERVICE_ROLE_KEY are provided by Supabase.
-import { caller, CORS, Deps, HttpError, json, need, randomId, rest, seal, sign, unseal, verify } from "../_shared/pulse.ts";
+import { needPlan, caller, CORS, Deps, HttpError, json, need, randomId, rest, seal, sign, unseal, verify } from "../_shared/pulse.ts";
 
 const WINDOW_BACK_MS = 864e5, WINDOW_AHEAD_MS = 21 * 864e5, STALE_MS = 10 * 6e4;
 type Provider = "google" | "microsoft";
@@ -46,6 +46,7 @@ export async function handle(req: Request, d: Deps): Promise<Response> {
       return json(await syncMany(accts, d));
     }
     const me = await caller(req, d);
+    await needPlan(d, me.workspace_id, "scheduler");
     switch (body.action) {
       case "start": return json(await start(me, body, d));
       case "sync": {

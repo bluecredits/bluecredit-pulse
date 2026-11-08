@@ -208,3 +208,16 @@ or `pg_dump` with the connection string.
 - The funding catalog (~2,400 programs) is kept separate as status *Catalog*. Move one to
   *Identified* to put it in the pipeline.
 - Forecast items use the estimated solicitation date as the due date.
+
+## Plans and billing
+- **Starter $3**, **Pro $6**, **Enterprise $10** per staff user per month (contractors free; yearly = 10 months).
+  Starter: Business Review, Contacts, Funding, Timecards, Tickets, People (team and onboarding; up to 10 users).
+  Pro adds Opportunities, Projects, Agreements, Hiring. Enterprise adds Chief of Staff and Scheduler.
+- New workspaces get 14 days of Pro. The plan is enforced in the database (`ws_has_app`, restrictive `plan_gate` policies,
+  checks in the apps' functions, the Opportunities timer) and by the server functions (402 for Scheduler / Chief).
+- **Admin → Plan and billing**: plan, users, monthly total, choose a plan. Pulse operators (table `pulse_operators`) see every
+  workspace and set plans for invoiced or complimentary companies.
+- **Card payments**: `supabase/functions/billing` (Stripe Checkout, customer portal, seat sync, webhook). Deploy it with
+  Verify JWT off and secrets `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `SITE_URL`; point a Stripe webhook at
+  `/functions/v1/billing/webhook` for `checkout.session.completed` and `customer.subscription.*`. Until then, Choose a plan
+  opens an invoice request to support@bluecredits.org.

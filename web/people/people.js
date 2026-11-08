@@ -241,10 +241,12 @@ function route() {
   if (!S.profile) return;
   const [path, qs] = location.hash.replace(/^#\/?/, "").split("?");
   const [name] = path.split("/");
-  const key = routes[name] && (isStaff() || name === "mine") ? name : isStaff() ? "candidates" : "mine";
+  const hiring = ["openings", "candidates", "interviews", "hiring-setup"];
+  const key = routes[name] && (isStaff() || name === "mine") ? name : isStaff() ? (hasApp("hiring") ? "candidates" : "people") : "mine";
   $$("#nav a[data-r]").forEach((a) => a.classList.toggle("on", a.dataset.r === key));
   document.body.classList.remove("nav-open"); closeDrawer();
   $("#main").innerHTML = `<p class="muted">Loading…</p>`;
+  if (hiring.includes(key) && !hasApp("hiring")) { $("#main").innerHTML = lockedPanel("hiring", "Hiring"); return; }
   Promise.resolve(routes[key](qs)).catch((e) => ($("#main").innerHTML = /onboardings|onb_|hire_|schema cache|does not exist/i.test(e.message)
     ? `<section class="panel"><h2>One-time setup needed</h2><p>People needs the latest database update (an admin runs the latest schema in Supabase).</p></section>` : `<div class="empty">Couldn't load this page: ${esc(e.message)}</div>`));
   $("#main").focus({ preventScroll: true });
@@ -255,6 +257,7 @@ async function boot() {
     if (!(await requireMember())) return;
     if (!isStaff()) $$('#nav a[data-r]:not([data-r="mine"]), #nav .nav-label').forEach((a) => a.remove());
     else if (!isAdmin()) $$('#nav a[data-r="template"], #nav a[data-r="hiring-setup"]').forEach((a) => a.remove());
+    if (!hasApp("hiring")) $$('#nav a[data-r="openings"], #nav a[data-r="candidates"], #nav a[data-r="interviews"], #nav a[data-r="hiring-setup"]').forEach((a) => a.insertAdjacentHTML("beforeend", `<small class="plan-badge">Pro</small>`));
     showShell(); route();
   } catch (e) { showShell(); $("#main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
 }

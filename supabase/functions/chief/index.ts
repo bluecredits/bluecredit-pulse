@@ -6,7 +6,7 @@
 // POST {mode:"brief", tz, refresh?}            → today's brief (cached per person per day unless refresh)
 // POST {mode:"ask", question, history[], tz}   → an answer about their workspace
 // Secrets: ANTHROPIC_API_KEY; optional CHIEF_MODEL (default claude-sonnet-5-5), CHIEF_DAILY_LIMIT (per workspace, default 200).
-import { caller, CORS, Deps, HttpError, json, need, rest } from "../_shared/pulse.ts";
+import { caller, CORS, Deps, HttpError, json, need, needPlan, rest } from "../_shared/pulse.ts";
 
 const TOOLS = [
   { name: "propose_action_item", description: "Suggest a follow-up action item to add to the team's action list. Only for staff (not contractors).",
@@ -65,6 +65,7 @@ export async function handle(req: Request, d: Deps): Promise<Response> {
   try {
     if (req.method !== "POST") throw new HttpError(405, "Use POST.");
     const me = await caller(req, d);
+    await needPlan(d, me.workspace_id, "chief");
     need(d.env, "ANTHROPIC_API_KEY");
     const b = await req.json().catch(() => ({}));
     const tz = /^[A-Za-z_]+(\/[A-Za-z_+-]+)*$/.test(b.tz || "") ? b.tz : "UTC";

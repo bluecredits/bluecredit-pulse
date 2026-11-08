@@ -862,3 +862,33 @@ button.apps-btn { border: 0; background: none; cursor: pointer; }
 .chips .chip:hover { border-color: var(--blue); color: var(--blue); }
 .apply-card label.check { display: flex; gap: 10px; align-items: flex-start; font-weight: 500; }
 .apply-card label.check input { width: auto; margin-top: 3px; flex: none; }
+
+/* ---- plans and billing ---- */
+.plan-badge { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; font: 700 10.5px var(--font-ui); letter-spacing: .03em;
+  background: var(--amber-1); color: var(--amber); vertical-align: middle; text-transform: uppercase; }
+.hub-app.locked { opacity: .78; } .hub-app.locked .hub-ic { filter: grayscale(.6); }
+.app-tile.locked { opacity: .7; } .app-tile .plan-badge { margin: 2px 0 0; font-size: 9.5px; }
+#nav a .plan-badge { margin-left: auto; }
+.plan-lock { max-width: 640px; margin: 40px auto; text-align: center; display: grid; gap: 8px; justify-items: center; padding: 32px; }
+.plan-lock h1 { font-size: 24px; margin: 4px 0; }
+.plan-lock-ic { width: 54px; height: 54px; border-radius: 16px; background: var(--amber-1); display: grid; place-items: center; }
+.plan-lock-ic .ic { width: 26px; height: 26px; color: var(--amber); }
+.bill-now { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+.bill-now > div { display: grid; gap: 2px; }
+.bill-now b { font: 700 26px var(--font-ui); color: var(--ink); }
+.bill-now .bill-plan { color: var(--blue); }
+.bill-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.bill-head h2 { margin: 0; }
+.price-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.price-card { position: relative; border: 1px solid var(--line); border-radius: 16px; padding: 18px; background: #fff; display: flex; flex-direction: column; gap: 6px; }
+.price-card.best { border-color: var(--blue); box-shadow: 0 6px 22px rgba(59, 130, 246, .12); }
+.price-card.current { border-color: var(--green); }
+.price-card h3 { margin: 0; font-size: 18px; }
+.price-card .price { margin: 0; color: var(--muted); } .price-card .price b { font: 800 30px var(--font-ui); color: var(--ink); }
+.price-card ul { margin: 6px 0 10px; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; flex: 1; align-content: start; }
+.price-card .btn { align-self: flex-start; }
+.price-flag { position: absolute; top: -10px; right: 14px; background: var(--blue); color: #fff; font: 700 11px var(--font-ui); padding: 3px 9px; border-radius: 999px; }
+.price-card.current .price-flag { background: var(--green); }
+.login .pricing { width: min(980px, 100%); margin: 28px auto 0; text-align: center; }
+.login .pricing h2 { margin: 0 0 4px; }
+.login .pricing .price-grid { text-align: left; margin: 16px 0 10px; }

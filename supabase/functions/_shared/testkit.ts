@@ -24,7 +24,10 @@ export function fakeDb(tables: Record<string, any[]>) {
     async handle(url: string, init: RequestInit = {}) {
       const u = new URL(url), name = u.pathname.split("/rest/v1/")[1], method = init.method || "GET";
       const prefer = String((init.headers as any)?.prefer || "");
-      if (name.startsWith("rpc/")) return Response.json((t as any)["__rpc_" + name.slice(4)]?.(JSON.parse(String(init.body || "{}")), init) ?? null);
+      if (name.startsWith("rpc/")) {
+        const fn = (t as any)["__rpc_" + name.slice(4)] ?? (name === "rpc/ws_has_app_for" ? () => true : undefined);   // plans: allowed unless a test says otherwise
+        return Response.json(fn?.(JSON.parse(String(init.body || "{}")), init) ?? null);
+      }
       const rows = (t[name] ||= []);
       if (method === "GET") return Response.json(rows.filter((r) => match(r, u.searchParams)));
       if (method === "DELETE") { t[name] = rows.filter((r) => !match(r, u.searchParams)); return new Response(""); }

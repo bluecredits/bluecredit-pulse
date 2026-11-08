@@ -115,9 +115,9 @@ async function boot() {
 /* ================================================================ status styling */
 
 /* ================================================================ router */
-const routes = { dashboard: Dashboard, reviews: Reviews, activity: Activity, team: Team, settings: () => WorkspaceSettings() };
+const routes = { dashboard: Dashboard, reviews: Reviews, activity: Activity, team: Team, settings: () => WorkspaceSettings(), billing: () => (typeof Billing === "function" ? Billing() : null) };
 // which app owns each page; anything not listed lives in Business Review
-const OWNER = { contacts: "contacts", funding: "funding", team: "admin", settings: "admin" };
+const OWNER = { contacts: "contacts", funding: "funding", team: "admin", settings: "admin", billing: "admin" };
 const HERE = location.pathname.replace(/\/index\.html$/, "/").replace(/\/$/, "").split("/").pop();
 const HOME = (window.PULSE_APP && window.PULSE_APP.home) || "dashboard";
 let navPick = null;  // the sidebar link clicked last (several can point at one page with different views)

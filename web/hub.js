@@ -29,6 +29,7 @@ async function Launcher(isNew = false) {
     <section class="hub-hero"><h1>${h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"}, ${esc(firstName())}</h1>
       <p class="muted">${new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })} · Pick up where you left off.</p></section>
     ${resumeLink()}
+    ${planBanner()}
     <div id="dueReminders"></div>
     ${appSections()}
     ${linkTiles()}
@@ -45,10 +46,18 @@ function appSections() {
   }).join("");
 }
 function appTile(a) {
-  const name = a.key === "chief" ? S.workspace?.config?.chief_name || a.name : a.name;
-  return `<a class="hub-app" href="${a.href}" data-app="${a.key}" title="${esc(a.blurb)}">
-    <div class="hub-ic ${a.key === "chief" ? "ai" : ""}">${icon(a.icon)}</div><div class="hub-body"><h3>${esc(name)}</h3><p>${esc(a.blurb)}</p>
-    <div class="hub-stats" id="stats-${a.key}"><span class="muted">Loading…</span></div></div></a>`;
+  const name = a.key === "chief" ? S.workspace?.config?.chief_name || a.name : a.name, locked = !hasApp(a.key), need = PLANS[appPlan(a.key)];
+  return `<a class="hub-app ${locked ? "locked" : ""}" href="${a.href}" data-app="${a.key}" title="${esc(a.blurb)}">
+    <div class="hub-ic ${a.key === "chief" ? "ai" : ""}">${icon(a.icon)}</div><div class="hub-body"><h3>${esc(name)}${locked ? ` <small class="plan-badge">${need.name}</small>` : ""}</h3><p>${esc(a.blurb)}</p>
+    <div class="hub-stats" id="stats-${a.key}" ${locked ? `data-locked="1"><span class="hub-stat">Part of <b>${need.name}</b> · $${need.price}/user</span>` : `><span class="muted">Loading…</span>`}</div></div></a>`;
+}
+// trial and plan reminders for admins
+function planBanner() {
+  const b = S.billing; if (!b || S.profile.role !== "admin" || b.comped) return "";
+  const paid = b.paid_until && new Date(b.paid_until) > new Date();
+  if (!paid && b.trial_days_left > 0) return `<div class="notice-bar">${icon("clock")}<div><b>Pro trial: ${b.trial_days_left} day${b.trial_days_left === 1 ? "" : "s"} left.</b> Every Pro app is open until then. <a href="./admin/#/billing">Choose a plan</a></div></div>`;
+  if (!paid && b.plan === "starter" && b.trial_ends_at) return `<div class="notice-bar">${icon("key")}<div>Your Pro trial has ended; you're on <b>Starter</b>. Opportunities, Projects, Agreements and Hiring are kept safe until you upgrade. <a href="./admin/#/billing">See plans</a></div></div>`;
+  return "";
 }
 // Links an admin set in Workspace settings → Integrations (talent tool, AI chief of staff, …)
 // First visit after creating a workspace: show the code to invite people
@@ -101,7 +110,7 @@ function deskStats(stat) {
 }
 // stats for the newer apps; each fills its own tile and stays quiet if its tables aren't there yet
 const hstat = (n, label, href, alert) => `<span class="hub-stat ${alert && n ? "alert" : ""}" data-href="${href}"><b>${(+n || 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}</b> ${label}</span>`;
-const fill = (key, html) => { const el = $("#stats-" + key); if (el) el.innerHTML = html; };
+const fill = (key, html) => { const el = $("#stats-" + key); if (el && !el.dataset.locked) el.innerHTML = html; };
 function loadAppStats() {
   Promise.all([db.rpc("project_rollup", {}), db.rpc("my_tasks", {})]).then(([ps, mine]) => {
     const act = ps.filter((r) => r.status === "Active"), attn = act.filter((r) => r.health !== "On track").length, due = mine.filter((t) => t.due && new Date(t.due) - Date.now() < 3 * 864e5).length;
@@ -128,7 +137,7 @@ function loadAppStats() {
     const mine = (st || []).some((x) => x.user_id === S.user.id && x.status === "connected"), n = new Set((st || []).filter((x) => x.status === "connected").map((x) => x.user_id)).size;
     fill("scheduler", (mine ? "" : `<span class="hub-stat alert" data-href="./scheduler/#/connect"><b>Connect</b> your calendar</span>`) + hstat(n, `of ${S.team.filter((p) => p.active).length} calendars linked`, "./scheduler/"));
   }).catch(() => fill("scheduler", ""));
-  Promise.all([sb.from("onboardings").select("status, checklist, user_id"), S.profile.role === "contractor" ? Promise.resolve(null) : db.rpc("hire_summary", {}).catch(() => null)]).then(([{ data, error }, h]) => {
+  Promise.all([sb.from("onboardings").select("status, checklist, user_id"), S.profile.role === "contractor" || !hasApp("hiring") ? Promise.resolve(null) : db.rpc("hire_summary", {}).catch(() => null)]).then(([{ data, error }, h]) => {
     if (error) return fill("people", "");
     if (S.profile.role === "contractor") {
       const mine = (data || []).filter((o) => o.user_id === S.user.id).flatMap((o) => o.checklist || []).filter((i) => i.who === "them");
@@ -156,7 +165,19 @@ document.addEventListener("click", (e) => {
 
 /* ================================================================ auth */
 let authMode = "signin";
+// plans under the sign-in card
+function renderPricing() {
+  const el = $("#pricing"); if (!el || el.dataset.done) return; el.dataset.done = "1";
+  const name = (k) => k === "hiring" ? "Hiring" : PULSE_APPS.find((a) => a.key === k)?.name || k;
+  el.innerHTML = `<h2>Simple pricing</h2><p class="muted">Per staff user per month. Contractors and consultants are free. Pay yearly and get 2 months free.</p>
+    <div class="price-grid">${PLAN_ORDER.map((k, i) => { const p = PLANS[k];
+      return `<div class="price-card ${k === "pro" ? "best" : ""}">${k === "pro" ? `<span class="price-flag">Most popular</span>` : ""}<h3>${p.name}</h3>
+        <p class="price"><b>$${p.price}</b> /user/month</p><p class="muted small">${esc(p.blurb)}</p>
+        <ul>${i ? `<li><b>Everything in ${PLANS[PLAN_ORDER[i - 1]].name}</b></li>` : ""}${p.apps.map((a) => `<li>${esc(name(a))}</li>`).join("")}<li class="muted">${esc(p.limit)}</li></ul></div>`; }).join("")}</div>
+    <p class="muted small">Every new workspace starts with 14 days of Pro. No card needed to start.</p>`;
+}
 function showAuth(mode, notice = "") {
+  renderPricing();
   authMode = mode;
   $("#shell").hidden = true; $("#topbar").hidden = true; $("#setup").hidden = true; $("#login").hidden = false;
   $("#authTabs").hidden = !["signin", "join", "create"].includes(mode);

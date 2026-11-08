@@ -6,7 +6,7 @@
 
 const FD = { source: "SAM.gov", status: "New", search: "", q: "", sort: "posted", level: "", kw: "", naics: "" };
 const LEVELS = ["Federal", "State", "Local", "Education"];
-const SRC = { "SAM.gov": { tab: "contracts", label: "Contracts", noun: "notices", site: "SAM.gov" }, "Grants.gov": { tab: "grants", label: "Grants", noun: "grants", site: "Grants.gov" }, BidMatch: { tab: "contracts/bids", label: "Bids", noun: "bids", site: "MyBidMatch" } };
+const SRC = { "SAM.gov": { tab: "contracts", label: "Contracts", noun: "notices", site: "SAM.gov" }, "Grants.gov": { tab: "grants", label: "Grants", noun: "grants", site: "Grants.gov" }, BidMatch: { tab: "contracts/bids", label: "Bids", noun: "bids", site: "MyBidMatch" }, Link: { tab: "contracts/links", label: "Added by link", noun: "opportunities", site: "the link" } };
 const icon = (name, cls = "ic") => `<svg class="${cls}"><use href="#i-${name}"/></svg>`;
 const isAdmin = () => S.profile?.role === "admin";
 
@@ -71,7 +71,7 @@ const setupNeeded = (e) => /fed_|schema cache|does not exist/i.test(e.message ||
 
 /* ================================================================ matches */
 async function Matches() {
-  const grants = FD.source === "Grants.gov", bm = FD.source === "BidMatch", src = SRC[FD.source];
+  const grants = FD.source === "Grants.gov", bm = FD.source === "BidMatch", lk = FD.source === "Link", src = SRC[FD.source];
   const [prof, st, counts] = await Promise.all([db.rpc("fed_profile", { p_source: grants ? "Grants.gov" : "SAM.gov" }), db.rpc("fed_status", {}), db.rpc("fed_counts", {})]);
   const searches = bm ? [] : [prof]; FD.search = "";
   // contracts and bids use your contracts profile; grants use your grants profile
@@ -105,10 +105,10 @@ async function Matches() {
       ${moreKw.length ? `<optgroup label="${bm ? "MyBidMatch profile terms" : "Other"}">${moreKw.map(([k, n]) => opt(k, n, FD.kw, (x) => x)).join("")}</optgroup>` : ""}</select>`;
   const sname = Object.fromEntries(searches.map((s) => [s.id, s.name]));
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>${grants ? "Grants" : "Contracts"}</h1><p class="muted">${bm ? "Bids from your APEX Accelerator MyBidMatch lists: federal, state, local and education." : (grants ? "Open and forecasted Grants.gov grants" : "Federal notices from SAM.gov") + " with your NAICS codes or keywords."} ${bm ? bmLine(st) : statusLine(st, grants)}</p></div>
-      <div class="actions-row"><button class="btn" id="runNow">${icon("return")}Check now</button>${bm ? `<a class="btn" href="#/settings">${icon("cog")}MyBidMatch link</a>` : `<a class="btn primary" href="#/profile">${icon("cog")}Edit my NAICS &amp; keywords</a>`}</div></div>
-    ${grants ? "" : `<div class="tabs src-tabs">${[["SAM.gov", "#/contracts", "SAM.gov"], ["BidMatch", "#/contracts/bids", "APEX BidMatch"]].map(([k, href, l]) => `<a href="${href}" aria-selected="${k === FD.source}">${l}${counts.by_source?.[k] ? ` <span class="count">${counts.by_source[k]}</span>` : ""}</a>`).join("")}</div>`}
-    ${bm ? bmBanner(st) : banner(st, searches, grants)}
+    <div class="page-head"><div><h1>${grants ? "Grants" : "Contracts"}</h1><p class="muted">${lk ? "Opportunities you added by pasting a link: state and local portals, foundations, anything outside SAM.gov and Grants.gov." : bm ? "Bids from your APEX Accelerator MyBidMatch lists: federal, state, local and education." : (grants ? "Open and forecasted Grants.gov grants" : "Federal notices from SAM.gov") + " with your NAICS codes or keywords."} ${lk ? "" : bm ? bmLine(st) : statusLine(st, grants)}</p></div>
+      <div class="actions-row"><button class="btn" id="addLink">${icon("plus")}Add by link</button>${lk ? "" : `<button class="btn" id="runNow">${icon("return")}Check now</button>`}${lk ? "" : bm ? `<a class="btn" href="#/settings">${icon("cog")}MyBidMatch link</a>` : `<a class="btn primary" href="#/profile">${icon("cog")}Edit my NAICS &amp; keywords</a>`}</div></div>
+    ${grants ? "" : `<div class="tabs src-tabs">${[["SAM.gov", "#/contracts", "SAM.gov"], ["BidMatch", "#/contracts/bids", "APEX BidMatch"], ["Link", "#/contracts/links", "Added by link"]].map(([k, href, l]) => `<a href="${href}" aria-selected="${k === FD.source}">${l}${counts.by_source?.[k] ? ` <span class="count">${counts.by_source[k]}</span>` : ""}</a>`).join("")}</div>`}
+    ${lk ? "" : bm ? bmBanner(st) : banner(st, searches, grants)}
     ${bm ? `<div class="fed-levels">${["", ...LEVELS].map((l) => `<button class="chip ${FD.level === l ? "on" : ""}" data-lv="${l}">${l || "All"}${l ? ` <span>${levelCounts[l] || 0}</span>` : ""}</button>`).join("")}</div>` : ""}
     <div class="filters">
       <div class="tabs">${["New", "Saved", "Added", "Dismissed", "All"].map((k) => `<button data-st="${k}" aria-selected="${FD.status === k}">${k}</button>`).join("")}</div>
@@ -126,7 +126,8 @@ async function Matches() {
   $("[data-clear]")?.addEventListener("click", () => { FD.naics = ""; FD.kw = ""; Matches(); });
   $$("[data-more]").forEach((b) => b.addEventListener("click", () => { const p = b.previousElementSibling; const open = p.classList.toggle("open"); b.textContent = open ? "Show less" : "Show full description"; }));
   $("#fQ").addEventListener("input", debounce((e) => { FD.q = e.target.value; Matches().then(() => { const i = $("#fQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 300));
-  $("#runNow").addEventListener("click", runNow);
+  $("#runNow")?.addEventListener("click", runNow);
+  $("#addLink").addEventListener("click", () => addByLink(st));
   $$("[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act, b.closest("[data-nid]").dataset.nid, b)));
   $$("[data-save-ct]").forEach((b) => b.addEventListener("click", async () => {
     b.disabled = true;
@@ -205,7 +206,7 @@ async function act(what, nid, btn) {
       btn.closest(".fed-card").querySelector(".fed-actions").innerHTML = `<a class="btn small" href="../funding/#/funding/${id}">${icon("check")}In Funding</a>`;
     } else if (what === "add") {
       const kinds = workspaceSettings(S.workspace).lists["opportunities.kind"] || [];
-      const lvl = FD.source === "BidMatch" ? (rowsCache[nid]?.level || "") : "Federal";
+      const lvl = FD.source === "BidMatch" || FD.source === "Link" ? (rowsCache[nid]?.level || "") : "Federal";
       const kind = lvl === "Federal" ? kinds.find((k) => /federal/i.test(k)) || kinds.find((k) => /contract/i.test(k)) || ""
         : kinds.find((k) => /state|local/i.test(k)) || kinds.find((k) => /contract/i.test(k)) || "";
       const id = await db.rpc("fed_add_to_opportunities", { p_notice: nid, p_kind: kind || null });
@@ -376,7 +377,9 @@ function route() {
   if (parts[0] === "bidmatch") { location.replace("#/contracts/bids"); return; }
   if (parts[0] === "searches") { location.replace("#/profile"); return; }
   const key = { contracts: 1, grants: 1, profile: 1, settings: 1, help: 1 }[parts[0]] ? parts[0] : "contracts";
-  if (key === "contracts") FD.source = parts[1] === "bids" ? "BidMatch" : "SAM.gov"; if (key === "grants") FD.source = "Grants.gov";
+  const prevSrc = FD.source;
+  if (key === "contracts") FD.source = parts[1] === "bids" ? "BidMatch" : parts[1] === "links" ? "Link" : "SAM.gov"; if (key === "grants") FD.source = "Grants.gov";
+  if (FD.pin) FD.pin = false; else if (FD.source === "Link" && prevSrc !== "Link") FD.status = "All"; else if (prevSrc === "Link" && FD.source !== "Link") FD.status = "New";
   $$("#nav a[data-r]").forEach((a) => a.classList.toggle("on", a.dataset.r === key));
   document.body.classList.remove("nav-open"); closeDrawer();
   $("#main").innerHTML = `<p class="muted">Loading…</p>`;
@@ -395,3 +398,60 @@ async function boot() {
   } catch (e) { showShell(); $("#main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
 }
 boot();
+
+/* ---------------------------------------------------------------- Add by link
+   Paste a link: SAM.gov and Grants.gov notices are fetched; anything else is saved with a few details you type. */
+function addByLink(st) {
+  $("#drawerTitle").textContent = "Add an opportunity by link";
+  $("#drawerBody").innerHTML = `<form id="alForm" class="form-grid">
+    <label style="grid-column:1/-1">Link<input name="url" type="url" required placeholder="https://sam.gov/opp/…/view, https://www.grants.gov/search-results-detail/…, or any bid page"></label>
+    <p class="muted small" style="grid-column:1/-1" id="alHint">SAM.gov and Grants.gov links are filled in for you. For other sites (eVA, state and city portals, foundations) add a few details.</p>
+    <div id="alMore" hidden style="display:contents">
+      <label style="grid-column:1/-1">Title *<input name="title"></label>
+      <label>Agency or organization<input name="agency"></label>
+      <label>Type<select name="kind">${["State contract", "Local contract", "Federal contract", "Education contract", "Private / commercial", "Grant or funding", "Other"].map((k) => `<option>${k}</option>`).join("")}</select></label>
+      <label>Due date<input name="deadline" type="date"></label>
+      <label>Solicitation # <small class="muted">(optional)</small><input name="ref"></label>
+      <label style="grid-column:1/-1">Notes<textarea name="notes" rows="3" placeholder="Scope, pre-bid meeting, contact…"></textarea></label>
+    </div>
+    <div class="actions-row" style="grid-column:1/-1"><button class="btn primary" id="alGo">Add</button></div>
+    <div id="alStatus" style="grid-column:1/-1"></div></form>`;
+  openDrawer();
+  const f = $("#alForm"), more = $("#alMore"); let manual = false;
+  const kindOf = (u) => /sam\.gov\/(workspace\/contract\/)?opp\/[0-9a-f]{32}/i.test(u) ? "SAM.gov" : /grants\.gov\/.*(search-results-detail\/|oppid=)\d+/i.test(u) ? "Grants.gov" : u ? "Link" : "";
+  f.url.addEventListener("input", () => {
+    const k = kindOf(f.url.value.trim()); more.hidden = k !== "Link"; f.title.required = k === "Link";
+    $("#alHint").textContent = k === "SAM.gov" ? (st.has_key ? "SAM.gov notice: Pulse fetches it with your API key." : "SAM.gov notice. There's no SAM.gov API key yet, so add the details yourself.") : k === "Grants.gov" ? "Grants.gov opportunity: Pulse fetches it." : k === "Link" ? "Add a few details so it's useful in your pipeline." : $("#alHint").textContent;
+    if (k === "SAM.gov" && !st.has_key) { more.hidden = false; f.title.required = true; }
+  });
+  f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const p = { manual, url: f.url.value.trim(), title: f.title.value, agency: f.agency.value, kind: f.kind.value, deadline: f.deadline.value, ref: f.ref.value, notes: f.notes.value };
+    const go = $("#alGo"); go.disabled = true;
+    try {
+      let r = await db.rpc("fed_add_link", { p });
+      if (r.state === "no_key" || r.state === "need_details") {
+        more.hidden = false; f.title.required = true; go.disabled = false;
+        $("#alStatus").innerHTML = `<p class="notice-bar">${icon("alert")}<span>${r.state === "no_key" ? "Pulse can't fetch SAM.gov notices without an API key (Settings). Add the details and it's saved as a link." : "Add a title (and any other details), then Add."}</span></p>`;
+        if (r.state === "no_key") manual = true;
+        if (r.state === "no_key" && f.title.value.trim()) { r = await db.rpc("fed_add_link", { p: { ...p, manual: true } }); }
+        else return;
+      }
+      if (r.state === "fetching") {
+        $("#alStatus").innerHTML = `<p class="muted">${icon("clock")} Fetching from ${esc(r.source)}…</p>`;
+        for (let i = 0; i < 30; i++) {
+          await new Promise((res) => setTimeout(res, 4000));
+          const c = await db.rpc("fed_link_check", { p_notice: r.notice_id });
+          if (c.state === "ready") { r = { ...r, ...c, state: "ready" }; break; }
+          if (c.state === "error") { $("#alStatus").innerHTML = `<p class="notice-bar">${icon("alert")}<span>${esc(c.error || "Couldn't fetch it.")} ${r.source === "SAM.gov" ? "Check the link, or add it with your own details." : ""}</span></p>`; go.disabled = false; if (r.source === "SAM.gov") { more.hidden = false; f.title.required = true; manual = true; } return; }
+        }
+        if (r.state !== "ready") { $("#alStatus").innerHTML = `<p class="muted">Still waiting on ${esc(r.source)}. It will appear under <b>Saved</b> when it arrives.</p>`; go.disabled = false; return; }
+      }
+      closeDrawer();
+      toast(`Added${r.title ? ": " + r.title.slice(0, 60) : ""}`);
+      const tab = SRC[r.source]?.tab || "contracts/links";
+      FD.status = r.source === "Link" ? "All" : (r.status || "Saved") === "Added" ? "Added" : "Saved"; FD.pin = true;
+      if (location.hash === "#/" + tab) Matches(); else location.hash = "#/" + tab;
+    } catch (err) { go.disabled = false; toast(err.message); }
+  });
+}

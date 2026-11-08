@@ -1105,3 +1105,9 @@ section.certify { padding: 18px 20px; } div.certify { margin-top: 14px; padding:
 .txt-red { color: var(--red); }
 .src-hand ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; } .src-hand li { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; } .src-hand li a { text-decoration: none; color: var(--ink); }
 .row-actions { white-space: nowrap; } .row-actions .btn + .btn { margin-left: 6px; }
+/* org chart: AI agents */
+.org-node.ai { background: linear-gradient(160deg, #f5f3ff, #ede9fe); border-color: #c4b5fd; border-top-color: #7c3aed; }
+.org-node.ai .org-who { color: #5b21b6; }
+.org-ai { position: absolute; top: 6px; right: 8px; display: inline-flex; align-items: center; gap: 3px; font: 700 10px var(--font-ui); color: #6d28d9; background: #fff; border: 1px solid #ddd6fe; border-radius: 999px; padding: 1px 6px 1px 4px; }
+.org-ai .ic { width: 11px; height: 11px; }
+.org-legend i.aisw { background: linear-gradient(160deg, #ede9fe, #c4b5fd); border: 1px solid #7c3aed; }

@@ -3338,9 +3338,18 @@ drop policy if exists plan_gate on public.fed_sources;
 create policy plan_gate on public.fed_sources as restrictive for all to authenticated using (public.ws_has_app('opportunities')) with check (public.ws_has_app('opportunities'));
 
 -- text helpers
-create or replace function public.src_text(p text) returns text language sql immutable as $$
-  select nullif(trim(regexp_replace(replace(replace(replace(replace(replace(replace(regexp_replace(coalesce(p, ''), '<[^>]*>', ' ', 'g'),
-    '&nbsp;', ' '), '&amp;', '&'), '&#039;', ''''), '&quot;', '"'), '&lt;', '<'), '&gt;', '>'), '\s+', ' ', 'g')), '') $$;
+create or replace function public.src_text(p text) returns text language plpgsql immutable as $$
+declare t text := regexp_replace(coalesce(p, ''), '<[^>]*>', ' ', 'g'); m text[];
+begin
+  t := replace(replace(replace(replace(replace(replace(replace(replace(replace(t, '&nbsp;', ' '), '&amp;', '&'), '&quot;', '"'), '&lt;', '<'), '&gt;', '>'),
+         '&rsquo;', ''''), '&lsquo;', ''''), '&ndash;', '–'), '&mdash;', '—');
+  -- numeric entities: &#36; &#x24;
+  for m in select distinct regexp_matches(t, '&#(x?[0-9a-fA-F]{1,6});', 'g') loop
+    begin t := replace(t, '&#' || m[1] || ';', chr(case when m[1] ilike 'x%' then ('x' || lpad(substring(m[1] from 2), 8, '0'))::bit(32)::int else m[1]::int end));
+    exception when others then null; end;
+  end loop;
+  return nullif(trim(regexp_replace(t, '\s+', ' ', 'g')), '');
+end $$;
 create or replace function public.src_abs(p_href text, p_base text) returns text language sql immutable as $$
   select case when p_href is null or p_href ~* '^(javascript:|mailto:|tel:|#)' then null
               when p_href ~* '^https?://' then p_href
@@ -3461,12 +3470,14 @@ begin
       items := items || jsonb_build_object('title', t, 'link', l, 'text', left(coalesce(nullif(trim(both ' ·' from regexp_replace(replace(rowtxt, t, ''), '(\s*·\s*)+', ' · ', 'g')), ''), rowtxt), 900), 'row', true, 'naics', to_jsonb(nc),
                                            'contact', case when ph is not null or em is not null then jsonb_build_object('name', nm, 'phone', ph, 'email', em) end);
     end loop;
-    for r in select x from regexp_split_to_table(p_body, '(?i)<a\s') with ordinality z(x, i) where i > 1 limit 2000 loop
+    -- links only when the page has no table of listings (otherwise they are menus, sidebars and other news)
+    for r in select x from regexp_split_to_table(p_body, '(?i)<a\s') with ordinality z(x, i) where i > 1 and jsonb_array_length(items) < 2 limit 2000 loop
       l := src_abs(substring(r from '^[^>]*href\s*=\s*["'']([^"'']+)'), s.url);
       r := regexp_replace(r, '</a\s*>', '</a>', 'gi');
       t := src_text(regexp_replace(split_part(r, '</a>', 1), '^[^>]*>', ''));
       if l is null or t is null or length(t) < 20 or length(t) > 400 then continue; end if;
       if not (src_looks_like(t) or l ~* '\.(pdf|docx?|zip)(\?|$)') then continue; end if;
+      if t ~* '(low bidder|bid results?|awarded to|award notice|winning bid|contract award)' or l ~* '/(bid-results?|awards?)/' then continue; end if;
       if l ~* '(facebook|twitter|linkedin|instagram|youtube|whatsapp|tiktok)\.com|//(www\.)?x\.com|/sharer?[./?]' then continue; end if;
       items := items || jsonb_build_object('title', t, 'link', l, 'text', left(src_text(left(split_part(r, '</a>', 2), 500)), 300));
     end loop;
@@ -3932,7 +3943,7 @@ create table if not exists public.org_positions (
   title text not null,
   department_id bigint references public.org_departments (id) on delete set null,
   reports_to bigint references public.org_positions (id) on delete set null,
-  kind text not null default 'Staff' check (kind in ('Staff', 'Contractor', 'Advisor', 'Board')),
+  kind text not null default 'Staff' check (kind in ('Staff', 'Contractor', 'Advisor', 'Board', 'AI')),
   user_id uuid references public.profiles (id) on delete set null,
   onboarding_id bigint references public.onboardings (id) on delete set null,
   holder_name text,                                 -- someone without a Pulse login (e.g. a board member)
@@ -3941,6 +3952,9 @@ create table if not exists public.org_positions (
   created_at timestamptz default now(), updated_at timestamptz default now(), updated_by text
 );
 create index if not exists ix_orgpos_ws on public.org_positions (workspace_id);
+-- AI agents can hold positions too (an AI assistant, a research agent…)
+alter table public.org_positions drop constraint if exists org_positions_kind_check;
+alter table public.org_positions add constraint org_positions_kind_check check (kind in ('Staff', 'Contractor', 'Advisor', 'Board', 'AI'));
 alter table public.org_departments enable row level security;
 alter table public.org_positions enable row level security;
 revoke all on public.org_departments, public.org_positions from anon;

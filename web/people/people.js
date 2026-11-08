@@ -21,7 +21,7 @@ const DEFAULT_CHECKLIST = [
   { id: "pulse", text: "Invite to Pulse with the contractor code", who: "us" },
   { id: "accounts", text: "Create email and tool accounts", who: "us" },
   { id: "projects", text: "Add to their Timecards projects", who: "us" },
-  { id: "equipment", text: "Assign equipment (Tickets → Assets)", who: "us" },
+  { id: "equipment", text: "Issue equipment (Devices, on this page)", who: "us" },
   { id: "handbook", text: "Read the handbook and policies", who: "them" },
   { id: "kickoff", text: "Kickoff meeting with their manager", who: "us" },
 ];
@@ -65,6 +65,7 @@ async function People() {
 
 async function editPerson(o) {
   const owners = S.team.filter((p) => p.active && p.role !== "contractor");
+  const P = await orgPositions(), curPos = o && P ? P.find((x) => x.onboarding_id === o.id || (o.user_id && x.user_id === o.user_id)) : null;
   $("#drawerTitle").textContent = o ? `Edit ${o.name}` : "Add person";
   $("#drawerBody").innerHTML = `<form id="obForm" class="form-grid">
     <label>Name<input name="name" required value="${esc(o?.name || "")}"></label>
@@ -78,6 +79,7 @@ async function editPerson(o) {
     <label>Rate (USD)<input name="rate" type="number" min="0" step="0.01" value="${o?.rate ?? ""}"></label>
     <label>Per<select name="rate_unit">${Object.entries(UNITS).map(([k, v]) => `<option value="${k}" ${k === (o?.rate_unit || "hour") ? "selected" : ""}>${v.replace("/", "").trim()}</option>`).join("")}</select></label>
     <label>Owner<select name="owner_id">${owners.map((p) => `<option value="${p.id}" ${p.id === (o?.owner_id || S.user.id) ? "selected" : ""}>${esc(p.display_name)}</option>`).join("")}</select></label>
+    ${orgPicker(P, curPos)}
     <label style="grid-column:1/-1">Notes<textarea name="notes" rows="3">${esc(o?.notes || "")}</textarea></label>
     <div class="actions-row" style="grid-column:1/-1"><button class="btn primary">${o ? "Save" : "Add and start checklist"}</button>${o && isAdmin() ? `<button type="button" class="btn danger" id="obDel">Delete</button>` : ""}</div></form>`;
   openDrawer();
@@ -86,13 +88,15 @@ async function editPerson(o) {
     const row = Object.fromEntries(["name", "email", "kind", "firm", "role_title", "phone", "start_date", "end_date", "rate_unit", "owner_id", "notes"].map((k) => [k, (f.get(k) || "").trim() || null]));
     row.rate = f.get("rate") === "" ? null : +f.get("rate");
     try {
-      if (o) { must(await sb.from("onboardings").update(row).eq("id", o.id)); toast("Saved"); openPerson(o.id); }
+      const pick = orgPick(f.get("orgpos") || "");
+      if (o) { must(await sb.from("onboardings").update(row).eq("id", o.id)); if (pick) await db.rpc("org_place", { p_onboarding: o.id, p_position: pick.position, p_parent: pick.parent, p_title: row.role_title, p_dept: null }); toast("Saved"); openPerson(o.id); }
       else {
         row.checklist = template().map((i) => ({ ...i, id: i.id || newId(), done: false }));
         const r = must(await sb.from("onboardings").insert(row).select("*").single());
         // already in Pulse? link them now
         const p = row.email && S.team.find((m) => (m.email || "").toLowerCase() === row.email.toLowerCase());
         if (p) must(await sb.from("onboardings").update({ user_id: p.id, status: "In progress" }).eq("id", r.id));
+        if (pick) await db.rpc("org_place", { p_onboarding: r.id, p_position: pick.position, p_parent: pick.parent, p_title: row.role_title, p_dept: null }).catch((e) => toast(e.message));
         toast(`${row.name} added`); openPerson(r.id);
       }
       People();
@@ -111,6 +115,7 @@ async function openPerson(id) {
   const allProj = isStaff() ? must(await sb.from("projects").select("id, name, status").order("name")) : [];
   const agrs = isStaff() || mine ? await sb.from("agreements").select("id, number, title, status, template_name").eq("onboarding_id", o.id).order("created_at").then((r) => r.data || []).catch(() => []) : [];
   const [d, t] = progress(o);
+  const dev = await personDevices(o).catch(() => ({ mine: [], html: "" }));
   const show = (o.checklist || []).filter((i) => !i.off || o.status.startsWith("Offboard"));
   const item = (i) => `<li class="ck ${i.done ? "done" : ""}"><label class="check"><input type="checkbox" data-item="${esc(i.id)}" ${i.done ? "checked" : ""}
       ${canEdit || (mine && i.who === "them") ? "" : "disabled"}> <span>${esc(i.text)}${i.link ? ` · <a href="${esc(i.link)}" target="_blank" rel="noopener">link</a>` : ""}</span></label>
@@ -132,6 +137,7 @@ async function openPerson(id) {
     <ul class="checklist">${agrs.map((g) => `<li class="ck"><a href="../agreements/#/view/${g.id}">AGR-${String(g.number).padStart(4, "0")} · ${esc(g.title)}</a><span class="meta">${esc(g.status)}</span></li>`).join("") || `<li class="muted small" style="padding:4px 10px">None yet.</li>`}</ul>
     ${isStaff() ? `<div class="actions-row" style="margin:4px 0 12px">${[...(o.kind === "Employee" || o.kind === "Intern" ? [["employment", "Employment agreement"]] : [["consulting", "Consulting agreement"]]), ["confidentiality", "Confidentiality agreement"], ["teaming", "Teaming agreement"]].map(([k, l]) =>
       `<a class="btn small" href="../agreements/#/new?template=${k}&onboarding=${o.id}">${icon("plus")}${l}</a>`).join("")}</div>` : ""}
+    ${dev.html || ""}
     ${isStaff() && o.user_id ? `<h3 class="ck-h">Timecards projects</h3><div class="chips">${allProj.filter((p) => p.status !== "Closed").map((p) =>
         `<label class="chip-check"><input type="checkbox" data-proj="${p.id}" ${projects.some((x) => x.project_id === p.id) ? "checked" : ""} ${isAdmin() ? "" : "disabled"}> ${esc(p.name)}</label>`).join("") || `<span class="muted">No projects yet. Add them in <a href="../timecards/#/projects">Timecards</a>.</span>`}</div>` : ""}
     ${canEdit ? `<div class="actions-row" style="margin-top:18px">
@@ -155,12 +161,14 @@ async function openPerson(id) {
       toast(c.checked ? "Added to project" : "Removed from project");
     } catch (e) { c.checked = !c.checked; toast(e.message); }
   }));
+  wirePersonDevices(o, () => openPerson(o.id));
   $("#obEdit")?.addEventListener("click", () => editPerson(o));
   $("#obInvite")?.addEventListener("click", () => inviteBox(o));
   $("#obNext")?.addEventListener("click", async () => {
     const patch = { status: next };
     if (next === "Offboarding" && !(o.checklist || []).some((i) => i.off)) patch.checklist = [...(o.checklist || []), ...OFFBOARD.map((i) => ({ ...i, done: false }))];
     if (next === "Offboarded") {
+      if (dev.mine?.length) return toast(`${o.name} still has ${dev.mine.length} device${dev.mine.length === 1 ? "" : "s"}: ${dev.mine.map((a) => a.name).join(", ")}. Mark ${dev.mine.length === 1 ? "it" : "them"} returned or lost first.`);
       if (!confirm(`Finish offboarding ${o.name}?${o.user_id ? " Their Pulse login is turned off and they're removed from their projects." : ""}`)) return;
       if (o.user_id && isAdmin()) {
         try {
@@ -199,12 +207,15 @@ async function inviteBox(o) {
 /* ================================================================ My checklist */
 async function Mine() {
   const mine = must(await sb.from("onboardings").select("*").eq("user_id", S.user.id));
+  const devHtml = await myDevicesHtml();
   $("#main").innerHTML = `<div class="page-head"><div><h1>My checklist</h1><p class="muted">What's left to get you set up at ${esc(S.workspace.name)}.</p></div></div>
+    ${devHtml}
     ${mine.length ? mine.map((o) => { const [d, t] = progress(o); return `<section class="panel"><h2>${esc(o.role_title || o.kind)} <small>${d} of ${t} done</small></h2>
       <ul class="checklist">${(o.checklist || []).filter((i) => !i.off || o.status.startsWith("Offboard")).map((i) => `<li class="ck ${i.done ? "done" : ""}"><label class="check">
         <input type="checkbox" data-o="${o.id}" data-item="${esc(i.id)}" ${i.done ? "checked" : ""} ${i.who === "them" ? "" : "disabled"}> <span>${esc(i.text)}</span></label>
         <span class="meta">${i.who === "them" ? `<span class="pill s-high">You</span>` : `<span class="muted">${esc(S.workspace.name)}</span>`}</span></li>`).join("")}</ul></section>`; }).join("")
-      : `<div class="empty">No onboarding checklist for you${isStaff() ? "." : " yet. Your contact may have used a different email: ask them to check it."}</div>`}`;
+      : devHtml ? "" : `<div class="empty">No onboarding checklist for you${isStaff() ? "." : " yet. Your contact may have used a different email: ask them to check it."}</div>`}`;
+  wireMyDevices(Mine);
   $$("[data-item]").forEach((c) => c.addEventListener("change", async () => {
     try { await db.rpc("onb_tick", { p_id: +c.dataset.o, p_item: c.dataset.item, p_done: c.checked }); c.closest("li").classList.toggle("done", c.checked); toast(c.checked ? "Done" : "Unticked"); }
     catch (e) { c.checked = !c.checked; toast(e.message); }
@@ -235,14 +246,14 @@ async function Template() {
 }
 
 /* ================================================================ router */
-const routes = { openings: Openings, candidates: Candidates, interviews: Interviews, people: People, mine: Mine, template: Template, "hiring-setup": HiringSetup, policies: MyPolicies, signoffs: SignOffs };
+const routes = { openings: Openings, candidates: Candidates, interviews: Interviews, people: People, mine: Mine, template: Template, "hiring-setup": HiringSetup, policies: MyPolicies, signoffs: SignOffs, org: OrgChart, devices: Devices };
 window.addEventListener("hashchange", route);
 function route() {
   if (!S.profile) return;
   const [path, qs] = location.hash.replace(/^#\/?/, "").split("?");
   const [name] = path.split("/");
   const hiring = ["openings", "candidates", "interviews", "hiring-setup"];
-  const key = routes[name] && (isStaff() || name === "mine" || name === "policies") && (name !== "signoffs" || isAdmin()) ? name : isStaff() ? (hasApp("hiring") ? "candidates" : "people") : "mine";
+  const key = routes[name] && (isStaff() || ["mine", "policies", "org"].includes(name)) && (!["signoffs", "devices"].includes(name) || isAdmin()) ? name : isStaff() ? (hasApp("hiring") ? "candidates" : "people") : "mine";
   $$("#nav a[data-r]").forEach((a) => a.classList.toggle("on", a.dataset.r === key));
   document.body.classList.remove("nav-open"); closeDrawer();
   $("#main").innerHTML = `<p class="muted">Loading…</p>`;
@@ -255,8 +266,8 @@ async function boot() {
   if (!sb) { $("#setup").hidden = false; return; }
   try {
     if (!(await requireMember())) return;
-    if (!isStaff()) $$('#nav a[data-r]:not([data-r="mine"]):not([data-r="policies"]), #nav .nav-label').forEach((a) => a.remove());
-    else if (!isAdmin()) $$('#nav a[data-r="template"], #nav a[data-r="hiring-setup"], #nav a[data-r="signoffs"]').forEach((a) => a.remove());
+    if (!isStaff()) $$('#nav a[data-r]:not([data-r="mine"]):not([data-r="policies"]):not([data-r="org"]), #nav .nav-label').forEach((a) => a.remove());
+    else if (!isAdmin()) $$('#nav a[data-r="template"], #nav a[data-r="hiring-setup"], #nav a[data-r="signoffs"], #nav a[data-r="devices"]').forEach((a) => a.remove());
     if (!hasApp("hiring")) $$('#nav a[data-r="openings"], #nav a[data-r="candidates"], #nav a[data-r="interviews"], #nav a[data-r="hiring-setup"]').forEach((a) => a.insertAdjacentHTML("beforeend", `<small class="plan-badge">Pro</small>`));
     showShell(); route();
   } catch (e) { showShell(); $("#main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }

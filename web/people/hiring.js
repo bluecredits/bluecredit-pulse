@@ -73,7 +73,8 @@ async function Openings() {
   $$("[data-op]").forEach((c) => c.addEventListener("click", (e) => { if (!e.target.closest("a,button")) location.hash = `#/candidates?o=${c.dataset.op}`; }));
 }
 
-function editOpening(o) {
+async function editOpening(o) {
+  const P = await orgPositions(), curPos = o && P ? P.find((x) => x.opening_id === o.id) : null;
   const v = o || { kind: "Employee", remote: "Remote", status: "Draft", criteria: hCriteria(), work_sample: true, hiring_manager: S.user.id };
   $("#drawerTitle").textContent = o ? `Edit ${o.title}` : "New opening";
   $("#drawerBody").innerHTML = `<form id="opForm" class="form-grid">
@@ -90,6 +91,7 @@ function editOpening(o) {
     <label style="grid-column:1/-1">Must-haves<textarea name="must_haves" rows="5" placeholder="One per line">${esc(v.must_haves || "")}</textarea></label>
     <label style="grid-column:1/-1">Scorecard criteria <small class="muted">(one per line; interviewers rate each 1–5)</small><textarea name="criteria" rows="5">${esc((v.criteria || []).join("\n"))}</textarea></label>
     <label class="check" style="grid-column:1/-1"><input type="checkbox" name="work_sample" ${v.work_sample ? "checked" : ""}> Include a work sample stage</label>
+    ${orgPicker(P, curPos, "Position on the org chart")}
     ${o ? `<div class="apply-box" style="grid-column:1/-1"><b>Apply link</b> <span class="muted small">${o.status === "Open" ? "Anyone with this link can apply." : "Applications are closed while the opening isn't Open."}</span>
       <code>${esc(applyUrl(o))}</code><div class="actions-row"><button type="button" class="btn small" id="cpLink">Copy</button><a class="btn small" href="${esc(applyUrl(o))}" target="_blank" rel="noopener">Open</a>
       <button type="button" class="btn small" id="newLink">New link</button></div></div>` : ""}
@@ -110,8 +112,11 @@ function editOpening(o) {
     if (!row.criteria.length) row.criteria = hCriteria();
     row.work_sample = f.work_sample.checked;
     try {
+      let oid = o?.id;
       if (o) must(await sb.from("hire_openings").update(row).eq("id", o.id));
-      else must(await sb.from("hire_openings").insert(row));
+      else oid = must(await sb.from("hire_openings").insert(row).select("id").single()).id;
+      const pick = orgPick(f.orgpos?.value);
+      if (pick) await db.rpc("org_link_opening", { p_opening: oid, p_position: pick.position, p_parent: pick.parent, p_dept: null });
       toast(o ? "Saved" : row.status === "Open" ? "Opening created. Copy its apply link to post it." : "Opening created as a draft. Set it to Open to take applications.");
       closeDrawer(); route();
     } catch (err) { toast(err.message); }
@@ -307,18 +312,22 @@ function rejectBox(c, o) {
   });
 }
 
-function hireBox(c, o) {
+async function hireBox(c, o) {
+  const P = await orgPositions(), linked = P?.find((x) => x.opening_id === o.id && !x.holder);
   $("#drawerTitle").textContent = `Hire ${c.name}`;
   $("#drawerBody").innerHTML = `<form id="hiForm" class="form-grid">
     <p style="grid-column:1/-1">This marks ${esc(c.name)} hired for <b>${esc(o.title)}</b> and starts their onboarding checklist (${esc(o.kind)}) in People, owned by the hiring manager.</p>
     <label>Start date<input name="start" type="date" required value="${addDays(today(), 14)}"></label>
     <label class="check" style="grid-column:1/-1"><input type="checkbox" name="fill" ${o.status === "Open" ? "checked" : ""}> Mark the opening Filled (stops new applications)</label>
+    ${linked ? `<p class="notice-bar ok" style="grid-column:1/-1">${icon("team")}<span>${esc(c.name)} goes into <b>${esc(linked.title)}</b> on the org chart.</span></p>` : orgPicker(P, null)}
     <div class="actions-row" style="grid-column:1/-1"><button class="btn primary">Mark hired and start onboarding</button><button type="button" class="btn" id="hiBack">Back</button></div></form>`;
   $("#hiBack").addEventListener("click", () => openCand(c.id));
   $("#hiForm").addEventListener("submit", async (ev) => {
     ev.preventDefault(); const f = ev.target;
     try {
-      await db.rpc("hire_mark_hired", { p_candidate: c.id, p_start: f.start.value, p_checklist: template().map((i) => ({ ...i, id: i.id || newId(), done: false })) });
+      const oid = await db.rpc("hire_mark_hired", { p_candidate: c.id, p_start: f.start.value, p_checklist: template().map((i) => ({ ...i, id: i.id || newId(), done: false })) });
+      const pick = !linked && orgPick(f.orgpos?.value);
+      if (pick && oid) await db.rpc("org_place", { p_onboarding: oid, p_position: pick.position, p_parent: pick.parent, p_title: o.title, p_dept: null }).catch((e) => toast(e.message));
       if (f.fill.checked) must(await sb.from("hire_openings").update({ status: "Filled" }).eq("id", o.id));
       toast(`${c.name} hired. Onboarding started.`); openCand(c.id); if (/candidates/.test(location.hash)) Candidates();
     } catch (err) { toast(err.message); }

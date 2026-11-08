@@ -1069,3 +1069,36 @@ section.certify { padding: 18px 20px; } div.certify { margin-top: 14px; padding:
   .invoice-doc, .doc-body { border: 0 !important; box-shadow: none !important; padding: 0 !important; max-width: none; }
   .crumbs, .no-print, .certify { display: none !important; }
 }
+
+/* ── Org chart (People) ── */
+.org-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--ink-2); margin: 0 0 12px; }
+.org-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+.org-legend i.dash { border: 2px dashed var(--muted); background: none; }
+.org-wrap { overflow-x: auto; padding: 8px 0 24px; }
+.org-tree, .org-tree ul { list-style: none; margin: 0; padding: 0; display: flex; justify-content: center; }
+.org-tree { min-width: max-content; margin: 0 auto; }
+.org-tree ul { padding-top: 22px; position: relative; }
+.org-tree li { position: relative; padding: 22px 8px 0; display: flex; flex-direction: column; align-items: center; }
+.org-tree li::before, .org-tree li::after { content: ""; position: absolute; top: 0; right: 50%; width: 50%; height: 22px; border-top: 2px solid #cbd5e1; }
+.org-tree li::after { right: auto; left: 50%; border-left: 2px solid #cbd5e1; }
+.org-tree li:only-child::before, .org-tree li:only-child::after { display: none; }
+.org-tree li:only-child { padding-top: 0; }
+.org-tree li:first-child::before, .org-tree li:last-child::after { border: 0 none; }
+.org-tree li:last-child::before { border-right: 2px solid #cbd5e1; border-radius: 0 8px 0 0; }
+.org-tree li:first-child::after { border-radius: 8px 0 0 0; }
+.org-tree ul::before { content: ""; position: absolute; top: 0; left: 50%; width: 0; height: 22px; border-left: 2px solid #cbd5e1; }
+.org-node { position: relative; width: 190px; background: #fff; border: 1px solid var(--line); border-top: 4px solid var(--dc); border-radius: 12px; padding: 10px 12px; text-align: center; box-shadow: var(--shadow-sm); display: grid; gap: 2px; cursor: default; }
+[draggable="true"].org-node { cursor: pointer; } .org-node:hover { box-shadow: var(--shadow-md); }
+.org-node b { font-size: 14px; line-height: 1.3; } .org-who { font-size: 13px; color: var(--ink-2); }
+.org-node.open .org-who { color: var(--amber); font-weight: 600; }
+.org-node.dotted { border-style: dashed; border-top-style: solid; }
+.org-dept { font: 700 10.5px var(--font-ui); text-transform: uppercase; letter-spacing: .05em; color: var(--dc); min-height: 13px; }
+.org-kind { color: var(--muted); font-size: 11px; }
+.org-node.drop { outline: 3px solid var(--blue-5); } .org-node.dragging { opacity: .4; }
+.org-tpl { display: grid; gap: 8px; } .org-tpl .check input:not([type=checkbox]) { flex: 1; min-width: 0; }
+.org-tpl .check { display: flex; align-items: center; gap: 8px; }
+.tpl-dept { display: grid; grid-template-columns: 1fr minmax(140px, auto) auto; gap: 8px; align-items: center; margin-bottom: 8px; }
+.tpl-dept input[type=color] { width: 40px; height: 34px; padding: 2px; }
+#dlist .tpl-dept, .tpl-dept:has(input[type=color]) { grid-template-columns: auto 1fr auto; }
+.certify-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; } .certify-row input { flex: 1; min-width: 200px; }
+@media print { .org-wrap { overflow: visible; } .org-tree { transform-origin: top left; } }

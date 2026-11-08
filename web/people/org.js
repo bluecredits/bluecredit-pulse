@@ -39,10 +39,10 @@ async function OrgChart() {
   const dept = (id) => d.departments.find((x) => x.id === id);
   const open = P.filter((p) => !p.holder).length;
   const node = (p) => { const dp = dept(p.department_id), c = kids(p.id);
-    return `<li><div class="org-node ${p.holder ? "" : "open"} ${p.kind === "AI" ? "ai" : p.kind !== "Staff" ? "dotted" : ""}" data-pos="${p.id}" ${isAdmin() ? 'draggable="true" tabindex="0"' : ""} style="--dc:${esc(dp?.color || "#94a3b8")}">
-      ${p.kind === "AI" ? `<span class="org-ai">${icon("sparkles")}AI</span>` : ""}<span class="org-dept">${esc(dp?.name || "")}</span><b>${esc(p.title)}</b>
+    return `<li><div class="org-node ${p.holder ? "" : "open"} ${isAI(p) ? "ai" : p.kind !== "Staff" ? "dotted" : ""}" data-pos="${p.id}" ${isAdmin() ? 'draggable="true" tabindex="0"' : ""} style="--dc:${esc(dp?.color || "#94a3b8")}">
+      ${isAI(p) ? `<span class="org-ai">${icon("sparkles")}AI</span>` : ""}<span class="org-dept">${esc(dp?.name || "")}</span><b>${esc(p.title)}</b>
       <span class="org-who">${p.holder ? esc(p.holder) : p.opening ? `Open · <a href="#/candidates" data-stop>hiring</a>` : "Open"}</span>
-      ${p.kind !== "Staff" && p.kind !== "AI" ? `<small class="org-kind">${esc(p.kind)}</small>` : ""}</div>${c.length ? `<ul>${c.map(node).join("")}</ul>` : ""}</li>`; };
+      ${p.kind !== "Staff" && !isAI(p) ? `<small class="org-kind">${esc(p.kind)}</small>` : ""}</div>${c.length ? `<ul>${c.map(node).join("")}</ul>` : ""}</li>`; };
   $("#main").innerHTML = `
     <div class="page-head no-print"><div><h1>Org chart</h1><p class="muted">${P.length ? `${P.length} positions${open ? `, ${open} open` : ""}. ${isAdmin() ? "Click a box to edit it, or drag it onto another box to change who it reports to." : ""}` : isAdmin() ? `Build ${esc(S.workspace.name)}'s structure: start from a template, then rename and add positions.` : "Your admin hasn't set up the org chart yet."}</p></div>
       <div class="actions-row">${isAdmin() ? `${P.length ? "" : `<button class="btn primary" id="orgTpl">${icon("sparkles")}Start from a template</button>`}<button class="btn" id="orgDepts">Departments</button><button class="btn" id="orgAddAi">${icon("sparkles")}Add AI agent</button><button class="btn ${P.length ? "primary" : ""}" id="orgAdd">${icon("plus")}Add position</button>` : ""}${P.length ? `<button class="btn" onclick="window.print()">Print</button>` : ""}</div></div>
@@ -52,7 +52,7 @@ async function OrgChart() {
   $("#orgTpl")?.addEventListener("click", orgTemplate);
   $("#orgDepts").addEventListener("click", orgDepartments);
   $("#orgAdd").addEventListener("click", () => orgEdit({ reports_to: roots[0]?.id || null }));
-  $("#orgAddAi").addEventListener("click", () => orgEdit({ reports_to: roots[0]?.id || null, kind: "AI", holder_name: "" }));
+  $("#orgAddAi").addEventListener("click", () => orgEdit({ reports_to: roots[0]?.id || null, kind: "AI" }));
   $$(".org-node").forEach((n) => {
     n.addEventListener("click", (e) => { if (e.target.closest("[data-stop]")) return; orgEdit(P.find((p) => p.id === +n.dataset.pos)); });
     n.addEventListener("keydown", (e) => { if (e.key === "Enter") orgEdit(P.find((p) => p.id === +n.dataset.pos)); });
@@ -110,38 +110,54 @@ function orgTemplate() {
   $("#tplPick").addEventListener("change", (e) => draw(ORG_TEMPLATES.find((t) => t.key === e.target.value)));
 }
 
+// An AI agent position. Older databases only allow Staff/Contractor/Advisor/Board, so those store the position as Staff with
+// "[AI]" at the start of its notes; fix_20261108j converts them to kind AI.
+const AI_MARK = /^\[AI\]\s*/;
+const isAI = (p) => p.kind === "AI" || AI_MARK.test(p.notes || "");
+const plainNotes = (p) => (p.notes || "").replace(AI_MARK, "");
+
 async function orgEdit(p) {
   const d = ORG.data, P = d.positions;
   const below = new Set(); const walk = (id) => P.filter((x) => x.reports_to === id).forEach((x) => { below.add(x.id); walk(x.id); }); if (p.id) walk(p.id);
   const [obs, ops] = await Promise.all([sb.from("onboardings").select("id, name, user_id, status, role_title").neq("status", "Offboarded").then((r) => r.data || []),
     hasApp("hiring") ? sb.from("hire_openings").select("id, title, status").in("status", ["Draft", "Open", "On hold"]).then((r) => r.data || []) : Promise.resolve([])]);
-  const holderVal = p.user_id ? "u:" + p.user_id : p.onboarding_id ? "o:" + p.onboarding_id : p.holder_name != null && (p.holder_name || p.kind === "AI") ? "n:" : "";
+  const ai0 = isAI(p);
+  const holderVal = p.user_id ? "u:" + p.user_id : p.onboarding_id ? "o:" + p.onboarding_id : p.holder_name ? "n:" : "";
   $("#drawerTitle").textContent = p.id ? "Edit position" : "Add position";
-  $("#drawerBody").innerHTML = `<form class="form-grid" id="posForm">
+  $("#drawerBody").innerHTML = `<form class="form-grid pos-form ${ai0 ? "is-ai" : ""}" id="posForm">
+    <label class="pos-ai-toggle" style="grid-column:1/-1"><input type="checkbox" name="ai" ${ai0 ? "checked" : ""}><span class="org-ai">${icon("sparkles")}AI</span><span>This position is an AI agent</span></label>
     <label style="grid-column:1/-1">Title *<input name="title" required value="${esc(p.title || "")}" placeholder="Head of Water Programs"></label>
+    <label class="ai-only" style="grid-column:1/-1">Which AI or agent<input name="ai_name" value="${esc(ai0 ? p.holder_name || "" : "")}" placeholder="e.g. Claude, Pulse Chief of Staff"></label>
     <label>Department<select name="department_id"><option value="">—</option>${d.departments.map((x) => `<option value="${x.id}" ${x.id === p.department_id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>
     <label>Reports to<select name="reports_to"><option value="">No one (top of the chart)</option>${P.filter((x) => x.id !== p.id && !below.has(x.id)).map((x) => `<option value="${x.id}" ${x.id === p.reports_to ? "selected" : ""}>${esc(x.title)}${x.holder ? " · " + esc(x.holder) : ""}</option>`).join("")}</select></label>
-    <label>Type<select name="kind">${[["Staff", "Staff"], ["Contractor", "Contractor"], ["Advisor", "Advisor"], ["Board", "Board"], ["AI", "AI agent"]].map(([k, l]) => `<option value="${k}" ${k === (p.kind || "Staff") ? "selected" : ""}>${l}</option>`).join("")}</select></label>
-    <label>Held by<select name="holder"><option value="">Open (nobody yet)</option>
+    <label class="person-only">Type<select name="kind">${["Staff", "Contractor", "Advisor", "Board"].map((k) => `<option ${k === (ai0 ? "Staff" : p.kind || "Staff") ? "selected" : ""}>${k}</option>`).join("")}</select></label>
+    <label class="person-only">Held by<select name="holder"><option value="">Open (nobody yet)</option>
       <optgroup label="Team">${S.team.filter((u) => u.active).map((u) => `<option value="u:${u.id}" ${holderVal === "u:" + u.id ? "selected" : ""}>${esc(u.display_name)}</option>`).join("")}</optgroup>
       ${obs.filter((o) => !o.user_id).length ? `<optgroup label="Being onboarded">${obs.filter((o) => !o.user_id).map((o) => `<option value="o:${o.id}" ${holderVal === "o:" + o.id ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</optgroup>` : ""}
-      <option value="n:" ${holderVal === "n:" ? "selected" : ""}>${p.kind === "AI" ? "An AI agent…" : "Someone without a Pulse login…"}</option></select></label>
-    <label id="hnWrap" ${holderVal === "n:" ? "" : "hidden"}><span id="hnLbl">${p.kind === "AI" ? "Which AI or agent" : "Their name"}</span><input name="holder_name" value="${esc(p.holder_name || "")}" placeholder="${p.kind === "AI" ? "e.g. Claude, Pulse Chief of Staff" : ""}"></label>
-    ${ops.length || p.opening_id ? `<label>Hiring for it<select name="opening_id"><option value="">—</option>${ops.map((o) => `<option value="${o.id}" ${o.id === p.opening_id ? "selected" : ""}>${esc(o.title)} (${esc(o.status)})</option>`).join("")}${p.opening && !ops.some((o) => o.id === p.opening_id) ? `<option value="${p.opening_id}" selected>${esc(p.opening.title)} (${esc(p.opening.status)})</option>` : ""}</select></label>` : ""}
-    <label style="grid-column:1/-1">Notes<textarea name="notes" rows="2">${esc(p.notes || "")}</textarea></label>
-    <p class="muted small" style="grid-column:1/-1">Link a Hiring opening and the person you hire fills this position automatically. Offboarding someone sets their position back to Open.</p>
+      <option value="n:" ${holderVal === "n:" && !ai0 ? "selected" : ""}>Someone without a Pulse login…</option></select></label>
+    <label class="person-only" id="hnWrap" ${holderVal === "n:" && !ai0 ? "" : "hidden"}>Their name<input name="holder_name" value="${esc(ai0 ? "" : p.holder_name || "")}"></label>
+    ${ops.length || p.opening_id ? `<label class="person-only">Hiring for it<select name="opening_id"><option value="">—</option>${ops.map((o) => `<option value="${o.id}" ${o.id === p.opening_id ? "selected" : ""}>${esc(o.title)} (${esc(o.status)})</option>`).join("")}${p.opening && !ops.some((o) => o.id === p.opening_id) ? `<option value="${p.opening_id}" selected>${esc(p.opening.title)} (${esc(p.opening.status)})</option>` : ""}</select></label>` : ""}
+    <label style="grid-column:1/-1">Notes<textarea name="notes" rows="2">${esc(plainNotes(p))}</textarea></label>
+    <p class="muted small person-only" style="grid-column:1/-1">Link a Hiring opening and the person you hire fills this position automatically. Offboarding someone sets their position back to Open.</p>
     <div class="actions-row" style="grid-column:1/-1">${p.id ? `<button class="btn danger" type="button" id="posDel">Delete</button><button class="btn" type="button" id="posSub">${icon("plus")}Add a position under this</button>` : ""}<button class="btn primary">Save</button></div></form>`;
   openDrawer();
   const f = $("#posForm");
   f.holder.addEventListener("change", () => ($("#hnWrap").hidden = f.holder.value !== "n:"));
-  f.kind.addEventListener("change", () => { const ai = f.kind.value === "AI"; $("#hnLbl").textContent = ai ? "Which AI or agent" : "Their name"; f.holder_name.placeholder = ai ? "e.g. Claude, Pulse Chief of Staff" : "";
-    if (ai && !f.holder.value) { f.holder.value = "n:"; $("#hnWrap").hidden = false; } });
+  f.ai.addEventListener("change", () => { f.classList.toggle("is-ai", f.ai.checked); if (f.ai.checked) f.ai_name.focus(); });
   f.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const h = f.holder.value, row = { title: f.title.value.trim(), department_id: f.department_id.value || null, reports_to: f.reports_to.value || null, kind: f.kind.value,
-      user_id: h.startsWith("u:") ? h.slice(2) : null, onboarding_id: h.startsWith("o:") ? +h.slice(2) : null, holder_name: h === "n:" ? f.holder_name.value.trim() || null : null,
-      opening_id: f.opening_id ? f.opening_id.value || null : p.opening_id || null, notes: f.notes.value.trim() || null, updated_by: S.profile.display_name, updated_at: new Date().toISOString() };
-    try { must(p.id ? await sb.from("org_positions").update(row).eq("id", p.id) : await sb.from("org_positions").insert(row)); closeDrawer(); toast("Saved"); OrgChart(); } catch (err) { toast(err.message); }
+    const ai = f.ai.checked, h = ai ? "" : f.holder.value, notes = f.notes.value.trim() || null;
+    const row = { title: f.title.value.trim(), department_id: f.department_id.value || null, reports_to: f.reports_to.value || null, kind: ai ? "AI" : f.kind.value,
+      user_id: h.startsWith("u:") ? h.slice(2) : null, onboarding_id: h.startsWith("o:") ? +h.slice(2) : null,
+      holder_name: ai ? f.ai_name.value.trim() || null : h === "n:" ? f.holder_name.value.trim() || null : null,
+      opening_id: ai ? null : f.opening_id ? f.opening_id.value || null : p.opening_id || null, notes, updated_by: S.profile.display_name, updated_at: new Date().toISOString() };
+    const save = (r) => p.id ? sb.from("org_positions").update(r).eq("id", p.id) : sb.from("org_positions").insert(r);
+    try {
+      let res = await save(row);
+      // database not updated yet for AI positions: keep it as Staff marked [AI] in the notes
+      if (res.error && ai && /kind_check|check constraint/i.test(res.error.message)) res = await save({ ...row, kind: "Staff", notes: "[AI]" + (notes ? " " + notes : "") });
+      must(res); closeDrawer(); toast("Saved"); OrgChart();
+    } catch (err) { toast(err.message); }
   });
   $("#posSub")?.addEventListener("click", () => orgEdit({ reports_to: p.id, department_id: p.department_id }));
   $("#posDel")?.addEventListener("click", async () => {

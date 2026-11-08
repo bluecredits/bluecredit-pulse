@@ -138,6 +138,8 @@ end $$;
 
 alter table public.org_positions drop constraint if exists org_positions_kind_check;
 alter table public.org_positions add constraint org_positions_kind_check check (kind in ('Staff', 'Contractor', 'Advisor', 'Board', 'AI'));
+-- AI positions saved before this update were kept as Staff with "[AI]" at the start of the notes
+update public.org_positions set kind = 'AI', notes = nullif(btrim(regexp_replace(notes, '^\[AI\]\s*', '')), '') where notes like '[AI]%';
 
 -- clear sidebar results read before, unless someone saved or added them
 delete from public.fed_notices where source = 'Web' and status in ('New', 'Dismissed') and (title ~* '(low bidder|bid results?|awarded to|winning bid)' or ui_link ~* '/bid-results?/');

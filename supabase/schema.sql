@@ -3955,6 +3955,8 @@ create index if not exists ix_orgpos_ws on public.org_positions (workspace_id);
 -- AI agents can hold positions too (an AI assistant, a research agent…)
 alter table public.org_positions drop constraint if exists org_positions_kind_check;
 alter table public.org_positions add constraint org_positions_kind_check check (kind in ('Staff', 'Contractor', 'Advisor', 'Board', 'AI'));
+-- AI positions saved before this update were kept as Staff with "[AI]" at the start of the notes
+update public.org_positions set kind = 'AI', notes = nullif(btrim(regexp_replace(notes, '^\[AI\]\s*', '')), '') where notes like '[AI]%';
 alter table public.org_departments enable row level security;
 alter table public.org_positions enable row level security;
 revoke all on public.org_departments, public.org_positions from anon;

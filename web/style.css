@@ -1111,3 +1111,13 @@ section.certify { padding: 18px 20px; } div.certify { margin-top: 14px; padding:
 .org-ai { position: absolute; top: 6px; right: 8px; display: inline-flex; align-items: center; gap: 3px; font: 700 10px var(--font-ui); color: #6d28d9; background: #fff; border: 1px solid #ddd6fe; border-radius: 999px; padding: 1px 6px 1px 4px; }
 .org-ai .ic { width: 11px; height: 11px; }
 .org-legend i.aisw { background: linear-gradient(160deg, #ede9fe, #c4b5fd); border: 1px solid #7c3aed; }
+
+/* Add/Edit position: AI agent switch */
+.pos-ai-toggle{display:flex!important;flex-direction:row!important;align-items:center;gap:10px;padding:10px 12px;border:1px dashed #c4b5fd;border-radius:10px;background:#faf5ff;cursor:pointer;font-weight:500}
+.pos-ai-toggle input{width:auto;margin:0}
+.pos-form .ai-only{display:none}
+.pos-form.is-ai .ai-only{display:grid}
+.pos-form.is-ai .person-only{display:none!important}
+.pos-form.is-ai .pos-ai-toggle{border-style:solid;border-color:#8b5cf6;background:linear-gradient(135deg,#f5f3ff,#ede9fe)}
+.pos-form.is-ai input,.pos-form.is-ai select,.pos-form.is-ai textarea{border-color:#c4b5fd}
+.pos-ai-toggle .org-ai{position:static}

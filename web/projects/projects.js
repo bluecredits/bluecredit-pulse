@@ -81,7 +81,7 @@ async function New() {
 
 /* ================================================================ project page */
 const TABS = [["overview", "Overview", "home"], ["schedule", "Schedule", "calendar"], ["board", "Board", "grid"], ["list", "List", "clipboard"], ["team", "Team", "team"],
-  ["cost", "Cost", "banknotes", true], ["documents", "Documents", "book"], ["risks", "Risks & issues", "alert", true], ["reports", "Reports", "chart", true]];
+  ["cost", "Cost", "banknotes", true], ["documents", "Documents", "book"], ["risks", "Risks & issues", "alert", true], ["reports", "Reports", "chart", true], ["github", "GitHub", "code", true]];
 async function Project(id, tab) {
   PJ.tab = tab || PJ.tab || "overview";
   const p = must(await sb.from("projects").select("*").eq("id", id).maybeSingle());
@@ -98,7 +98,7 @@ async function Project(id, tab) {
     <div id="ptab"></div>`;
   $("#editProj")?.addEventListener("click", () => editProject(p));
   $("#closeProj")?.addEventListener("click", () => closeProject(p));
-  await ({ overview: Overview, schedule: Schedule, board: Board, list: TaskList, team: Team, cost: Cost, documents: Documents, risks: Risks, reports: Reports })[PJ.tab](p, roll);
+  await ({ overview: Overview, schedule: Schedule, board: Board, list: TaskList, team: Team, cost: Cost, documents: Documents, risks: Risks, reports: Reports, github: GitHubTab })[PJ.tab](p, roll);
 }
 const reload = () => Project(PJ.p.id, PJ.tab);
 
@@ -136,11 +136,11 @@ async function Schedule(p) {
   $("#ptab").innerHTML = `<section class="panel"><h2>Milestones and deliverables ${manage ? `<button class="btn small" id="addMs">${icon("plus")}Add milestone</button>` : ""}</h2>
     <div class="gantt"><div class="gantt-head"><span>${new Date(t0).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span><span>${new Date(t1).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span></div>
       ${ms.map((m) => { const late = !m.done_at && m.due_date && m.due_date < today(); const s = m.start_date || m.due_date;
-        return `<div class="gantt-row ${m.done_at ? "done" : ""} ${late ? "late" : ""}"><div class="gantt-name"><label class="check"><input type="checkbox" data-msdone="${m.id}" ${m.done_at ? "checked" : ""} ${manage ? "" : "disabled"}> ${m.deliverable ? icon("badge", "ic tiny") : ""} ${esc(m.name)}</label>
+        return `<div class="gantt-row ${m.done_at ? "done" : ""} ${late ? "late" : ""}"><div class="gantt-name"><label class="check"><input type="checkbox" data-msdone="${m.id}" ${m.done_at ? "checked" : ""} ${manage && m.gh_number == null ? "" : "disabled"}> ${m.deliverable ? icon("badge", "ic tiny") : ""} ${esc(m.name)}</label>${m.gh_url ? ` <a class="gh-chip" href="${esc(m.gh_url)}" target="_blank" rel="noopener" title="Milestone on GitHub">${icon("code")}GitHub</a>` : ""}
           <small class="muted">${m.due_date ? short(m.due_date) : "No date"}${m.done_at ? " · done " + short(m.done_at) : late ? " · late" : ""}</small></div>
           <div class="gantt-track">${todayX >= 0 && todayX <= 100 ? `<b class="gantt-today" style="left:${todayX}%"></b>` : ""}${m.due_date ? (m.start_date && m.start_date < m.due_date
             ? `<i class="gantt-bar" style="left:${x(s)}%;width:${Math.max(1, x(m.due_date) - x(s))}%"></i>` : `<i class="gantt-dot" style="left:${x(m.due_date)}%"></i>`) : ""}</div>
-          ${manage ? `<button class="btn small" data-msedit="${m.id}">Edit</button>` : ""}</div>`; }).join("") || `<p class="muted">No milestones yet.</p>`}</div></section>`;
+          ${manage && m.gh_number == null ? `<button class="btn small" data-msedit="${m.id}">Edit</button>` : manage ? `<span></span>` : ""}</div>`; }).join("") || `<p class="muted">No milestones yet.</p>`}</div></section>`;
   $("#addMs")?.addEventListener("click", () => editMilestone(p, null));
   $$("[data-msedit]").forEach((b) => b.addEventListener("click", () => editMilestone(p, ms.find((m) => m.id === +b.dataset.msedit))));
   $$("[data-msdone]").forEach((c) => c.addEventListener("change", async () => {
@@ -169,10 +169,10 @@ async function loadTasks(p) {
     sb.from("project_milestones").select("id, name").eq("project_id", p.id).order("due_date").then(must)]);
   return { tasks, ms };
 }
-const canMove = (t) => isStaff() || t.assignee_id === S.user.id;
+const canMove = (t) => !isGhTask(t) && (isStaff() || t.assignee_id === S.user.id);
 function taskCard(t, ms) {
   return `<article class="task ${t.due_date && t.due_date < today() && t.status !== "Done" ? "late" : ""} pri-${t.priority.toLowerCase()}" draggable="${canMove(t)}" data-task="${t.id}">
-    <b>${esc(t.title)}</b><div class="task-meta">${t.assignee_id ? `<span class="avatar mini" title="${esc(nameOf(t.assignee_id))}">${esc(nameOf(t.assignee_id).split(/\s+/).map((w) => w[0]).slice(0, 2).join(""))}</span>` : ""}
+    <b>${esc(t.title)}</b><div class="task-meta">${isGhTask(t) ? `<span class="gh-chip" title="GitHub issue">${icon("code")}${esc(ghRef(t))}</span>` : ""}${!t.assignee_id && t.gh_assignee ? `<span class="muted">@${esc(t.gh_assignee)}</span>` : ""}${t.assignee_id ? `<span class="avatar mini" title="${esc(nameOf(t.assignee_id))}">${esc(nameOf(t.assignee_id).split(/\s+/).map((w) => w[0]).slice(0, 2).join(""))}</span>` : ""}
     ${t.due_date ? `<span>${short(t.due_date)}</span>` : ""}${t.priority !== "Normal" ? `<span class="pri">${esc(t.priority)}</span>` : ""}${t.milestone_id ? `<span class="muted">${esc(ms.find((m) => m.id === t.milestone_id)?.name || "")}</span>` : ""}</div></article>`;
 }
 async function Board(p) {
@@ -180,7 +180,7 @@ async function Board(p) {
   $("#ptab").innerHTML = `<div class="board">${COLS.map((c) => `<section class="board-col" data-col="${c}"><h3>${c} <span class="muted">${tasks.filter((t) => t.status === c).length}</span></h3>
     <div class="board-list">${tasks.filter((t) => t.status === c).map((t) => taskCard(t, ms)).join("")}</div>
     ${isStaff() ? `<form class="board-add" data-add="${c}"><input placeholder="+ Add a task" aria-label="New task in ${c}"></form>` : ""}</section>`).join("")}</div>
-    <p class="muted small">Drag cards between columns${isStaff() ? "" : " (your own tasks)"}; click a card to edit it.</p>`;
+    <p class="muted small">Drag cards between columns${isStaff() ? "" : " (your own tasks)"}; click a card to edit it.${tasks.some(isGhTask) ? ` Cards marked ${icon("code", "ic tiny")} are GitHub issues: they move when the issue changes on GitHub.` : ""}</p>`;
   let dragId = null;
   $$(".task").forEach((el) => {
     el.addEventListener("dragstart", () => { dragId = +el.dataset.task; el.classList.add("dragging"); });
@@ -208,7 +208,7 @@ async function TaskList(p) {
     <select id="lfW"><option value="">Anyone</option>${S.team.filter((x) => x.active).map((x) => `<option value="${x.id}">${esc(x.display_name)}</option>`).join("")}</select>
     ${isStaff() ? `<button class="btn small primary" id="newTask">${icon("plus")}New task</button>` : ""}<button class="btn small" id="csvTasks">Export CSV</button></div>
     <section class="panel" style="padding:0"><div class="table-wrap"><table><thead><tr><th>Task</th><th>Status</th><th>Assignee</th><th>Milestone</th><th>Priority</th><th>Due</th></tr></thead><tbody>
-    ${show.map((t) => `<tr data-task="${t.id}" tabindex="0"><td><b>${esc(t.title)}</b></td><td>${esc(t.status)}</td><td>${esc(nameOf(t.assignee_id))}</td><td>${esc(ms.find((m) => m.id === t.milestone_id)?.name || "")}</td>
+    ${show.map((t) => `<tr data-task="${t.id}" tabindex="0"><td><b>${esc(t.title)}</b>${isGhTask(t) ? ` <span class="gh-chip">${icon("code")}${esc(ghRef(t))}</span>` : ""}</td><td>${esc(t.status)}</td><td>${esc(nameOf(t.assignee_id) || (t.gh_assignee ? "@" + t.gh_assignee : ""))}</td><td>${esc(ms.find((m) => m.id === t.milestone_id)?.name || "")}</td>
       <td>${esc(t.priority)}</td><td class="date">${t.due_date ? dueCell(t.due_date, t.status !== "Done") : ""}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">No tasks.</td></tr>`}</tbody></table></div></section>`;
   $("#lfS").value = PJ.lf.status; $("#lfW").value = PJ.lf.who;
   $("#lfS").addEventListener("change", (e) => { PJ.lf.status = e.target.value; TaskList(p); });
@@ -219,6 +219,7 @@ async function TaskList(p) {
   $$("tr[data-task]").forEach((r) => r.addEventListener("click", () => editTask(p, tasks.find((t) => t.id === +r.dataset.task), ms)));
 }
 async function editTask(p, t, ms) {
+  if (isGhTask(t)) return ghTaskView(p, t, ms);
   const people = must(await sb.from("project_people").select("user_id").eq("project_id", p.id)).map((x) => x.user_id);
   const team = S.team.filter((x) => x.active && (isStaffRole(x.role) || people.includes(x.id)));
   const ro = t && !isStaff();   // contractors can only move their own task between columns
@@ -240,6 +241,23 @@ async function editTask(p, t, ms) {
     try { must(t ? await sb.from("project_tasks").update(row).eq("id", t.id) : await sb.from("project_tasks").insert({ ...row, project_id: p.id, sort: Date.now() / 1e6 })); closeDrawer(); reload(); } catch (err) { toast(err.message); }
   });
   $("#tkDel")?.addEventListener("click", async () => { if (!confirm("Delete this task?")) return; try { must(await sb.from("project_tasks").delete().eq("id", t.id)); closeDrawer(); reload(); } catch (err) { toast(err.message); } });
+}
+
+// a GitHub issue: shown here, changed on GitHub (only the hour estimate is Pulse's own)
+function ghTaskView(p, t, ms) {
+  $("#drawerTitle").textContent = ghRef(t);
+  $("#drawerBody").innerHTML = `<div class="gh-task"><h3 style="margin:0 0 6px">${esc(t.title)}</h3>
+    <p><span class="pill">${esc(t.status)}</span> ${t.priority !== "Normal" ? `<span class="pill s-high">${esc(t.priority)}</span>` : ""} ${(t.gh_labels || []).map((l) => `<span class="tag">${esc(l)}</span>`).join(" ")}</p>
+    <dl class="gh-dl"><dt>Assignee</dt><dd>${esc(nameOf(t.assignee_id) || (t.gh_assignee ? "@" + t.gh_assignee + " (not matched to anyone in Pulse yet)" : "Nobody"))}</dd>
+      <dt>Milestone</dt><dd>${esc(ms.find((m) => m.id === t.milestone_id)?.name || "None")}</dd>${t.done_at ? `<dt>Closed</dt><dd>${short(t.done_at)}</dd>` : ""}<dt>Repository</dt><dd>${esc(t.gh_repo)}</dd></dl>
+    ${t.description ? `<div class="gh-body">${mdDoc(t.description.slice(0, 2500))}</div>` : ""}
+    ${isStaff() ? `<label style="margin-top:12px">Estimate (hours, Pulse only)<input type="number" step="any" id="ghEst" value="${t.estimate_hours ?? ""}"></label>` : ""}
+    <div class="actions-row" style="margin-top:12px"><a class="btn primary" href="${esc(t.gh_url)}" target="_blank" rel="noopener">${icon("arrow-out")}Open on GitHub</a>${isStaff() ? `<button class="btn" id="ghEstSave">Save estimate</button>` : ""}</div>
+    <p class="muted small">Status, title, assignee and milestone come from GitHub. Change them there and Pulse follows within minutes.</p></div>`;
+  openDrawer();
+  $("#ghEstSave")?.addEventListener("click", async () => {
+    const v = $("#ghEst").value; try { must(await sb.from("project_tasks").update({ estimate_hours: v === "" ? null : +v }).eq("id", t.id)); toast("Saved"); closeDrawer(); reload(); } catch (e) { toast(e.message); }
+  });
 }
 
 /* ---------------- team */

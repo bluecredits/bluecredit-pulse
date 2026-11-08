@@ -115,9 +115,9 @@ async function boot() {
 /* ================================================================ status styling */
 
 /* ================================================================ router */
-const routes = { dashboard: Dashboard, reviews: Reviews, activity: Activity, team: Team, settings: () => WorkspaceSettings(), billing: () => (typeof Billing === "function" ? Billing() : null) };
+const routes = { dashboard: Dashboard, reviews: Reviews, activity: Activity, team: Team, settings: () => WorkspaceSettings(), billing: () => (typeof Billing === "function" ? Billing() : null), integrations: () => (typeof Integrations === "function" ? Integrations() : null) };
 // which app owns each page; anything not listed lives in Business Review
-const OWNER = { contacts: "contacts", funding: "funding", team: "admin", settings: "admin", billing: "admin" };
+const OWNER = { contacts: "contacts", funding: "funding", team: "admin", settings: "admin", billing: "admin", integrations: "admin" };
 const HERE = location.pathname.replace(/\/index\.html$/, "/").replace(/\/$/, "").split("/").pop();
 const HOME = (window.PULSE_APP && window.PULSE_APP.home) || "dashboard";
 let navPick = null;  // the sidebar link clicked last (several can point at one page with different views)
@@ -131,7 +131,7 @@ document.addEventListener("click", (e) => {
 });
 function route() {
   if (!S.profile) return;
-  const [part, id] = location.hash.replace(/^#\/?/, "").split("/");
+  const [part, id] = location.hash.replace(/^#\/?/, "").split("?")[0].split("/");
   const name = part || HOME;
   const app = OWNER[name] || "review";
   if (app !== HERE) { location.href = `../${app}/#/${name}${id ? "/" + id : ""}`; return; }

@@ -122,6 +122,18 @@ const TOPICS = [
           ["Add milestones and tasks", `Milestones show on a timeline; tasks on a board and a list. Assign each task to someone.`],
           ["Add the team", `People assigned here can log time to the project in Timecards.`]) },
       { id: "money", title: "Budget vs. actual", html: `<p>Labor cost comes from approved and pending hours in Timecards times each person's rate; add other costs by hand. The project page compares them with the budget.</p>` },
+      { id: "github", title: "Track IT work from GitHub", sub: "Pro", html: `<p>For software and IT projects, GitHub can run the task list. Pulse reads a repository's issues and milestones and keeps the project in step; developers keep working in GitHub.</p>` + steps(
+          ["Connect GitHub once", `An admin opens ${app("admin/#/integrations", "Admin → Integrations")}. Either click <b>Connect GitHub</b> and pick repositories on GitHub (when your Pulse server has the app switched on), or paste a fine-grained token with <b>Issues: Read-only</b> permission.`],
+          ["Link repositories to a project", `In the project, open the <b>GitHub</b> tab and link one or more repositories. To track one release as a business project, narrow each link to a GitHub milestone: a "BlueCredit MVP" project linked to the <b>MVP</b> milestone of every repository involved, another for <b>Beta</b>, and so on.`],
+          ["Match people", `Match GitHub usernames to people in Pulse so tasks show who's on them and appear in their My tasks.`]) + `
+        <div class="table-wrap"><table class="help-table"><thead><tr><th>On GitHub</th><th>In Pulse</th></tr></thead><tbody>
+          <tr><td>Milestone and its due date</td><td>Milestone on the Schedule</td></tr>
+          <tr><td>Closed issue</td><td>Done (on the date it closed)</td></tr>
+          <tr><td>Label <code>blocked</code></td><td>Blocked</td></tr>
+          <tr><td>Assigned, or labelled <code>in progress</code> / <code>review</code></td><td>Doing</td></tr>
+          <tr><td>Any other open issue</td><td>To do</td></tr>
+          <tr><td>Labels <code>urgent</code>/<code>critical</code>/<code>P0</code>, <code>high</code>/<code>P1</code>, <code>low</code>/<code>P3</code></td><td>Priority</td></tr></tbody></table></div>
+        <p>Issues from GitHub are read-only in Pulse: change them on GitHub and Pulse follows (instantly with the app, or every 10 minutes with a token). Pull requests aren't tasks. Unlinking a repository removes its issues from the project; nothing changes on GitHub.</p>` },
       { id: "status", title: "Status reports and close-out", html: `<p>Weekly status reports prefill from finished tasks and upcoming milestones. <b>Close-out</b> checks for open tasks, milestones, active agreements and unapproved timesheets before the project closes. Contractors see only their assigned projects and can move their own tasks.</p>` }] },
 
   { id: "documents", group: "deliver", icon: "clipboard", title: "Documents", blurb: "Policies and sign-offs, the compliance calendar, agreements and e-signing, and invoices.",
@@ -206,6 +218,7 @@ const TOPICS = [
           ["Send the invite", `Your name → <b>Team and access</b>. There are three codes: <b>Staff</b> (members, every app), <b>Employees</b> (the employee portal) and <b>Contractors</b> (the portal, free). <b>Invite…</b> writes the welcome email with a link that fills the code in.`],
           ["Set roles", `Change anyone's role from the drop-down: Admin, Member, Employee or Contractor. Moving someone to Employee or Contractor takes away contacts, pipeline, funding and bids.`],
           ["Remove access", `<b>Change code</b> stops new sign-ups with the old code. <b>Turn off</b> removes someone immediately.`]) },
+      { id: "integrations", title: "Integrations", html: `<p>Your name → <b>Integrations</b> (admins). <b>GitHub</b> feeds issues and milestones into Projects; see ${app("help/#projects/github", "Track IT work from GitHub")}.</p>` },
       { id: "settings", title: "Workspace settings", html: `<p>Your name → <b>Workspace settings</b>: company name and logo, the lists used in drop-downs, which apps are on, and the Chief of Staff's name.</p>` }] },
 
   { id: "billing", group: "admin", icon: "banknotes", title: "Plans and billing", blurb: "Starter, Pro and Enterprise; the free trial; paying.",

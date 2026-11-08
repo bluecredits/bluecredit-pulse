@@ -161,7 +161,7 @@ const PULSE_APPS = [
   { key: "contacts", group: "win", staff: true, name: "Contacts", icon: "users", href: "./contacts/", blurb: "Customers, investors, partners; import and follow up." },
   { key: "funding", group: "win", staff: true, name: "Funding", icon: "banknotes", href: "./funding/", blurb: "Grant and loan applications, plus the funding catalog." },
   { key: "opportunities", group: "win", staff: true, name: "Opportunities", icon: "gov", href: "./opportunities/", blurb: "Federal contracts, grants and state and local bids, checked daily." },
-  { key: "projects", group: "deliver", name: "Projects", icon: "briefcase", href: "./projects/", blurb: "Schedule, tasks, team, budget vs. actual, reports, close-out." },
+  { key: "projects", group: "deliver", name: "Projects", icon: "briefcase", href: "./projects/", blurb: "Schedule, tasks, team, budget vs. actual, reports, close-out; IT work from GitHub." },
   { key: "documents", group: "deliver", name: "Documents", icon: "clipboard", href: "./agreements/", blurb: "Policies and sign-offs, contracts and e-signing, invoices, compliance dates." },
   { key: "people", group: "deliver", name: "People", icon: "user-plus", href: "./people/", blurb: "Hiring: openings, candidates, interviews. Then onboarding and offboarding." },
   { key: "timecards", group: "daily", name: "Timecards", icon: "timer", href: "./timecards/", blurb: "Log hours by project each week; approve timesheets." },
@@ -235,7 +235,7 @@ function buildUserMenu() {
   const item = (href, icon, label) => `<a role="menuitem" href="${href}">${ic(icon)}<span>${label}</span></a>`;
   m.innerHTML = `<div class="menu-head"><b>${esc(p.display_name)}</b><span>${esc(S.user?.email || p.email || "")}</span><small>${esc(role)}${S.workspace ? " · " + esc(S.workspace.name) : ""}</small></div>
     ${isStaffRole(p.role) ? item(HUB, "grid", "All apps") + item(PORTAL, "home", "My portal") : item(PORTAL, "home", "My portal")}
-    ${admin ? `<div class="menu-sep"></div><div class="menu-label">Admin</div>${item(HUB + "admin/#/settings", "cog", "Workspace settings")}${item(HUB + "admin/#/team", "team", "Team and access")}${item(HUB + "admin/#/billing", "banknotes", "Plan and billing")}${item(HUB + "review/#/activity", "clock", "Activity log")}` : ""}
+    ${admin ? `<div class="menu-sep"></div><div class="menu-label">Admin</div>${item(HUB + "admin/#/settings", "cog", "Workspace settings")}${item(HUB + "admin/#/team", "team", "Team and access")}${item(HUB + "admin/#/billing", "banknotes", "Plan and billing")}${item(HUB + "admin/#/integrations", "code", "Integrations")}${item(HUB + "review/#/activity", "clock", "Activity log")}` : ""}
     <div class="menu-sep"></div>
     ${CFG.apps?.scheduler !== false ? item(HUB + "scheduler/#/connect", "calendar", "Connect my calendar") : ""}
     ${item(HUB + "?reset=1", "key", "Change password")}

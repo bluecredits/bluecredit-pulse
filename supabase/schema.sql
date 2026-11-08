@@ -3954,9 +3954,11 @@ create table if not exists public.org_positions (
 create index if not exists ix_orgpos_ws on public.org_positions (workspace_id);
 -- AI agents can hold positions too (an AI assistant, a research agent…)
 alter table public.org_positions drop constraint if exists org_positions_kind_check;
-alter table public.org_positions add constraint org_positions_kind_check check (kind in ('Staff', 'Contractor', 'Advisor', 'Board', 'AI'));
--- AI positions saved before this update were kept as Staff with "[AI]" at the start of the notes
-update public.org_positions set kind = 'AI', notes = nullif(btrim(regexp_replace(notes, '^\[AI\]\s*', '')), '') where notes like '[AI]%';
+alter table public.org_positions add constraint org_positions_kind_check check (kind in ('Staff', 'Intern', 'Contractor', 'Consultant', 'Advisor', 'Board', 'AI'));
+-- AI, Consultant and Intern positions saved before this update were kept as an older type marked in the notes, e.g. "[AI] ..."
+update public.org_positions set kind = substring(notes from '^\[(AI|Consultant|Intern)\]'),
+       notes = nullif(btrim(regexp_replace(notes, '^\[(AI|Consultant|Intern)\]\s*', '')), '')
+ where notes ~ '^\[(AI|Consultant|Intern)\]';
 alter table public.org_departments enable row level security;
 alter table public.org_positions enable row level security;
 revoke all on public.org_departments, public.org_positions from anon;
@@ -4029,7 +4031,7 @@ begin
   elsif p_parent is not null then
     insert into org_positions (workspace_id, title, department_id, reports_to, kind, opening_id, updated_by)
     values (ws(), o.title, coalesce(p_dept, (select department_id from org_positions where id = p_parent)), p_parent,
-            case when o.kind in ('Contractor', 'Consultant') then 'Contractor' when o.kind = 'Advisor' then 'Advisor' else 'Staff' end, o.id, member_name())
+            case when o.kind in ('Contractor', 'Consultant', 'Intern', 'Advisor') then o.kind else 'Staff' end, o.id, member_name())
     returning id into pid;
   end if;
   return pid;
@@ -4050,7 +4052,7 @@ begin
   elsif p_parent is not null then
     insert into org_positions (workspace_id, title, department_id, reports_to, kind, onboarding_id, user_id, updated_by)
     values (ws(), coalesce(nullif(trim(p_title), ''), ob.role_title, ob.kind), coalesce(p_dept, (select department_id from org_positions where id = p_parent)), p_parent,
-            case when ob.kind in ('Contractor', 'Consultant') then 'Contractor' when ob.kind = 'Advisor' then 'Advisor' else 'Staff' end, ob.id, ob.user_id, member_name())
+            case when ob.kind in ('Contractor', 'Consultant', 'Intern', 'Advisor') then ob.kind else 'Staff' end, ob.id, ob.user_id, member_name())
     returning id into pid;
   end if;
   return pid;

@@ -137,10 +137,53 @@ exception when others then
 end $$;
 
 alter table public.org_positions drop constraint if exists org_positions_kind_check;
-alter table public.org_positions add constraint org_positions_kind_check check (kind in ('Staff', 'Contractor', 'Advisor', 'Board', 'AI'));
--- AI positions saved before this update were kept as Staff with "[AI]" at the start of the notes
-update public.org_positions set kind = 'AI', notes = nullif(btrim(regexp_replace(notes, '^\[AI\]\s*', '')), '') where notes like '[AI]%';
+alter table public.org_positions add constraint org_positions_kind_check check (kind in ('Staff', 'Intern', 'Contractor', 'Consultant', 'Advisor', 'Board', 'AI'));
+-- AI, Consultant and Intern positions saved before this update were kept as an older type marked in the notes, e.g. "[AI] ..."
+update public.org_positions set kind = substring(notes from '^\[(AI|Consultant|Intern)\]'),
+       notes = nullif(btrim(regexp_replace(notes, '^\[(AI|Consultant|Intern)\]\s*', '')), '')
+ where notes ~ '^\[(AI|Consultant|Intern)\]';
 
 -- clear sidebar results read before, unless someone saved or added them
 delete from public.fed_notices where source = 'Web' and status in ('New', 'Dismissed') and (title ~* '(low bidder|bid results?|awarded to|winning bid)' or ui_link ~* '/bid-results?/');
 update public.fed_sources set next_at = null where kind <> 'manual' and active;
+
+-- Hiring someone onto the org chart keeps their type (Consultant, Intern, Advisor, Contractor; anyone else is Staff)
+create or replace function public.org_link_opening(p_opening bigint, p_position bigint, p_parent bigint default null, p_dept bigint default null) returns bigint
+language plpgsql volatile security definer set search_path = public as $$
+declare o hire_openings; pid bigint;
+begin
+  select * into o from hire_openings where id = p_opening and workspace_id = ws();
+  if not found then raise exception 'Opening not found.'; end if;
+  if not (is_admin() or o.hiring_manager = auth.uid()) then raise exception 'Only admins or the hiring manager can place an opening on the org chart.'; end if;
+  update org_positions set opening_id = null where opening_id = o.id and workspace_id = ws() and (p_position is null or id <> p_position) and user_id is null and onboarding_id is null;
+  if p_position is not null then
+    update org_positions set opening_id = o.id, updated_at = now(), updated_by = member_name() where id = p_position and workspace_id = ws() returning id into pid;
+  elsif p_parent is not null then
+    insert into org_positions (workspace_id, title, department_id, reports_to, kind, opening_id, updated_by)
+    values (ws(), o.title, coalesce(p_dept, (select department_id from org_positions where id = p_parent)), p_parent,
+            case when o.kind in ('Contractor', 'Consultant', 'Intern', 'Advisor') then o.kind else 'Staff' end, o.id, member_name())
+    returning id into pid;
+  end if;
+  return pid;
+end $$;
+
+-- place a person being onboarded into a position (or a new one under a manager)
+create or replace function public.org_place(p_onboarding bigint, p_position bigint, p_parent bigint default null, p_title text default null, p_dept bigint default null) returns bigint
+language plpgsql volatile security definer set search_path = public as $$
+declare ob onboardings; pid bigint;
+begin
+  select * into ob from onboardings where id = p_onboarding and workspace_id = ws();
+  if not found then raise exception 'Person not found.'; end if;
+  if not (is_admin() or ob.owner_id = auth.uid()) then raise exception 'Only admins or the person''s owner can place them on the org chart.'; end if;
+  update org_positions set onboarding_id = null where onboarding_id = ob.id and workspace_id = ws();
+  if p_position is not null then
+    update org_positions set onboarding_id = ob.id, user_id = coalesce(ob.user_id, user_id), holder_name = null, updated_at = now(), updated_by = member_name()
+     where id = p_position and workspace_id = ws() returning id into pid;
+  elsif p_parent is not null then
+    insert into org_positions (workspace_id, title, department_id, reports_to, kind, onboarding_id, user_id, updated_by)
+    values (ws(), coalesce(nullif(trim(p_title), ''), ob.role_title, ob.kind), coalesce(p_dept, (select department_id from org_positions where id = p_parent)), p_parent,
+            case when ob.kind in ('Contractor', 'Consultant', 'Intern', 'Advisor') then ob.kind else 'Staff' end, ob.id, ob.user_id, member_name())
+    returning id into pid;
+  end if;
+  return pid;
+end $$;

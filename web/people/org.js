@@ -39,14 +39,14 @@ async function OrgChart() {
   const dept = (id) => d.departments.find((x) => x.id === id);
   const open = P.filter((p) => !p.holder).length;
   const node = (p) => { const dp = dept(p.department_id), c = kids(p.id);
-    return `<li><div class="org-node ${p.holder ? "" : "open"} ${isAI(p) ? "ai" : p.kind !== "Staff" ? "dotted" : ""}" data-pos="${p.id}" ${isAdmin() ? 'draggable="true" tabindex="0"' : ""} style="--dc:${esc(dp?.color || "#94a3b8")}">
+    return `<li><div class="org-node ${p.holder ? "" : "open"} ${isAI(p) ? "ai" : !["Staff", "Intern"].includes(kindOf(p)) ? "dotted" : ""}" data-pos="${p.id}" ${isAdmin() ? 'draggable="true" tabindex="0"' : ""} style="--dc:${esc(dp?.color || "#94a3b8")}">
       ${isAI(p) ? `<span class="org-ai">${icon("sparkles")}AI</span>` : ""}<span class="org-dept">${esc(dp?.name || "")}</span><b>${esc(p.title)}</b>
       <span class="org-who">${p.holder ? esc(p.holder) : p.opening ? `Open · <a href="#/candidates" data-stop>hiring</a>` : "Open"}</span>
-      ${p.kind !== "Staff" && !isAI(p) ? `<small class="org-kind">${esc(p.kind)}</small>` : ""}</div>${c.length ? `<ul>${c.map(node).join("")}</ul>` : ""}</li>`; };
+      ${!["Staff", "AI"].includes(kindOf(p)) ? `<small class="org-kind">${esc(kindOf(p))}</small>` : ""}</div>${c.length ? `<ul>${c.map(node).join("")}</ul>` : ""}</li>`; };
   $("#main").innerHTML = `
     <div class="page-head no-print"><div><h1>Org chart</h1><p class="muted">${P.length ? `${P.length} positions${open ? `, ${open} open` : ""}. ${isAdmin() ? "Click a box to edit it, or drag it onto another box to change who it reports to." : ""}` : isAdmin() ? `Build ${esc(S.workspace.name)}'s structure: start from a template, then rename and add positions.` : "Your admin hasn't set up the org chart yet."}</p></div>
       <div class="actions-row">${isAdmin() ? `${P.length ? "" : `<button class="btn primary" id="orgTpl">${icon("sparkles")}Start from a template</button>`}<button class="btn" id="orgDepts">Departments</button><button class="btn" id="orgAddAi">${icon("sparkles")}Add AI agent</button><button class="btn ${P.length ? "primary" : ""}" id="orgAdd">${icon("plus")}Add position</button>` : ""}${P.length ? `<button class="btn" onclick="window.print()">Print</button>` : ""}</div></div>
-    ${d.departments.length ? `<div class="org-legend">${d.departments.map((x) => `<span><i style="background:${esc(x.color || "#94a3b8")}"></i>${esc(x.name)}</span>`).join("")}<span><i class="dash"></i>Contractor, advisor or board</span><span><i class="aisw"></i>AI agent</span></div>` : ""}
+    ${d.departments.length ? `<div class="org-legend">${d.departments.map((x) => `<span><i style="background:${esc(x.color || "#94a3b8")}"></i>${esc(x.name)}</span>`).join("")}<span><i class="dash"></i>Contractor, consultant, advisor or board</span><span><i class="aisw"></i>AI agent</span></div>` : ""}
     ${P.length ? `<div class="org-wrap"><ul class="org-tree">${roots.map(node).join("")}</ul></div>` : isAdmin() ? `<section class="panel empty">No positions yet.</section>` : ""}`;
   if (!isAdmin()) return;
   $("#orgTpl")?.addEventListener("click", orgTemplate);
@@ -110,11 +110,14 @@ function orgTemplate() {
   $("#tplPick").addEventListener("change", (e) => draw(ORG_TEMPLATES.find((t) => t.key === e.target.value)));
 }
 
-// An AI agent position. Older databases only allow Staff/Contractor/Advisor/Board, so those store the position as Staff with
-// "[AI]" at the start of its notes; fix_20261108j converts them to kind AI.
-const AI_MARK = /^\[AI\]\s*/;
-const isAI = (p) => p.kind === "AI" || AI_MARK.test(p.notes || "");
-const plainNotes = (p) => (p.notes || "").replace(AI_MARK, "");
+// Position types. Databases without fix_20261108j only allow Staff/Contractor/Advisor/Board, so the newer types are saved as the
+// nearest older one with "[AI]", "[Consultant]" or "[Intern]" at the start of the notes; fix j converts them.
+const ORG_KINDS = ["Staff", "Intern", "Contractor", "Consultant", "Advisor", "Board"];
+const NEW_KINDS = { AI: "Staff", Consultant: "Contractor", Intern: "Staff" };
+const KIND_MARK = /^\[(AI|Consultant|Intern)\]\s*/;
+const kindOf = (p) => KIND_MARK.exec(p.notes || "")?.[1] || p.kind || "Staff";
+const isAI = (p) => kindOf(p) === "AI";
+const plainNotes = (p) => (p.notes || "").replace(KIND_MARK, "");
 
 async function orgEdit(p) {
   const d = ORG.data, P = d.positions;
@@ -130,7 +133,7 @@ async function orgEdit(p) {
     <label class="ai-only" style="grid-column:1/-1">Which AI or agent<input name="ai_name" value="${esc(ai0 ? p.holder_name || "" : "")}" placeholder="e.g. Claude, Pulse Chief of Staff"></label>
     <label>Department<select name="department_id"><option value="">—</option>${d.departments.map((x) => `<option value="${x.id}" ${x.id === p.department_id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>
     <label>Reports to<select name="reports_to"><option value="">No one (top of the chart)</option>${P.filter((x) => x.id !== p.id && !below.has(x.id)).map((x) => `<option value="${x.id}" ${x.id === p.reports_to ? "selected" : ""}>${esc(x.title)}${x.holder ? " · " + esc(x.holder) : ""}</option>`).join("")}</select></label>
-    <label class="person-only">Type<select name="kind">${["Staff", "Contractor", "Advisor", "Board"].map((k) => `<option ${k === (ai0 ? "Staff" : p.kind || "Staff") ? "selected" : ""}>${k}</option>`).join("")}</select></label>
+    <label class="person-only">Type<select name="kind">${ORG_KINDS.map((k) => `<option ${k === (ai0 ? "Staff" : kindOf(p)) ? "selected" : ""}>${k}</option>`).join("")}</select></label>
     <label class="person-only">Held by<select name="holder"><option value="">Open (nobody yet)</option>
       <optgroup label="Team">${S.team.filter((u) => u.active).map((u) => `<option value="u:${u.id}" ${holderVal === "u:" + u.id ? "selected" : ""}>${esc(u.display_name)}</option>`).join("")}</optgroup>
       ${obs.filter((o) => !o.user_id).length ? `<optgroup label="Being onboarded">${obs.filter((o) => !o.user_id).map((o) => `<option value="o:${o.id}" ${holderVal === "o:" + o.id ? "selected" : ""}>${esc(o.name)}</option>`).join("")}</optgroup>` : ""}
@@ -154,8 +157,8 @@ async function orgEdit(p) {
     const save = (r) => p.id ? sb.from("org_positions").update(r).eq("id", p.id) : sb.from("org_positions").insert(r);
     try {
       let res = await save(row);
-      // database not updated yet for AI positions: keep it as Staff marked [AI] in the notes
-      if (res.error && ai && /kind_check|check constraint/i.test(res.error.message)) res = await save({ ...row, kind: "Staff", notes: "[AI]" + (notes ? " " + notes : "") });
+      // database not updated yet for the newer types: save as the nearest older type, marked in the notes
+      if (res.error && NEW_KINDS[row.kind] && /kind_check|check constraint/i.test(res.error.message)) res = await save({ ...row, kind: NEW_KINDS[row.kind], notes: `[${row.kind}]` + (notes ? " " + notes : "") });
       must(res); closeDrawer(); toast("Saved"); OrgChart();
     } catch (err) { toast(err.message); }
   });

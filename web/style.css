@@ -892,3 +892,15 @@ button.apps-btn { border: 0; background: none; cursor: pointer; }
 .login .pricing { width: min(980px, 100%); margin: 28px auto 0; text-align: center; }
 .login .pricing h2 { margin: 0 0 4px; }
 .login .pricing .price-grid { text-align: left; margin: 16px 0 10px; }
+
+/* ---- Help pages ---- */
+.help-toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+.help-toc a { padding: 6px 12px; border-radius: 999px; background: var(--blue-0); color: var(--blue); font-weight: 600; font-size: 13px; text-decoration: none; }
+.help-sec h2 { display: flex; align-items: center; justify-content: flex-start; gap: 8px; } .help-sec h2 .ic { color: var(--blue); } .help-sec h2 small { margin-left: auto; }
+.help-sec p, .help-sec li { line-height: 1.6; }
+.help-steps { list-style: none; counter-reset: s; padding: 0; margin: 12px 0; display: grid; gap: 10px; }
+.help-steps li { counter-increment: s; display: grid; grid-template-columns: 32px 1fr; column-gap: 12px; align-items: start; }
+.help-steps li::before { content: counter(s); grid-row: span 2; width: 28px; height: 28px; border-radius: 50%; background: var(--blue); color: #fff; display: grid; place-items: center; font: 700 13px var(--font-ui); }
+.help-steps li .st { display: block; } .help-steps li span { color: var(--ink-2); font-size: 14px; }
+.help-note { background: var(--line-2); border-radius: 12px; padding: 12px 16px; } .help-note ul { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 6px; font-size: 14px; }
+.help-table td { vertical-align: top; font-size: 14px; } .help-table tr { cursor: default; }

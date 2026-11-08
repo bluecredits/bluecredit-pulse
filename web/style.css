@@ -1102,3 +1102,6 @@ section.certify { padding: 18px 20px; } div.certify { margin-top: 14px; padding:
 #dlist .tpl-dept, .tpl-dept:has(input[type=color]) { grid-template-columns: auto 1fr auto; }
 .certify-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; } .certify-row input { flex: 1; min-width: 200px; }
 @media print { .org-wrap { overflow: visible; } .org-tree { transform-origin: top left; } }
+.txt-red { color: var(--red); }
+.src-hand ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; } .src-hand li { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; } .src-hand li a { text-decoration: none; color: var(--ink); }
+.row-actions { white-space: nowrap; } .row-actions .btn + .btn { margin-left: 6px; }

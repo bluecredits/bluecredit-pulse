@@ -89,6 +89,13 @@ const TOPICS = [
           <li><b>Grants.gov</b> (search-results-detail/…): Pulse fetches the grant and its agency contact. It lands under Grants → <b>Saved</b>.</li>
           <li><b>Any other site</b> (eVA, state and city portals, school districts, foundations): add a title, the organization, type and due date. It lands under Contracts → <b>Added by link</b>.</li></ul>
         <p>From there, <b>Add to pipeline</b> (or <b>Add to Funding</b> for grants) works as usual. Adding a link that's already in Pulse just saves it.</p>` },
+      { id: "sources", title: "Bid sources: any website, feed or API", html: `<p>Watch any site that lists tenders, calls or jobs: a utility's tenders page, a development bank's API, a state portal, a job board. Pulse reads each one every day (5 AM Eastern by default; admins can change the hour) and lists what it finds under Contracts → <b>Bid sources</b>, where you filter by source.</p>` + steps(
+          ["Add a source", `${app("opportunities/#/sources", "Opportunities → Bid sources")} → <b>Add a source</b>. Paste the link and give it a name. Pulse works out whether it's a web page, an RSS feed or a JSON API, and reads it straight away.`],
+          ["Narrow it (optional)", `Add words in <b>Only keep listings mentioning</b> (e.g. water, sanitation), or tick <b>my profile keywords</b>. Set the type (international, state, jobs…) and whether dates are day/month or month/day.`],
+          ["Remove or pause", `<b>Edit</b> → <b>Remove</b> deletes the source and its listings nobody saved; untick <b>Read it every day</b> to pause it.`])
+        + note("Good to know", ["Pulse reads ordinary pages that list items in tables or as links, RSS/Atom feeds and JSON APIs (it guesses the fields; you can set them under API settings).",
+          "Pages built entirely by JavaScript or behind a sign-in (some e-procurement portals) can't be read automatically. Pulse says so on the source; set it to <b>Check by hand</b> and it becomes a reminder with a <b>Checked today</b> button.",
+          "For APIs, put the search in the link itself, e.g. <code>qterm=water</code>."]) },
       { id: "matching", title: "My NAICS &amp; keywords: how matching works", html: `<ul>
           <li>Your profile (${app("opportunities/#/profile", "My NAICS &amp; keywords")}) decides what shows: a notice appears if it has <b>any</b> of your NAICS codes <b>or</b> any of your keywords in its title or description. Endings don't matter: "hydrological" also finds "hydrologic".</li>
           <li>Narrow the results with the NAICS and keyword drop-downs, the search box and More filters (set-aside, notice type, words to leave out).</li>

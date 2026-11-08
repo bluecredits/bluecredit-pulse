@@ -4,9 +4,9 @@
    to Funding (contacts go to the Contacts list), and holds the profile and settings. */
 "use strict";
 
-const FD = { source: "SAM.gov", status: "New", search: "", q: "", sort: "posted", level: "", kw: "", naics: "" };
+const FD = { source: "SAM.gov", status: "New", search: "", q: "", sort: "posted", level: "", kw: "", naics: "", src: "" };
 const LEVELS = ["Federal", "State", "Local", "Education"];
-const SRC = { "SAM.gov": { tab: "contracts", label: "Contracts", noun: "notices", site: "SAM.gov" }, "Grants.gov": { tab: "grants", label: "Grants", noun: "grants", site: "Grants.gov" }, BidMatch: { tab: "contracts/bids", label: "Bids", noun: "bids", site: "MyBidMatch" }, Link: { tab: "contracts/links", label: "Added by link", noun: "opportunities", site: "the link" } };
+const SRC = { "SAM.gov": { tab: "contracts", label: "Contracts", noun: "notices", site: "SAM.gov" }, "Grants.gov": { tab: "grants", label: "Grants", noun: "grants", site: "Grants.gov" }, BidMatch: { tab: "contracts/bids", label: "Bids", noun: "bids", site: "MyBidMatch" }, Link: { tab: "contracts/links", label: "Added by link", noun: "opportunities", site: "the link" }, Web: { tab: "contracts/sources", label: "Bid sources", noun: "listings", site: "your bid sources" } };
 const icon = (name, cls = "ic") => `<svg class="${cls}"><use href="#i-${name}"/></svg>`;
 const isAdmin = () => S.profile?.role === "admin";
 
@@ -71,7 +71,8 @@ const setupNeeded = (e) => /fed_|schema cache|does not exist/i.test(e.message ||
 
 /* ================================================================ matches */
 async function Matches() {
-  const grants = FD.source === "Grants.gov", bm = FD.source === "BidMatch", lk = FD.source === "Link", src = SRC[FD.source];
+  const grants = FD.source === "Grants.gov", bm = FD.source === "BidMatch", lk = FD.source === "Link", web = FD.source === "Web", src = SRC[FD.source];
+  const sources = web ? await sb.from("fed_sources").select("*").order("name").then((r) => r.data || []) : [];
   const [prof, st, counts] = await Promise.all([db.rpc("fed_profile", { p_source: grants ? "Grants.gov" : "SAM.gov" }), db.rpc("fed_status", {}), db.rpc("fed_counts", {})]);
   const searches = bm ? [] : [prof]; FD.search = "";
   // contracts and bids use your contracts profile; grants use your grants profile
@@ -88,6 +89,8 @@ async function Matches() {
   });
   const levelCounts = {}; if (bm) rows.forEach((r) => (levelCounts[r.level || "Other"] = (levelCounts[r.level || "Other"] || 0) + 1));
   if (bm && FD.level) rows = rows.filter((r) => (r.level || "Other") === FD.level);
+  const srcCounts = {}; if (web) rows.forEach((r) => (srcCounts[r.src_id] = (srcCounts[r.src_id] || 0) + 1));
+  if (web && FD.src) rows = rows.filter((r) => String(r.src_id) === String(FD.src));
   if (FD.kw) rows = rows.filter((r) => keywordsOf(r).some((k) => k.toLowerCase() === FD.kw.toLowerCase()));
   if (FD.naics) rows = rows.filter((r) => naicsOf(r).some((c) => c.startsWith(FD.naics)));
   if (FD.q) { const t = FD.q.toLowerCase(); rows = rows.filter((r) => [r.title, r.sol_number, r.agency, r.subtier, r.office, naicsOf(r).join(" "), keywordsOf(r).join(" "), (r.aln || []).join(" "), r.summary,
@@ -105,14 +108,15 @@ async function Matches() {
       ${moreKw.length ? `<optgroup label="${bm ? "MyBidMatch profile terms" : "Other"}">${moreKw.map(([k, n]) => opt(k, n, FD.kw, (x) => x)).join("")}</optgroup>` : ""}</select>`;
   const sname = Object.fromEntries(searches.map((s) => [s.id, s.name]));
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>${grants ? "Grants" : "Contracts"}</h1><p class="muted">${lk ? "Opportunities you added by pasting a link: state and local portals, foundations, anything outside SAM.gov and Grants.gov." : bm ? "Bids from your APEX Accelerator MyBidMatch lists: federal, state, local and education." : (grants ? "Open and forecasted Grants.gov grants" : "Federal notices from SAM.gov") + " with your NAICS codes or keywords."} ${lk ? "" : bm ? bmLine(st) : statusLine(st, grants)}</p></div>
-      <div class="actions-row"><button class="btn" id="addLink">${icon("plus")}Add by link</button>${lk ? "" : `<button class="btn" id="runNow">${icon("return")}Check now</button>`}${lk ? "" : bm ? `<a class="btn" href="#/settings">${icon("cog")}MyBidMatch link</a>` : `<a class="btn primary" href="#/profile">${icon("cog")}Edit my NAICS &amp; keywords</a>`}</div></div>
-    ${grants ? "" : `<div class="tabs src-tabs">${[["SAM.gov", "#/contracts", "SAM.gov"], ["BidMatch", "#/contracts/bids", "APEX BidMatch"], ["Link", "#/contracts/links", "Added by link"]].map(([k, href, l]) => `<a href="${href}" aria-selected="${k === FD.source}">${l}${counts.by_source?.[k] ? ` <span class="count">${counts.by_source[k]}</span>` : ""}</a>`).join("")}</div>`}
-    ${lk ? "" : bm ? bmBanner(st) : banner(st, searches, grants)}
+    <div class="page-head"><div><h1>${grants ? "Grants" : "Contracts"}</h1><p class="muted">${web ? `Listings read every day at ${fmtHour(st.sources_hour ?? 5)} Eastern from the websites, feeds and APIs you watch.` : lk ? "Opportunities you added by pasting a link: state and local portals, foundations, anything outside SAM.gov and Grants.gov." : bm ? "Bids from your APEX Accelerator MyBidMatch lists: federal, state, local and education." : (grants ? "Open and forecasted Grants.gov grants" : "Federal notices from SAM.gov") + " with your NAICS codes or keywords."} ${lk || web ? "" : bm ? bmLine(st) : statusLine(st, grants)}</p></div>
+      <div class="actions-row"><button class="btn" id="addLink">${icon("plus")}Add by link</button>${lk || web ? "" : `<button class="btn" id="runNow">${icon("return")}Check now</button>`}${web ? `<a class="btn primary" href="#/sources">${icon("cog")}Manage bid sources</a>` : lk ? "" : bm ? `<a class="btn" href="#/settings">${icon("cog")}MyBidMatch link</a>` : `<a class="btn primary" href="#/profile">${icon("cog")}Edit my NAICS &amp; keywords</a>`}</div></div>
+    ${grants ? "" : `<div class="tabs src-tabs">${[["SAM.gov", "#/contracts", "SAM.gov"], ["BidMatch", "#/contracts/bids", "APEX BidMatch"], ["Web", "#/contracts/sources", "Bid sources"], ["Link", "#/contracts/links", "Added by link"]].map(([k, href, l]) => `<a href="${href}" aria-selected="${k === FD.source}">${l}${counts.by_source?.[k] ? ` <span class="count">${counts.by_source[k]}</span>` : ""}</a>`).join("")}</div>`}
+    ${lk ? "" : web ? sourcesBanner(sources) : bm ? bmBanner(st) : banner(st, searches, grants)}
     ${bm ? `<div class="fed-levels">${["", ...LEVELS].map((l) => `<button class="chip ${FD.level === l ? "on" : ""}" data-lv="${l}">${l || "All"}${l ? ` <span>${levelCounts[l] || 0}</span>` : ""}</button>`).join("")}</div>` : ""}
     <div class="filters">
       <div class="tabs">${["New", "Saved", "Added", "Dismissed", "All"].map((k) => `<button data-st="${k}" aria-selected="${FD.status === k}">${k}</button>`).join("")}</div>
-      ${naicsSel}${kwSel}
+      ${web ? `<select id="fSrc" aria-label="Source"><option value="">All sources</option>${sources.filter((x) => x.kind !== "manual").map((x) => `<option value="${x.id}" ${String(FD.src) === String(x.id) ? "selected" : ""}>${esc(x.name)} (${srcCounts[x.id] || 0})</option>`).join("")}</select>` : ""}
+      ${web ? "" : naicsSel}${kwSel}
       <select id="fSort"><option value="posted" ${FD.sort === "posted" ? "selected" : ""}>Newest first</option><option value="due" ${FD.sort === "due" ? "selected" : ""}>Due soonest</option></select>
       <input id="fQ" type="search" placeholder="Filter by title, agency, ${grants ? "assistance listing" : bm ? "text" : "NAICS"}…" value="${esc(FD.q)}">
     </div>
@@ -123,6 +127,8 @@ async function Matches() {
   $("#fSort").addEventListener("change", (e) => { FD.sort = e.target.value; Matches(); });
   $("#fNaics")?.addEventListener("change", (e) => { FD.naics = e.target.value; Matches(); });
   $("#fKw")?.addEventListener("change", (e) => { FD.kw = e.target.value; Matches(); });
+  $("#fSrc")?.addEventListener("change", (e) => { FD.src = e.target.value; Matches(); });
+  $$("[data-handchk]").forEach((b) => b.addEventListener("click", async () => { try { await db.rpc("src_check", { p_src: +b.dataset.handchk }); toast("Marked checked today"); Matches(); } catch (e) { toast(e.message); } }));
   $("[data-clear]")?.addEventListener("click", () => { FD.naics = ""; FD.kw = ""; Matches(); });
   $$("[data-more]").forEach((b) => b.addEventListener("click", () => { const p = b.previousElementSibling; const open = p.classList.toggle("open"); b.textContent = open ? "Show less" : "Show full description"; }));
   $("#fQ").addEventListener("input", debounce((e) => { FD.q = e.target.value; Matches().then(() => { const i = $("#fQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 300));
@@ -376,14 +382,14 @@ function route() {
   const parts = location.hash.replace(/^#\/?/, "").split("/");
   if (parts[0] === "bidmatch") { location.replace("#/contracts/bids"); return; }
   if (parts[0] === "searches") { location.replace("#/profile"); return; }
-  const key = { contracts: 1, grants: 1, profile: 1, settings: 1, help: 1 }[parts[0]] ? parts[0] : "contracts";
+  const key = { contracts: 1, grants: 1, profile: 1, settings: 1, help: 1, sources: 1 }[parts[0]] ? parts[0] : "contracts";
   const prevSrc = FD.source;
-  if (key === "contracts") FD.source = parts[1] === "bids" ? "BidMatch" : parts[1] === "links" ? "Link" : "SAM.gov"; if (key === "grants") FD.source = "Grants.gov";
+  if (key === "contracts") FD.source = parts[1] === "bids" ? "BidMatch" : parts[1] === "links" ? "Link" : parts[1] === "sources" ? "Web" : "SAM.gov"; if (key === "grants") FD.source = "Grants.gov";
   if (FD.pin) FD.pin = false; else if (FD.source === "Link" && prevSrc !== "Link") FD.status = "All"; else if (prevSrc === "Link" && FD.source !== "Link") FD.status = "New";
   $$("#nav a[data-r]").forEach((a) => a.classList.toggle("on", a.dataset.r === key));
   document.body.classList.remove("nav-open"); closeDrawer();
   $("#main").innerHTML = `<p class="muted">Loading…</p>`;
-  Promise.resolve({ contracts: Matches, grants: Matches, profile: Profile, settings: Settings, help: () => { location.replace("../help/#opportunities" + (parts[1] ? "/" + parts[1] : "")); } }[key]())
+  Promise.resolve({ contracts: Matches, grants: Matches, profile: Profile, settings: Settings, sources: Sources, help: () => { location.replace("../help/#opportunities" + (parts[1] ? "/" + parts[1] : "")); } }[key]())
     .catch((e) => ($("#main").innerHTML = setupNeeded(e)
       ? `<section class="panel"><h2>One-time setup needed</h2><p>Opportunities needs the latest database update. An admin runs the latest <code>supabase/schema.sql</code> in the Supabase SQL Editor.</p></section>`
       : `<div class="empty">Couldn't load this page: ${esc(e.message)}</div>`));
@@ -453,5 +459,90 @@ function addByLink(st) {
       FD.status = r.source === "Link" ? "All" : (r.status || "Saved") === "Added" ? "Added" : "Saved"; FD.pin = true;
       if (location.hash === "#/" + tab) Matches(); else location.hash = "#/" + tab;
     } catch (err) { go.disabled = false; toast(err.message); }
+  });
+}
+
+/* ---------------------------------------------------------------- Bid sources: any website, RSS feed or JSON API
+   Each company adds the pages it watches; the database reads them every day at the set hour and lists what it finds
+   under Contracts → Bid sources (the source is a filter there). Sites that need JavaScript or a sign-in become
+   "Check by hand" reminders. */
+const SRC_KINDS = [["auto", "Work it out"], ["page", "Web page"], ["feed", "RSS / Atom feed"], ["api", "API (JSON)"], ["manual", "Check by hand (reminder only)"]];
+const SRC_LEVELS = ["International", "Federal", "State", "Local", "Education", "Private", "Jobs"];
+const fmtHour = (h) => `${((+h + 11) % 12) + 1} ${+h < 12 ? "AM" : "PM"}`;
+function sourcesBanner(sources) {
+  const hand = sources.filter((x) => x.active && x.kind === "manual");
+  if (!sources.length) return `<div class="notice-bar">${icon("alert")}<div>No bid sources yet. <a href="#/sources">Add the websites, feeds or APIs you watch</a>: a utility's tenders page, a development bank, a job board.</div></div>`;
+  return hand.length ? `<section class="panel src-hand"><h2>Check by hand <small class="muted">sites Pulse can't read automatically</small></h2><ul>${hand.map((x) => `<li><a href="${esc(x.url)}" target="_blank" rel="noopener"><b>${esc(x.name)}</b> ${icon("external", "ic ext-ic")}</a>
+    <span class="muted small">${x.checked_at ? `checked ${ago(x.checked_at)}${x.checked_by ? " by " + esc(x.checked_by) : ""}` : "not checked yet"}</span><button class="btn small" data-handchk="${x.id}">Checked today</button></li>`).join("")}</ul></section>` : "";
+}
+async function Sources() {
+  const [list, st] = await Promise.all([sb.from("fed_sources").select("*").order("name").then(must), db.rpc("fed_status", {})]);
+  const kindName = (k) => (SRC_KINDS.find((x) => x[0] === k) || [, k])[1];
+  $("#main").innerHTML = `
+    <div class="page-head"><div><h1>Bid sources</h1><p class="muted">The websites, feeds and APIs you watch. Pulse reads each one every day at <b>${fmtHour(st.sources_hour ?? 5)} Eastern</b> and lists what it finds under <a href="#/contracts/sources">Contracts → Bid sources</a>, where you can filter by source.</p></div>
+      <div class="actions-row">${isAdmin() ? `<select id="srcHour" aria-label="Daily check time">${Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${h === (st.sources_hour ?? 5) ? "selected" : ""}>Daily at ${fmtHour(h)}</option>`).join("")}</select>` : ""}<button class="btn primary" id="srcAdd">${icon("plus")}Add a source</button></div></div>
+    <section class="panel" style="padding:0"><div class="table-wrap"><table><thead><tr><th>Source</th><th>Type</th><th>Last read</th><th>Result</th><th></th></tr></thead><tbody>
+      ${list.map((x) => `<tr class="${x.active ? "" : "muted"}"><td><b>${esc(x.name)}</b><small class="muted" style="display:block;max-width:420px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.url)}</a></small>
+          ${[x.level, x.country, x.keep?.length ? "only: " + x.keep.join(", ") : "", x.use_profile ? "my keywords" : ""].filter(Boolean).length ? `<small class="muted">${esc([x.level, x.country, x.keep?.length ? "only: " + x.keep.join(", ") : "", x.use_profile ? "my keywords" : ""].filter(Boolean).join(" · "))}</small>` : ""}</td>
+        <td>${esc(kindName(x.kind))}${x.kind === "auto" && x.detected ? `<small class="muted" style="display:block">${esc(kindName(x.detected))}</small>` : ""}</td>
+        <td class="date">${x.kind === "manual" ? (x.checked_at ? "checked " + ago(x.checked_at) : "—") : x.last_fetch_at ? ago(x.last_fetch_at) : "not yet"}</td>
+        <td>${x.active ? "" : '<span class="muted">Paused · </span>'}${x.last_error ? `<span class="txt-red">${esc(x.last_error)}</span>` : esc(x.kind === "manual" ? "Reminder in Contracts → Bid sources" : x.last_status || "")}</td>
+        <td class="row-actions"><button class="btn small" data-chk="${x.id}">${x.kind === "manual" ? "Checked" : "Read now"}</button><button class="btn small" data-edit="${x.id}">Edit</button></td></tr>`).join("")
+        || `<tr><td colspan="5" class="empty">No sources yet. Add a tenders page, a procurement API or a job board.</td></tr>`}</tbody></table></div></section>
+    <p class="muted small">Works with ordinary web pages that list tenders or jobs (tables or links), RSS and Atom feeds, and JSON APIs. Pages built entirely with JavaScript, or behind a sign-in (some e-procurement portals), can't be read automatically: keep them as <b>Check by hand</b> reminders, or sign up for the site's own email alerts.</p>`;
+  $("#srcAdd").addEventListener("click", () => srcEdit({}));
+  $("#srcHour")?.addEventListener("change", async (e) => { try { await db.rpc("fed_save_config", { p: { sources_hour: +e.target.value } }); toast("Saved"); } catch (err) { toast(err.message); } });
+  $$("[data-edit]").forEach((b) => b.addEventListener("click", () => srcEdit(list.find((x) => x.id === +b.dataset.edit))));
+  $$("[data-chk]").forEach((b) => b.addEventListener("click", () => srcRead(+b.dataset.chk, b)));
+}
+async function srcRead(id, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = "Reading…"; }
+  try {
+    const r = await db.rpc("src_check", { p_src: id });
+    if (r.state === "fetching") for (let i = 0; i < 20; i++) { await new Promise((res) => setTimeout(res, 3000)); const p = await db.rpc("src_poll", { p_src: id }); if (!p.pending) { toast(p.error || p.status || "Done"); break; } }
+    else toast(r.state === "checked" ? "Marked checked today" : "Couldn't start reading it");
+  } catch (e) { toast(e.message); }
+  if (/^#\/sources/.test(location.hash)) Sources();
+}
+function srcEdit(x) {
+  const c = x.cfg || {};
+  $("#drawerTitle").textContent = x.id ? `Edit ${x.name}` : "Add a bid source";
+  $("#drawerBody").innerHTML = `<form id="srcForm" class="form-grid">
+    <label style="grid-column:1/-1">Link to the page, feed or API *<input name="url" type="url" required value="${esc(x.url || "")}" placeholder="https://…/tenders"></label>
+    <label>Name *<input name="name" required value="${esc(x.name || "")}" placeholder="e.g. Water Resources Authority (Kenya)"></label>
+    <label>How to read it<select name="kind">${SRC_KINDS.map(([k, l]) => `<option value="${k}" ${k === (x.kind || "auto") ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+    <label>Organization <small class="muted">(shown on each listing)</small><input name="org" value="${esc(x.org || "")}"></label>
+    <label>Type<select name="level"><option value="">—</option>${SRC_LEVELS.map((l) => `<option ${l === x.level ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+    <label>Country / state<input name="country" value="${esc(x.country || "")}" placeholder="Kenya, Virginia…"></label>
+    <label>Dates like 06/11/2026 mean<select name="date_order"><option value="DMY" ${x.date_order !== "MDY" ? "selected" : ""}>Day / month (most countries)</option><option value="MDY" ${x.date_order === "MDY" ? "selected" : ""}>Month / day (US)</option></select></label>
+    <label style="grid-column:1/-1">Only keep listings mentioning <small class="muted">(optional, comma separated; leave empty to keep everything)</small><input name="keep" value="${esc((x.keep || []).join(", "))}" placeholder="water, sanitation, hydrology"></label>
+    <label class="check" style="grid-column:1/-1"><input type="checkbox" name="use_profile" ${x.use_profile ? "checked" : ""}> …or any of my profile keywords (My NAICS &amp; keywords)</label>
+    <details style="grid-column:1/-1" ${c.items || c.link_template || c.title ? "open" : ""}><summary class="muted">API settings (optional; Pulse guesses these)</summary><div class="form-grid" style="margin-top:8px">
+      <label>List of items is under<input name="items" value="${esc(c.items || "")}" placeholder="e.g. procnotices or data.results"></label>
+      <label>Title field<input name="title" value="${esc(c.title || "")}" placeholder="e.g. bid_description"></label>
+      <label>Link field<input name="link" value="${esc(c.link || "")}" placeholder="e.g. url"></label>
+      <label>…or link for each item<input name="link_template" value="${esc(c.link_template || "")}" placeholder="https://site/notice/{id}"></label>
+      <label>Deadline field<input name="deadline" value="${esc(c.deadline || "")}" placeholder="e.g. submission_date"></label>
+      <label>Posted date field<input name="posted" value="${esc(c.posted || "")}"></label></div></details>
+    <label class="check" style="grid-column:1/-1"><input type="checkbox" name="active" ${x.active !== false ? "checked" : ""}> Read it every day</label>
+    <div class="actions-row" style="grid-column:1/-1">${x.id ? `<button class="btn danger" type="button" id="srcDel">Remove</button>` : ""}<button class="btn primary">${x.id ? "Save" : "Add and read it now"}</button></div></form>`;
+  openDrawer();
+  const f = $("#srcForm");
+  f.url.addEventListener("change", () => { if (!f.name.value) { try { f.name.value = new URL(f.url.value).hostname.replace(/^www\./, ""); } catch { } } });
+  f.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const cfg = Object.fromEntries(["items", "title", "link", "link_template", "deadline", "posted"].map((k) => [k, f[k].value.trim()]).filter(([, v]) => v));
+    const row = { name: f.name.value.trim(), url: f.url.value.trim(), kind: f.kind.value, org: f.org.value.trim() || null, level: f.level.value || null, country: f.country.value.trim() || null,
+      date_order: f.date_order.value, keep: f.keep.value.split(",").map((k) => k.trim()).filter(Boolean), use_profile: f.use_profile.checked, cfg, active: f.active.checked,
+      updated_by: S.profile.display_name, updated_at: new Date().toISOString() };
+    try {
+      const id = x.id ? (must(await sb.from("fed_sources").update(row).eq("id", x.id)), x.id) : must(await sb.from("fed_sources").insert(row).select("id").single()).id;
+      closeDrawer(); toast(x.id ? "Saved" : "Added. Reading it now…");
+      if (row.kind !== "manual" && row.active) await srcRead(id); else Sources();
+    } catch (err) { toast(err.message); }
+  });
+  $("#srcDel")?.addEventListener("click", async () => {
+    if (!confirm(`Remove ${x.name}? Its listings that you haven't saved or added are removed too.`)) return;
+    try { must(await sb.from("fed_sources").delete().eq("id", x.id)); closeDrawer(); toast("Removed"); Sources(); } catch (err) { toast(err.message); }
   });
 }

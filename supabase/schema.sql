@@ -2869,7 +2869,7 @@ end $$;
 -- the timer: collect finished responses, store them, match, ask for the next page or the next scheduled fetch
 create or replace function public.fed_tick_ws(p_ws uuid, p_force boolean default false) returns void
 language plpgsql volatile security definer set search_path = public as $$
-declare c fed_config; cl fed_calls; r record; g record; body jsonb; n int; got int; hits int; started timestamptz := clock_timestamp();
+declare c fed_config; cl fed_calls; r record; g record; ct text; body jsonb; n int; got int; hits int; sid bigint; started timestamptz := clock_timestamp();
   today date := (now() at time zone 'America/New_York')::date; stamp text := to_char(now() at time zone 'America/New_York', 'Mon DD, HH12:MI AM');
 begin
   select * into c from fed_config where workspace_id = p_ws for update skip locked;
@@ -2909,6 +2909,25 @@ begin
       else
         update fed_calls set status = 'error', http_status = r.status_code, error = coalesce(r.error_msg, left(r.content, 300), 'Unreadable response'), done_at = now() where id = cl.id;
         update fed_notices set detail_at = now() where workspace_id = p_ws and notice_id = cl.ref;
+      end if;
+      continue;
+    end if;
+    -- a bid source (any website, feed or API)
+    if cl.source = 'Source' then
+      if coalesce(r.status_code, 0) between 200 and 299 then
+        begin
+          execute 'select coalesce(headers ->> ''Content-Type'', headers ->> ''content-type'') from net._http_response where id = $1' into ct using cl.request_id;
+        exception when others then ct := null; end;
+        got := src_store(cl.ref::bigint, r.content, coalesce(ct, ''));
+        update fed_calls set status = 'done', http_status = r.status_code, records = got, done_at = now() where id = cl.id;
+      else
+        update fed_calls set status = 'error', http_status = r.status_code, error = coalesce(r.error_msg, left(r.content, 300)), done_at = now() where id = cl.id;
+        update fed_sources set last_fetch_at = now(), last_status = null,
+               last_error = case when r.status_code in (401, 403) then 'The site refused Pulse (error ' || r.status_code || '). It may block automated readers or need a sign-in; set it to "Check by hand".'
+                                 when r.status_code = 404 then 'Page not found (404). Check the link.'
+                                 when r.timed_out then 'The site did not answer in time.'
+                                 else format('Error %s: %s', coalesce(r.status_code::text, ''), left(coalesce(r.error_msg, r.content, ''), 200)) end
+         where id = cl.ref::bigint;
       end if;
       continue;
     end if;
@@ -2982,6 +3001,11 @@ begin
     end if;
     if c.bidmatch_secret_id is not null then perform fed_request_bm(p_ws, 'sub'); end if;
   end if;
+  -- bid sources: each once a day at the workspace's hour (5 AM Eastern by default)
+  for sid in select id from fed_sources where workspace_id = p_ws and active and kind <> 'manual' and (next_at is null or next_at <= now()) order by id limit 40 loop
+    perform src_request(sid);
+    update fed_sources set next_at = src_next(p_ws) where id = sid;
+  end loop;
   -- contacts for matched grants, a few per tick
   for g in select f.notice_id from fed_notices f
             where f.workspace_id = p_ws and f.source = 'Grants.gov' and f.detail_at is null and f.status in ('New', 'Saved')
@@ -2992,7 +3016,7 @@ begin
   end loop;
   -- housekeeping
   delete from fed_bm_docs where workspace_id = p_ws and created_at < now() - interval '45 days';
-  delete from fed_notices f where f.workspace_id = p_ws and f.status = 'New' and f.first_seen < now() - case when f.source = 'BidMatch' then interval '40 days' else interval '21 days' end
+  delete from fed_notices f where f.workspace_id = p_ws and f.status = 'New' and f.first_seen < now() - case when f.source = 'BidMatch' then interval '40 days' when f.source = 'Web' then interval '60 days' else interval '21 days' end
      and not exists (select 1 from fed_matches m where m.workspace_id = f.workspace_id and m.notice_id = f.notice_id);
   delete from fed_calls where workspace_id = p_ws and created_at < now() - interval '30 days';
 end $$;
@@ -3002,7 +3026,8 @@ language plpgsql volatile security definer set search_path = public as $$
 declare w uuid;
 begin
   for w in select workspace_id from fed_config where ws_has_app_for(workspace_id, 'opportunities')
-              and (enabled or exists (select 1 from fed_calls x where x.workspace_id = fed_config.workspace_id and x.status = 'pending')) loop
+              and (enabled or exists (select 1 from fed_calls x where x.workspace_id = fed_config.workspace_id and x.status = 'pending')
+                   or exists (select 1 from fed_sources y where y.workspace_id = fed_config.workspace_id and y.active)) loop
     begin perform fed_tick_ws(w); exception when others then
       update fed_config set last_error = 'Internal error: ' || sqlerrm where workspace_id = w; end;
   end loop;
@@ -3029,7 +3054,7 @@ begin
     'grants_fetch_at', c.grants_fetch_at, 'grants_error', c.grants_error,
     'has_bidmatch', c.bidmatch_secret_id is not null, 'bidmatch_hint', c.bidmatch_hint, 'bidmatch_fetch_at', c.bidmatch_fetch_at, 'bidmatch_error', c.bidmatch_error,
     'bidmatch', (select count(*) from fed_notices where workspace_id = w and source = 'BidMatch'),
-    'grants', (select count(*) from fed_notices where workspace_id = w and source = 'Grants.gov'));
+    'grants', (select count(*) from fed_notices where workspace_id = w and source = 'Grants.gov'), 'sources_hour', coalesce(c.sources_hour, 5));
 end $$;
 
 create or replace function public.fed_save_config(p jsonb) returns jsonb
@@ -3040,8 +3065,10 @@ begin
   if w is null or not is_admin() then raise exception 'Only admins can change Federal settings.'; end if;
   insert into fed_config (workspace_id) values (w) on conflict do nothing;
   update fed_config set enabled = coalesce((p ->> 'enabled')::boolean, enabled), every_min = coalesce((p ->> 'every_min')::int, every_min),
-    daily_budget = coalesce((p ->> 'daily_budget')::int, daily_budget), next_fetch_at = null, updated_at = now(), updated_by = member_name()
+    daily_budget = coalesce((p ->> 'daily_budget')::int, daily_budget), sources_hour = coalesce((p ->> 'sources_hour')::int, sources_hour),
+    next_fetch_at = case when p ?| array['enabled', 'every_min', 'daily_budget'] then null else next_fetch_at end, updated_at = now(), updated_by = member_name()
    where workspace_id = w;
+  if p ? 'sources_hour' then update fed_sources set next_at = src_next(w) where workspace_id = w; end if;
   return fed_status();
 end $$;
 
@@ -3258,7 +3285,7 @@ begin
       contact_name, contact_email)
   values (w, n.title, coalesce(nullif(p_kind, ''), 'Federal Contract'), concat_ws(' / ', n.agency, n.subtier), n.sol_number, 'Identified',
     (n.response_deadline at time zone 'America/New_York')::date, n.naics, n.set_aside, nullif(concat_ws(', ', n.city, n.state), ''), n.ui_link,
-    case when n.source = 'BidMatch' then 'MyBidMatch (' || coalesce(n.level, 'unsorted') || ')' when n.source = 'Link' then 'Added by link' else n.source end,
+    case when n.source = 'BidMatch' then 'MyBidMatch (' || coalesce(n.level, 'unsorted') || ')' when n.source = 'Link' then 'Added by link' when n.source = 'Web' then coalesce((select name from fed_sources where id = n.src_id), 'Bid source') else n.source end,
     concat_ws(E'\n', 'Notice type: ' || n.notice_type, 'Office: ' || n.office, 'Posted: ' || n.posted_date, 'PSC: ' || n.psc, fed_contacts_text(n.contacts), left(n.summary, 800),
       case when n.awardee is not null then 'Awardee: ' || n.awardee || coalesce(' ($' || to_char(n.award_amount, 'FM999,999,999,990') || ')', '') end),
     n.award_amount, jsonb_build_object('sam_notice_id', n.notice_id), member_name(),
@@ -3268,6 +3295,239 @@ begin
   perform fed_contacts_upsert(w, n);
   return oid;
 end $$;
+
+-- ---------------------------------------------------------------- Bid sources (any website, RSS feed or JSON API)
+-- A company adds the pages and APIs it watches (a utility's tenders page, a development bank's API, a job board…).
+-- Every day at the set hour (5 AM Eastern by default) the database fetches each one, reads the listings it finds and
+-- publishes them under Contracts → Bid sources, where the source is a filter. Pages that are built by JavaScript or
+-- need a sign-in can't be read this way; they become "Check by hand" reminders.
+create table if not exists public.fed_sources (
+  id bigint generated by default as identity primary key,
+  workspace_id uuid not null default public.ws_default() references public.workspaces (id) on delete cascade,
+  name text not null, url text not null,
+  kind text not null default 'auto' check (kind in ('auto', 'page', 'feed', 'api', 'manual')),
+  org text, level text check (level in ('Federal', 'State', 'Local', 'Education', 'International', 'Private', 'Jobs')), country text,
+  keep text[] not null default '{}',               -- only keep listings mentioning one of these words (empty = keep all)
+  use_profile boolean not null default false,      -- …or one of the company's profile keywords
+  date_order text not null default 'DMY' check (date_order in ('DMY', 'MDY')),
+  cfg jsonb not null default '{}',                 -- API: {items: "procnotices", title: "bid_description", link: "url" | link_template: "https://…/{id}", deadline, posted, org, country}
+  active boolean not null default true,
+  detected text, last_fetch_at timestamptz, last_status text, last_error text, last_found int, next_at timestamptz,
+  checked_at timestamptz, checked_by text,         -- for "Check by hand" sources
+  created_at timestamptz default now(), updated_at timestamptz default now(), updated_by text
+);
+create index if not exists ix_fed_sources_ws on public.fed_sources (workspace_id);
+alter table public.fed_notices add column if not exists src_id bigint references public.fed_sources (id) on delete set null;
+-- removing a source removes its listings nobody kept (saved or added ones stay)
+create or replace function public.src_on_delete() returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  delete from fed_notices where src_id = old.id and status in ('New', 'Dismissed');
+  return old;
+end $$;
+drop trigger if exists src_on_delete on public.fed_sources;
+create trigger src_on_delete before delete on public.fed_sources for each row execute function public.src_on_delete();
+alter table public.fed_config add column if not exists sources_hour int not null default 5 check (sources_hour between 0 and 23);
+alter table public.fed_sources enable row level security;
+revoke all on public.fed_sources from anon;
+grant select, insert, update, delete on public.fed_sources to authenticated;
+drop policy if exists src_read on public.fed_sources;
+create policy src_read on public.fed_sources for select to authenticated using (workspace_id = staff_ws());
+drop policy if exists src_write on public.fed_sources;
+create policy src_write on public.fed_sources for all to authenticated using (workspace_id = staff_ws()) with check (workspace_id = staff_ws());
+drop policy if exists plan_gate on public.fed_sources;
+create policy plan_gate on public.fed_sources as restrictive for all to authenticated using (public.ws_has_app('opportunities')) with check (public.ws_has_app('opportunities'));
+
+-- text helpers
+create or replace function public.src_text(p text) returns text language sql immutable as $$
+  select nullif(trim(regexp_replace(replace(replace(replace(replace(replace(replace(regexp_replace(coalesce(p, ''), '<[^>]*>', ' ', 'g'),
+    '&nbsp;', ' '), '&amp;', '&'), '&#039;', ''''), '&quot;', '"'), '&lt;', '<'), '&gt;', '>'), '\s+', ' ', 'g')), '') $$;
+create or replace function public.src_abs(p_href text, p_base text) returns text language sql immutable as $$
+  select case when p_href is null or p_href ~* '^(javascript:|mailto:|tel:|#)' then null
+              when p_href ~* '^https?://' then p_href
+              when p_href like '//%' then 'https:' || p_href
+              when p_href like '/%' then substring(p_base from '^(https?://[^/]+)') || p_href
+              else regexp_replace(regexp_replace(p_base, '[?#].*$', ''), '[^/]*$', '') || p_href end $$;
+-- every date written in a piece of text: 2026-11-07, 07/11/2026, 7 November 2026, November 7, 2026, 07-Nov-2026
+create or replace function public.src_dates(p text, p_order text default 'DMY') returns date[] language plpgsql immutable as $$
+declare out date[] := '{}'; m text[]; d date; a int; b int;
+begin
+  for m in select regexp_matches(coalesce(p, ''), '(\d{4})-(\d{1,2})-(\d{1,2})', 'g') loop
+    begin out := out || make_date(m[1]::int, m[2]::int, m[3]::int); exception when others then null; end; end loop;
+  -- 06/11/2025: day first or month first? A weekday next to it ("Wed, 06/11/2025") settles it; otherwise the source's setting
+  for m in select regexp_matches(coalesce(p, ''), '(?:(Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*\.?,?\s*)?\m(\d{1,2})[/.](\d{1,2})[/.](\d{4})\M', 'gi') loop
+    a := m[2]::int; b := m[3]::int;
+    begin
+      if a > 12 then d := make_date(m[4]::int, b, a);
+      elsif b > 12 then d := make_date(m[4]::int, a, b);
+      elsif m[1] is not null and to_char(make_date(m[4]::int, a, b), 'Dy') ilike left(m[1], 3) then d := make_date(m[4]::int, a, b);
+      elsif m[1] is not null and to_char(make_date(m[4]::int, b, a), 'Dy') ilike left(m[1], 3) then d := make_date(m[4]::int, b, a);
+      elsif p_order = 'MDY' then d := make_date(m[4]::int, a, b); else d := make_date(m[4]::int, b, a); end if;
+      out := out || d;
+    exception when others then null; end; end loop;
+  for m in select regexp_matches(coalesce(p, ''), '\m(\d{1,2})(?:st|nd|rd|th)?[ -]+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?,?[ -]+(\d{4})', 'gi') loop
+    begin out := out || to_date(m[1] || ' ' || left(m[2], 3) || ' ' || m[3], 'DD Mon YYYY'); exception when others then null; end; end loop;
+  for m in select regexp_matches(coalesce(p, ''), '\m(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.? (\d{1,2})(?:st|nd|rd|th)?,? (\d{4})', 'gi') loop
+    begin out := out || to_date(m[2] || ' ' || left(m[1], 3) || ' ' || m[3], 'DD Mon YYYY'); exception when others then null; end; end loop;
+  return (select coalesce(array_agg(x order by x), '{}') from unnest(out) x where x between date '2000-01-01' and date '2100-01-01');
+end $$;
+
+-- does a listing pass the source's word filter?
+create or replace function public.src_keep(s public.fed_sources, p_text text) returns boolean language sql stable security definer set search_path = public as $$
+  select (cardinality(s.keep) = 0 and not s.use_profile)
+      or exists (select 1 from unnest(s.keep) k where p_text ilike '%' || trim(k) || '%' and trim(k) <> '')
+      or (s.use_profile and exists (select 1 from fed_profile_ws(s.workspace_id, 'SAM.gov') pr, unnest(pr.keywords) k where p_text ilike '%' || fed_stem(k) || '%')) $$;
+
+-- words that make a link look like a tender, bid, call or job (used when a page has no table of listings)
+create or replace function public.src_looks_like(p text) returns boolean language sql immutable as $$
+  select p ~* '(tender|bid|rfp|rfq|rfi|eoi|expression[s]? of interest|request for|procure|quotation|proposal|solicitation|consult|invitation|prequalif|supply|construction|framework|contract|vacanc|recruit|job|position|engineer|manager|officer|analyst|specialist|technician|call for)' $$;
+
+-- read listings out of one fetched page / feed / API answer and store them; returns how many were found
+create or replace function public.src_store(p_src bigint, p_body text, p_ctype text default '') returns int
+language plpgsql volatile security definer set search_path = public as $$
+declare s fed_sources; items jsonb := '[]'; v_kind text; j jsonb; arr jsonb; it jsonb; r text; m text[]; t text; l text; dd date[]; n int := 0;
+  seen text[] := '{}'; key text; js boolean;
+begin
+  select * into s from fed_sources where id = p_src;
+  v_kind := case when s.kind <> 'auto' then s.kind
+               when p_ctype ~* 'json' or left(ltrim(p_body), 1) in ('{', '[') then 'api'
+               when p_ctype ~* '(rss|atom|xml)' or left(ltrim(p_body), 200) ~* '<(rss|feed|rdf)' then 'feed' else 'page' end;
+  if v_kind = 'api' then
+    j := p_body::jsonb;
+    -- the array of listings: the configured key, or the biggest array of objects in the answer
+    arr := case when s.cfg ? 'items' then j #> string_to_array(s.cfg ->> 'items', '.') when jsonb_typeof(j) = 'array' then j end;
+    if arr is null then
+      select v into arr from jsonb_each(j) e(k, v) where jsonb_typeof(v) = 'array' order by jsonb_array_length(v) desc limit 1;
+      if arr is null then select v2 into arr from jsonb_each(j) e(k, v), jsonb_each(case when jsonb_typeof(v) = 'object' then v else '{}' end) e2(k2, v2)
+                          where jsonb_typeof(v2) = 'array' order by jsonb_array_length(v2) desc limit 1; end if;
+    end if;
+    for it in select * from jsonb_array_elements(coalesce(arr, '[]')) limit 300 loop
+      if jsonb_typeof(it) <> 'object' then continue; end if;
+      t := coalesce(it ->> (s.cfg ->> 'title'), (select v #>> '{}' from jsonb_each(it) e(k, v) where lower(k) = any (array['title', 'subject', 'bid_description', 'name', 'headline', 'notice_title', 'description', 'project_name'])
+                 and jsonb_typeof(v) = 'string' order by array_position(array['title', 'subject', 'bid_description', 'name', 'headline', 'notice_title', 'description', 'project_name'], lower(k)) limit 1));
+      l := coalesce(it ->> (s.cfg ->> 'link'), (select v #>> '{}' from jsonb_each(it) e(k, v) where k ~* '^(url|link|href|uri|web_url|notice_url)$' limit 1));
+      if l is null and s.cfg ? 'link_template' then
+        l := s.cfg ->> 'link_template';
+        for m in select regexp_matches(l, '\{([a-zA-Z0-9_]+)\}', 'g') loop l := replace(l, '{' || m[1] || '}', coalesce(it ->> m[1], '')); end loop;
+      end if;
+      items := items || jsonb_build_object('title', src_text(t), 'link', src_abs(l, s.url),
+        'deadline', coalesce(it ->> (s.cfg ->> 'deadline'), (select v #>> '{}' from jsonb_each(it) e(k, v) where k ~* '(deadline|submission|closing|close_?date|due)' limit 1)),
+        'posted', coalesce(it ->> (s.cfg ->> 'posted'), (select v #>> '{}' from jsonb_each(it) e(k, v) where k ~* '(noticedate|posted|publish|release|created|^date$)' limit 1)),
+        'org', coalesce(it ->> (s.cfg ->> 'org'), (select v #>> '{}' from jsonb_each(it) e(k, v) where k ~* '(agency|organi[sz]ation|buyer|owner|client)' and jsonb_typeof(v) = 'string' limit 1)),
+        'country', coalesce(it ->> (s.cfg ->> 'country'), (select v #>> '{}' from jsonb_each(it) e(k, v) where k ~* '(country|ctry|location|state)' and jsonb_typeof(v) = 'string' limit 1)),
+        'text', left(src_text(concat_ws(' ', it ->> 'notice_type', it ->> 'procurement_method_name', it ->> 'bid_reference_no', it ->> 'summary', it ->> 'snippet')), 600),
+        'ref', coalesce(it ->> 'bid_reference_no', it ->> 'reference', it ->> 'ref', it ->> 'id'));
+    end loop;
+  elsif v_kind = 'feed' then
+    for r in select x from regexp_split_to_table(p_body, '(?i)<(item|entry)[\s>]') with ordinality z(x, i) where i > 1 limit 300 loop
+      t := src_text(substring(r from '(?is)<title[^>]*>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</title>'));
+      l := coalesce(src_text(substring(r from '(?is)<link[^>]*>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</link>')), substring(r from '(?is)<link[^>]*href="([^"]+)"'));
+      items := items || jsonb_build_object('title', t, 'link', src_abs(l, s.url),
+        'posted', src_text(substring(r from '(?is)<(?:pubDate|published|updated|dc:date)[^>]*>(.*?)</')),
+        'text', left(src_text(substring(r from '(?is)<(?:description|summary|content)[^>]*>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</')), 600));
+    end loop;
+  else
+    -- web page: rows of tables first (title + dates + first link in the row), then links that look like listings
+    for r in select x from regexp_split_to_table(p_body, '(?i)<tr[\s>]') with ordinality z(x, i) where i > 1 limit 400 loop
+      r := substring(r from '(?is)^(.*?)(</tr>|$)');
+      t := src_text(r);
+      if t is null or length(t) < 15 or r ~* '<th[\s>]' then continue; end if;
+      l := src_abs(substring(r from '(?is)<a[^>]+href\s*=\s*["'']([^"'']+)["'']'), s.url);
+      -- the longest cell is usually the title
+      items := items || jsonb_build_object('title', coalesce((select src_text(c) from regexp_split_to_table(r, '(?i)<td[\s>]') c order by length(coalesce(src_text(c), '')) desc limit 1), t),
+                                           'link', l, 'text', left(t, 600), 'row', true);
+    end loop;
+    for r in select x from regexp_split_to_table(p_body, '(?i)<a\s') with ordinality z(x, i) where i > 1 limit 2000 loop
+      l := src_abs(substring(r from '^[^>]*href\s*=\s*["'']([^"'']+)'), s.url);
+      r := regexp_replace(r, '</a\s*>', '</a>', 'gi');
+      t := src_text(regexp_replace(split_part(r, '</a>', 1), '^[^>]*>', ''));
+      if l is null or t is null or length(t) < 20 or length(t) > 400 then continue; end if;
+      if not (src_looks_like(t) or l ~* '\.(pdf|docx?|zip)(\?|$)') then continue; end if;
+      if l ~* '(facebook|twitter|linkedin|instagram|youtube|whatsapp|tiktok)\.com|//(www\.)?x\.com|/sharer?[./?]' then continue; end if;
+      items := items || jsonb_build_object('title', t, 'link', l, 'text', left(src_text(left(split_part(r, '</a>', 2), 500)), 300));
+    end loop;
+  end if;
+  -- store
+  for it in select * from jsonb_array_elements(items) loop
+    t := left(it ->> 'title', 400); l := it ->> 'link';
+    if t is null or length(t) < 8 then continue; end if;
+    key := lower(coalesce(l, t));
+    if key = any (seen) then continue; end if;
+    seen := seen || key;
+    if not src_keep(s, concat_ws(' ', t, it ->> 'text')) then continue; end if;
+    dd := src_dates(concat_ws(' ', it ->> 'deadline', case when (it ->> 'deadline') is null then it ->> 'text' end), s.date_order);
+    insert into fed_notices as f (workspace_id, notice_id, source, src_id, title, agency, notice_type, level, state, posted_date, response_deadline, ui_link, summary, sol_number, status, active)
+    values (s.workspace_id, 'W' || s.id || '-' || left(md5(key), 14), 'Web', s.id, t, coalesce(nullif(it ->> 'org', ''), s.org, s.name),
+            case when s.level = 'Jobs' then 'Job' else 'Listing' end, s.level, coalesce(nullif(it ->> 'country', ''), s.country),
+            coalesce((src_dates(it ->> 'posted', s.date_order))[1], fed_anydate(it ->> 'posted'), (now() at time zone 'America/New_York')::date),
+            case when dd[array_length(dd, 1)] >= current_date - 365 then (dd[array_length(dd, 1)] + time '23:59') at time zone 'America/New_York' end,
+            coalesce(l, s.url), nullif(it ->> 'text', ''), nullif(left(it ->> 'ref', 120), ''), 'New', true)
+    on conflict (workspace_id, notice_id) do update set title = excluded.title, response_deadline = coalesce(excluded.response_deadline, f.response_deadline),
+        summary = excluded.summary, updated_at = now()
+      where (f.title, f.response_deadline, f.summary) is distinct from (excluded.title, coalesce(excluded.response_deadline, f.response_deadline), excluded.summary);
+    n := n + 1;
+  end loop;
+  js := n = 0 and v_kind = 'page' and (p_body ~* '(_adf\.|OA_HTML|enable javascript|javascript is required|__NEXT_DATA__|ng-app|id="root"></div>|data-reactroot|cf-browser-verification|captcha)' or length(src_text(p_body)) < 600);
+  update fed_sources set detected = v_kind, last_fetch_at = now(), last_found = n, last_error = null,
+         last_status = case when n > 0 then format('%s listing%s found', n, case when n = 1 then '' else 's' end)
+                            when js then 'This site builds its page with JavaScript or needs a sign-in, so Pulse can''t read it. Set it to "Check by hand", or use the site''s email alerts.'
+                            else 'Read the page but found no listings' || case when cardinality(s.keep) > 0 or s.use_profile then ' matching your words' else '' end end
+   where id = s.id;
+  return n;
+exception when others then
+  update fed_sources set last_fetch_at = now(), last_error = 'Could not read it: ' || sqlerrm, last_status = null where id = p_src;
+  return 0;
+end $$;
+
+-- ask for one source (async through pg_net, like the other fetches)
+create or replace function public.src_request(p_src bigint) returns boolean
+language plpgsql volatile security definer set search_path = public as $$
+declare s fed_sources; rid bigint;
+begin
+  select * into s from fed_sources where id = p_src;
+  if not found or s.kind = 'manual' then return false; end if;
+  execute 'select net.http_get(url := $1, headers := $2, timeout_milliseconds := 60000)' into rid
+    using s.url, jsonb_build_object('User-Agent', 'Mozilla/5.0 (compatible; PulseBidReader/1.0; +https://bluecredits.org)', 'Accept', 'text/html,application/json,application/xml;q=0.9,*/*;q=0.8');
+  insert into fed_calls (workspace_id, request_id, source, ref) values (s.workspace_id, rid, 'Source', s.id::text);
+  update fed_sources set last_status = 'Checking…' where id = s.id;
+  return true;
+exception when undefined_function or invalid_schema_name or undefined_table then
+  update fed_sources set last_error = 'The database extension for fetching (pg_net) is not turned on.' where id = p_src;
+  return false;
+end $$;
+
+-- the next run time: the workspace's hour (Eastern), tomorrow if today's has passed
+create or replace function public.src_next(p_ws uuid) returns timestamptz language sql stable set search_path = public as $$
+  select case when x > now() then x else x + interval '1 day' end
+    from (select ((now() at time zone 'America/New_York')::date + make_interval(hours => coalesce((select sources_hour from fed_config where workspace_id = p_ws), 5))) at time zone 'America/New_York' x) z $$;
+
+-- check one source now (from the Bid sources page)
+create or replace function public.src_check(p_src bigint) returns jsonb
+language plpgsql volatile security definer set search_path = public as $$
+declare s fed_sources;
+begin
+  perform plan_require('opportunities');
+  select * into s from fed_sources where id = p_src and workspace_id = staff_ws();
+  if not found then raise exception 'Source not found.'; end if;
+  if s.kind = 'manual' then
+    update fed_sources set checked_at = now(), checked_by = member_name() where id = s.id;
+    return jsonb_build_object('state', 'checked');
+  end if;
+  insert into fed_config (workspace_id) values (s.workspace_id) on conflict do nothing;
+  return jsonb_build_object('state', case when src_request(s.id) then 'fetching' else 'error' end);
+end $$;
+-- poll while checking: collect answers, then report
+create or replace function public.src_poll(p_src bigint) returns jsonb
+language plpgsql volatile security definer set search_path = public as $$
+declare s fed_sources;
+begin
+  if staff_ws() is null then raise exception 'Only team members can do this.'; end if;
+  perform fed_tick_ws(staff_ws());
+  select * into s from fed_sources where id = p_src and workspace_id = staff_ws();
+  return jsonb_build_object('pending', exists (select 1 from fed_calls where workspace_id = s.workspace_id and source = 'Source' and ref = s.id::text and status = 'pending'),
+                            'status', s.last_status, 'error', s.last_error, 'found', s.last_found, 'detected', s.detected);
+end $$;
+revoke execute on function public.src_store(bigint, text, text), public.src_request(bigint), public.src_check(bigint), public.src_poll(bigint) from public, anon;
+grant execute on function public.src_check(bigint), public.src_poll(bigint) to authenticated;
 
 -- ---------------------------------------------------------------- Add by link
 -- Paste a SAM.gov or Grants.gov link and Pulse fetches that one notice; any other link (state portals, eVA, foundations…)
@@ -3364,13 +3624,13 @@ create or replace function public.fed_list(p_source text default 'SAM.gov', p_st
 language sql stable security definer set search_path = public as $$
   select coalesce(jsonb_agg(to_jsonb(x) order by case when p_sort = 'due' then x.response_deadline end nulls last, x.posted_date desc nulls last, x.first_seen desc), '[]')
   from (select n.notice_id, n.title, n.sol_number, n.agency, n.subtier, n.office, n.notice_type, n.posted_date, n.response_deadline, n.naics, n.set_aside,
-               n.set_aside_code, n.state, n.city, n.ui_link, n.award_amount, n.awardee, n.status, n.opportunity_id, n.funding_id, n.first_seen, n.source, n.aln, n.level, left(n.summary, 6000) summary, n.naics_all, n.psc, n.bm_keywords,
+               n.set_aside_code, n.state, n.city, n.ui_link, n.award_amount, n.awardee, n.status, n.opportunity_id, n.funding_id, n.first_seen, n.source, n.aln, n.level, left(n.summary, 6000) summary, n.naics_all, n.psc, n.bm_keywords, n.src_id,
                (select coalesce(jsonb_agg(c || coalesce((select jsonb_build_object('cid', ct.id) from contacts ct where ct.workspace_id = n.workspace_id
                     and c ? 'email' and lower(ct.email) = lower(c ->> 'email') limit 1), '{}')), '[]') from jsonb_array_elements(n.contacts) c) contacts,
                (select array_agg(m.search_id) from fed_matches m where m.workspace_id = n.workspace_id and m.notice_id = n.notice_id) searches
           from fed_notices n
          where n.workspace_id = staff_ws() and ws_has_app('opportunities') and n.source = coalesce(p_source, 'SAM.gov') and (p_status = 'All' or n.status = p_status)
-           and ((n.source = 'BidMatch' and p_search is null) or (n.status <> 'New' and p_search is null)
+           and ((n.source in ('BidMatch', 'Web', 'Link') and p_search is null) or (n.status <> 'New' and p_search is null)
                 or exists (select 1 from fed_matches m where m.workspace_id = n.workspace_id and m.notice_id = n.notice_id and (p_search is null or m.search_id = p_search)))
          order by case when p_sort = 'due' then n.response_deadline end nulls last, n.posted_date desc nulls last, n.first_seen desc
          limit least(greatest(coalesce(p_limit, 400), 1), 1000)) x $$;
@@ -3381,7 +3641,7 @@ language sql stable security definer set search_path = public as $$
                                      where n.workspace_id = staff_ws() and ws_has_app('opportunities') and n.status = 'New'),
     'by_source', coalesce((select jsonb_object_agg(source, c) from (select n.source, count(*) c from fed_notices n
                                      where n.workspace_id = staff_ws() and ws_has_app('opportunities') and n.status = 'New'
-                                       and (n.source = 'BidMatch' or exists (select 1 from fed_matches m where m.workspace_id = n.workspace_id and m.notice_id = n.notice_id))
+                                       and (n.source in ('BidMatch', 'Web') or exists (select 1 from fed_matches m where m.workspace_id = n.workspace_id and m.notice_id = n.notice_id))
                                      group by n.source) z), '{}'),
     'by_search', coalesce((select jsonb_object_agg(search_id, c) from (select m.search_id, count(*) c from fed_matches m join fed_notices n on n.workspace_id = m.workspace_id and n.notice_id = m.notice_id
                                      where m.workspace_id = staff_ws() and ws_has_app('opportunities') and n.status = 'New' group by m.search_id) z), '{}')) $$;

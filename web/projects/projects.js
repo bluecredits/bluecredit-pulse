@@ -48,12 +48,13 @@ async function New() {
   if (!isStaff()) return Portfolio();
   const won = must(await sb.from("opportunities").select("id, title, agency, value, stage").eq("stage", "Won").order("updated_at", { ascending: false }).limit(200));
   const staff = S.team.filter((p) => p.active && isStaffRole(p.role));
-  const gh = typeof ghRepoChoices === "function" ? await db.rpc("gh_status", {}).catch(() => null) : null;
+  const gh = typeof ghRepoSelect === "function" ? await db.rpc("gh_status", {}).catch(() => null) : null;
   const ghFirst = gh?.connected && /github=1/.test(location.hash);
   $("#main").innerHTML = `<div class="page-head"><div><h1>New project</h1><p class="muted">${gh?.connected ? "Start from GitHub repositories, a won opportunity, or from scratch." : "Start from a won opportunity, or from scratch."}</p></div></div>
     <section class="panel"><form id="npForm" class="form-grid">
-      ${gh?.connected ? `<fieldset class="gh-np" style="grid-column:1/-1"><legend>${icon("code")} Track work from GitHub <small class="muted">(optional: tick the repositories; their issues and milestones fill the project)</small></legend>
-        <div class="gh-pick">${ghRepoChoices(gh, [], "check")}</div></fieldset>` : ""}
+      ${gh?.connected ? `<label style="grid-column:1/-1"><span class="gh-lbl">${icon("code", "ic tiny")}GitHub repository <small class="muted">optional: its issues and milestones fill the project</small></span>
+        <div class="gh-repos-sel" id="npRepos">${ghRepoSelect(gh, [], 'name="ghrepo"', "None")}</div>
+        <button type="button" class="link small" id="npMoreRepo" style="justify-self:start">+ Another repository</button></label>` : ""}
       <label style="grid-column:1/-1">From a won opportunity<select name="opp"><option value="">None, start from scratch</option>${won.map((o) => `<option value="${o.id}">${esc(o.title)}${o.agency ? " · " + esc(o.agency) : ""}</option>`).join("")}</select></label>
       <label>Project name<input name="name" required></label><label>Client<input name="client"></label>
       <label>Code / contract number<input name="code"></label><label>Project manager<select name="manager_id">${staff.map((p) => `<option value="${p.id}" ${p.id === S.user.id ? "selected" : ""}>${esc(p.display_name)}</option>`).join("")}</select></label>
@@ -64,10 +65,13 @@ async function New() {
       <label class="check" style="grid-column:1/-1"><input type="checkbox" name="starter" checked> Add starter milestones (Kickoff, Midpoint review, Final deliverable, Close-out)</label>
       <div class="actions-row" style="grid-column:1/-1"><button class="btn primary">Create project</button></div></form></section>`;
   const f = $("#npForm");
-  $$("[name=ghrepo]", f).forEach((c) => c.addEventListener("change", () => {
-    const picked = $$("[name=ghrepo]:checked", f).map((x) => x.value);
+  const ghPicked = () => $$("[name=ghrepo]", f).map((x) => x.value).filter(Boolean);
+  $("#npMoreRepo")?.addEventListener("click", (e) => { e.preventDefault(); $("#npRepos").insertAdjacentHTML("beforeend", ghRepoSelect(gh, ghPicked().map((x) => x.toLowerCase()), 'name="ghrepo"', "None")); wireRepo($("#npRepos select:last-child")); });
+  const wireRepo = (c) => c.addEventListener("change", () => {
+    const picked = ghPicked();
     if (picked.length) { f.starter.checked = false; if (!f.name.value || f.name.dataset.auto) { f.name.value = picked.map((x) => x.split("/")[1]).join(" + "); f.name.dataset.auto = "1"; } f.client.value ||= picked[0].split("/")[0]; }
-  }));
+  });
+  $$("[name=ghrepo]", f).forEach(wireRepo);
   f.name.addEventListener("input", () => delete f.name.dataset.auto);
   if (ghFirst) f.name.focus();
   f.opp.addEventListener("change", () => { const o = won.find((x) => String(x.id) === f.opp.value); if (!o) return; f.name.value ||= o.title; f.client.value ||= o.agency || ""; if (o.value) f.contract_value.value ||= o.value; });
@@ -84,7 +88,7 @@ async function New() {
           .map(([name, due, deliverable], i) => ({ project_id: p.id, name, due_date: due, deliverable, sort: i }))));
       }
       if (d.manager_id && isAdmin()) { try { must(await sb.from("project_people").insert({ project_id: p.id, user_id: d.manager_id })); } catch { /* already on it */ } }
-      const picked = $$("[name=ghrepo]:checked", f).map((x) => x.value);
+      const picked = [...new Set(ghPicked())];
       if (picked.length) {
         $("button.primary", f).textContent = "Reading GitHub…";
         for (const repo of picked) await db.rpc("gh_link_add", { p_project: p.id, p_repo: repo });

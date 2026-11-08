@@ -157,7 +157,7 @@ async function GitHubTab(p) {
         : `<p class="muted">Nothing linked yet. Link a repository below; you can link several, and narrow each to one milestone (for example <b>MVP</b>, <b>Alpha</b> or <b>Beta</b>) so this project tracks exactly that release.</p>`}
     </section>
     ${manage ? `<section class="panel"><h2>${links.length ? "Add another repository" : "Pick the repositories for this project"}</h2>
-      <div class="gh-pick">${ghRepoChoices(st, links.map((l) => l.repo.toLowerCase()))}</div>
+      <div class="gh-linkrow">${ghRepoSelect(st, links.map((l) => l.repo.toLowerCase()), 'id="ghPickSel" aria-label="Repository"')}<button class="btn primary" id="ghPickBtn">${ghIc("plus")}Link</button></div>
       <details class="gh-more"><summary>Only part of a repository, or one that isn't listed</summary>
         <form id="ghLinkForm" class="form-grid" style="margin-top:10px">
           <label style="grid-column:1/-1">Repository<input name="repo" list="ghRepoList" required placeholder="owner/name, or paste the GitHub link" autocomplete="off">
@@ -172,11 +172,12 @@ async function GitHubTab(p) {
     try { await db.rpc("gh_sync_project", { p_project: p.id, p_full: e.shiftKey }); await ghWait(p.id, (r) => r.links.forEach((l) => { const c = $(`[data-ghstat="${l.id}"]`); if (c) c.innerHTML = ghLinkStatus(l); })); toast("GitHub synced"); reload(); }
     catch (err) { toast(err.message); e.target.disabled = false; }
   });
-  $$("[data-ghpick]", host).forEach((b) => b.addEventListener("click", async () => {
+  $("#ghPickBtn")?.addEventListener("click", async (e) => {
+    const repo = $("#ghPickSel").value, b = e.currentTarget; if (!repo) return toast("Choose a repository");
     b.disabled = true; b.innerHTML = `${ghIc("clock")}Reading…`;
-    try { await db.rpc("gh_link_add", { p_project: p.id, p_repo: b.dataset.ghpick }); await ghWait(p.id); toast(`${b.dataset.ghpick} linked`); reload(); }
-    catch (err) { toast(err.message); b.disabled = false; b.textContent = "Link"; }
-  }));
+    try { await db.rpc("gh_link_add", { p_project: p.id, p_repo: repo }); await ghWait(p.id); toast(`${repo} linked`); reload(); }
+    catch (err) { toast(err.message); b.disabled = false; b.innerHTML = `${ghIc("plus")}Link`; }
+  });
   $("#ghLinkForm")?.addEventListener("submit", async (e) => {
     e.preventDefault(); const f = new FormData(e.target), b = $("button", e.target); b.disabled = true; b.textContent = "Linking…";
     try {
@@ -190,13 +191,13 @@ async function GitHubTab(p) {
   }));
   wirePeople(host, () => GitHubTab(p));
 }
-// the connected repositories as one-click choices (already-linked ones left out), most recently active first
-function ghRepoChoices(st, linked = [], mode = "button") {
+// the connected repositories as a drop-down, grouped by owner (already-linked ones left out)
+function ghRepoSelect(st, linked = [], attrs = "", none = "Choose a repository…") {
   const list = (st.repos || []).filter((r) => !linked.includes(r.full_name.toLowerCase()));
-  if (!list.length) return `<p class="muted small" style="margin:0">${(st.repos || []).length ? "Every repository Pulse can see is linked." : "No repositories yet. Check the connection in Admin → Integrations."}</p>`;
-  return list.map((r) => mode === "check"
-    ? `<label class="gh-repo"><input type="checkbox" name="ghrepo" value="${esc(r.full_name)}">${ghIc(r.private ? "key" : "globe")}<span><b>${esc(r.full_name.split("/")[1])}</b><small class="muted">${esc(r.full_name.split("/")[0])}</small></span></label>`
-    : `<div class="gh-repo">${ghIc(r.private ? "key" : "globe")}<span><b>${esc(r.full_name.split("/")[1])}</b><small class="muted">${esc(r.full_name.split("/")[0])}</small></span><button class="btn small" data-ghpick="${esc(r.full_name)}">Link</button></div>`).join("");
+  const owners = [...new Set(list.map((r) => r.full_name.split("/")[0]))].sort((x, y) => x.localeCompare(y));
+  return `<select ${attrs}><option value="">${esc(list.length ? none : (st.repos || []).length ? "Every repository is already linked" : "No repositories yet")}</option>
+    ${owners.map((o) => `<optgroup label="${esc(o)}">${list.filter((r) => r.full_name.split("/")[0] === o).sort((x, y) => x.full_name.localeCompare(y.full_name))
+      .map((r) => `<option value="${esc(r.full_name)}">${esc(r.full_name.split("/")[1])}${r.private ? " (private)" : ""}</option>`).join("")}</optgroup>`).join("")}</select>`;
 }
 function ghLinkStatus(l) {
   if (l.sync_started_at) return `<span class="pill">Syncing…</span>`;

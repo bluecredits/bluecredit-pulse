@@ -1213,3 +1213,6 @@ label.gh-repo:has(input:checked) { border-color: var(--blue); background: var(--
 .gh-who { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; } .gh-who input { flex: 1 1 220px; min-width: 180px; }
 .gh-np { border: 1px solid var(--blue-1); background: var(--blue-0); border-radius: 12px; padding: 12px 14px; margin: 0; }
 .gh-np legend { font-weight: 600; padding: 0 6px; display: flex; gap: 6px; align-items: center; } .gh-np legend .ic { width: 16px; height: 16px; color: var(--blue); }
+.gh-linkrow { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; max-width: 560px; } .gh-linkrow select { flex: 1; }
+.gh-repos-sel { display: grid; gap: 8px; max-width: 560px; }
+.gh-lbl { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; } .gh-lbl .ic { width: 15px; height: 15px; color: var(--blue); }

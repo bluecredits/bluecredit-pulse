@@ -57,8 +57,8 @@ async function Openings() {
   const order = { Open: 0, Draft: 1, "On hold": 2, Filled: 3, Closed: 4 };
   ops.sort((a, b) => order[a.status] - order[b.status]);
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>Openings</h1><p class="muted">One per role. Each has an apply link you can post on LinkedIn, Indeed or your website; applications land in Candidates.</p></div>
-      ${isAdmin() ? `<div class="actions-row"><button class="btn primary" id="newOpening">${icon("plus")}New opening</button></div>` : ""}</div>
+    <div class="page-head"><div><h1>Openings</h1><p class="muted">One per role. Post each apply link on LinkedIn or Indeed, or list every open role on your website with the careers page. Applications land in Candidates.</p></div>
+      ${isAdmin() ? `<div class="actions-row"><a class="btn" href="#/hiring-setup">${icon("globe")}Careers page</a><button class="btn primary" id="newOpening">${icon("plus")}New opening</button></div>` : ""}</div>
     ${ops.length ? `<div class="hire-openings">${ops.map((o) => `<article class="panel hire-op ${o.status === "Open" ? "" : "dim"}" data-op="${o.id}" tabindex="0">
         <div class="hire-op-h"><div><h2>${esc(o.title)}</h2><p class="muted small">${esc([o.kind, o.schedule, o.remote, o.location].filter(Boolean).join(" · "))}${o.hiring_manager ? ` · Hiring manager ${esc(nameOf(o.hiring_manager))}` : ""}</p></div>
           <span class="pill ${o.status === "Open" ? "s-active" : o.status === "Filled" ? "s-won" : ""}">${esc(o.status)}</span></div>
@@ -400,8 +400,10 @@ async function HiringSetup() {
   if (!isAdmin()) return Candidates();
   await loadWorkspace();
   const em = hEmails();
+  let car = null; try { car = must(await sb.rpc("hire_careers_get")); } catch { car = null; }
   $("#main").innerHTML = `<div class="page-head"><div><h1>Hiring setup</h1><p class="muted">Defaults for new openings and the emails you send candidates. Placeholders: {first}, {name}, {role}, {company}, {me}, {scheduler}.</p></div>
       <div class="actions-row"><button class="btn primary" id="hsSave">Save</button></div></div>
+    ${careersPanel(car)}
     <section class="panel"><h2>The process</h2><ol class="hire-process">${HSTAGES.map((s) => `<li><b>${s}</b> ${STAGE_HINT[s]}</li>`).join("")}<li><b>Hired</b> Onboarding starts automatically; create their agreement from Agreements.</li></ol>
       <p class="muted small">Candidates waiting more than 3 days in Applied, or 7 days in any other stage, are flagged on the board.</p></section>
     <section class="panel"><h2>Default scorecard criteria</h2><p class="muted small">New openings start with these (one per line). Each opening can change its own.</p>
@@ -409,11 +411,43 @@ async function HiringSetup() {
     <section class="panel"><h2>Email templates</h2>${Object.entries(em).map(([k, e]) => `<div class="hs-email" data-k="${k}"><h3>${esc(e.label)}</h3>
       <label>Subject<input data-f="subject" value="${esc(e.subject)}"></label><label>Body<textarea data-f="body" rows="7">${esc(e.body)}</textarea></label></div>`).join("")}
       <button class="btn small" id="hsReset" type="button">Reset emails to the defaults</button></section>`;
+  wireCareers(car);
   $("#hsReset").addEventListener("click", () => $$(".hs-email").forEach((d) => { const e = DEFAULT_EMAILS[d.dataset.k]; $("[data-f=subject]", d).value = e.subject; $("[data-f=body]", d).value = e.body; }));
   $("#hsSave").addEventListener("click", async () => {
     const crit = $("#hsCrit").value.split("\n").map((x) => x.trim()).filter(Boolean);
     const emails = Object.fromEntries($$(".hs-email").map((d) => [d.dataset.k, { label: DEFAULT_EMAILS[d.dataset.k].label, subject: $("[data-f=subject]", d).value, body: $("[data-f=body]", d).value }]));
     try { await db.rpc("update_workspace", { p: { config: { ...(S.workspace.config || {}), hiring_criteria: crit.length ? crit : DEFAULT_CRITERIA, hiring_emails: emails } } }); await loadWorkspace(); toast("Saved"); }
     catch (e) { toast(e.message); }
+  });
+}
+
+// ── Careers page: one public page with every open opening, to link to or embed on the company's own website ──
+const careersUrl = (slug, embed) => new URL(`../careers/?c=${encodeURIComponent(slug)}${embed ? "&embed=1" : ""}`, location.href).href;
+const careersEmbed = (slug) => `<script src="${new URL("../careers/embed.js", location.href).href}" data-company="${slug}" async></script>`;
+const suggestSlug = () => (S.workspace?.name || "").toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "careers";
+function careersPanel(car) {
+  if (!car) return `<section class="panel careers-setup"><h2>Careers page</h2><p class="muted">The careers page needs a database update (supabase/fix_20261108c_careers.sql). Ask whoever runs Pulse to run it.</p></section>`;
+  const slug = car.careers_slug || suggestSlug(), on = !!car.careers_on;
+  return `<section class="panel careers-setup" id="careersBox"><h2>Careers page</h2>
+    <p class="muted">Lists every <b>Open</b> opening on one public page that updates itself. Link to it from your website, or embed the list in your own careers page, so you never copy apply links by hand.</p>
+    <label class="check"><input type="checkbox" id="carOn" ${on ? "checked" : ""}> Show my open positions on a public careers page</label>
+    <div class="row"><label style="flex:1">Page address<input type="text" id="carSlug" value="${esc(slug)}" maxlength="40" placeholder="acme-robotics"></label><button class="btn primary" id="carSave" type="button">Save careers page</button></div>
+    <div id="carOut">${on && car.careers_slug ? careersLinks(car.careers_slug) : ""}</div></section>`;
+}
+function careersLinks(slug) {
+  return `<p><b>Link</b> (for your website's Careers menu, email signatures, LinkedIn): <a href="${careersUrl(slug)}" target="_blank" rel="noopener">${esc(careersUrl(slug))}</a> <button class="btn small" type="button" data-carcopy="${esc(careersUrl(slug))}">Copy link</button></p>
+    <p><b>Embed</b> (paste into your website's careers page where the jobs should appear; works on WordPress, Squarespace, Wix and plain HTML):</p>
+    <code>${esc(careersEmbed(slug))}</code><div class="row"><button class="btn small" type="button" data-carcopy="${esc(careersEmbed(slug))}">Copy embed code</button></div>
+    <p class="muted small">Opening or closing an opening in Pulse updates both straight away. Search engines can list the jobs from the careers page too.</p>`;
+}
+function wireCareers(car) {
+  const box = $("#careersBox"); if (!box) return;
+  box.addEventListener("click", async (e) => { const b = e.target.closest("[data-carcopy]"); if (b) { await navigator.clipboard.writeText(b.dataset.carcopy); toast("Copied"); } });
+  $("#carSave").addEventListener("click", async () => {
+    try {
+      const r = must(await sb.rpc("hire_careers_set", { p_on: $("#carOn").checked, p_slug: $("#carSlug").value }));
+      $("#carSlug").value = r.slug; $("#carOut").innerHTML = r.on ? careersLinks(r.slug) : "";
+      toast(r.on ? "Careers page is on" : "Careers page is off");
+    } catch (e) { toast(e.message); }
   });
 }

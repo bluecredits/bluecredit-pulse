@@ -17,7 +17,7 @@ const TOPICS = [
   // ── Getting started ──
   { id: "start", group: "start", icon: "home", title: "Welcome to Pulse", blurb: "What Pulse is, how to get in, and who sees what.",
     sections: [
-      { id: "what", title: "What Pulse is", html: `<p>Pulse is one workspace for a small company: find and win work (Business Review, Contacts, Funding, Opportunities), deliver it (Projects, Agreements, People) and run the team day to day (Timecards, Tickets, Scheduler, Chief of Staff). One sign-in opens every app; the <b>All apps</b> grid at the top right of every page switches between them.</p>` },
+      { id: "what", title: "What Pulse is", html: `<p>Pulse is an all-in-one workspace for small firms, a simple CRM plus everything after the deal: find and win work (Business Review, Contacts, Funding, Opportunities), deliver it (Projects, Agreements, People) and run the team day to day (Timecards, Tickets, Scheduler, Chief of Staff). One sign-in opens every app; the <b>All apps</b> grid at the top right of every page switches between them.</p>` },
       { id: "join", title: "Get in", html: steps(
           ["Start a workspace", `On the ${app("", "Pulse home page")} choose <b>Start a workspace</b>, enter your company name and your details. You become its admin. New workspaces get 14 days of Pro free.`],
           ["Or join your company", `Ask your admin for the company code and choose <b>Join with code</b>. Contractors and consultants get a separate contractor code.`],
@@ -123,6 +123,11 @@ const TOPICS = [
           ["New opening", `In ${app("people/#/openings", "People → Openings")} add the role, location, engagement (contractor, consultant, intern, advisor or employee), schedule, description and what you'll score candidates on.`],
           ["Share the apply link", `Set it to <b>Open</b> and copy its public apply link. Anyone with the link can read the description and apply with a resume; no sign-in needed.`],
           ["Applications arrive", `Each application goes straight onto the <b>Candidates</b> board in the first stage.`]) },
+      { id: "careers", title: "Put your openings on your website", html: `<p>Instead of copying apply links by hand, turn on the <b>careers page</b>: one public page that lists every <b>Open</b> opening and updates itself when you open or close one.</p>` + steps(
+          ["Turn it on", `${app("people/#/hiring-setup", "People → Hiring setup → Careers page")}: tick <b>Show my open positions</b>, choose the page address (for example <code>acme-robotics</code>) and <b>Save careers page</b>.`],
+          ["Link to it", `Copy the link into your website's Careers menu, your email signature or LinkedIn.`],
+          ["Or embed it", `Copy the embed code and paste it into your own careers page (WordPress, Squarespace, Wix or plain HTML). Your openings appear right there; <b>View and apply</b> opens the Pulse apply page.`])
+        + note("Good to know", ["Only openings set to <b>Open</b> are listed. Drafts, on hold, filled and closed ones are not.", "Turning the careers page off hides it straight away; each opening's own apply link keeps working while the opening is Open.", "Search engines can list the jobs from the careers page (Google for Jobs)."]) },
       { id: "candidates", title: "Review candidates and interview", html: `<ul>
           <li>Move candidates across the board's stages. Rejecting asks for a reason.</li>
           <li><b>Schedule interview</b> picks interviewers and a time. Interviewers see only the candidates they're assigned to; admins see everyone.</li>

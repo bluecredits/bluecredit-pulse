@@ -182,28 +182,29 @@ function renderLanding() {
   $$(".yr").forEach((e) => (e.textContent = new Date().getFullYear()));
   const badge = (k) => { const p = appPlan(k); return p === "starter" ? "" : `<small class="plan-badge">${PLANS[p].name}</small>`; };
   more.innerHTML = `
-  <section class="land-sec" id="apps"><p class="land-kicker">Eleven apps, one sign-in</p><h2>Everything a small company runs on</h2>
+  <section class="land-sec" id="apps"><p class="land-kicker">Eleven apps, one sign-in, one price</p><h2>Everything a small company runs on</h2>
     <div class="land-groups">${GROUPS.map((g) => `<div class="land-group"><h3>${esc(g.title)}</h3><p class="muted small">${esc(g.note)}</p>
       <ul>${PULSE_APPS.filter((a) => a.group === g.key).map((a) => `<li><span class="hub-ic ${a.key === "chief" ? "ai" : ""}">${icon(a.icon)}</span><span><b>${esc(a.name)}</b>${badge(a.key)}<small>${esc(a.blurb)}</small></span></li>`).join("")}</ul></div>`).join("")}</div></section>
-  <section class="land-sec land-feats"><p class="land-kicker">Why teams switch to Pulse</p><h2>Built for companies that bid on public work</h2>
+  <section class="land-sec land-feats"><p class="land-kicker">Why small firms switch to Pulse</p><h2>From first contact to finished work</h2>
     <div class="land-feat-grid">
-      <div class="land-feat">${icon("gov")}<h3>Opportunities, checked every day</h3><p>SAM.gov contracts, Grants.gov grants and your APEX MyBidMatch bids (federal, state, local and education), matched to your NAICS codes and keywords. The contracting officer goes straight into Contacts.</p></div>
-      <div class="land-feat">${icon("chart")}<h3>Reviews that write themselves</h3><p>Daily to quarterly business reviews open with a live snapshot: deadlines, what moved, follow-ups due and overdue actions. Win rate comes from the work itself.</p></div>
+      <div class="land-feat">${icon("users")}<h3>A simple CRM</h3><p>Contacts, follow-ups and a pipeline by stage. Import your spreadsheet in one step; duplicates are combined. Daily to quarterly reviews open with a live snapshot of what moved and what's due.</p></div>
+      <div class="land-feat">${icon("gov")}<h3>New work, found for you</h3><p>Selling to government? Pulse checks SAM.gov, Grants.gov and your APEX bids every day against your NAICS codes and keywords, and saves the contracting officer to Contacts.</p></div>
       <div class="land-feat">${icon("clipboard")}<h3>From handshake to close-out</h3><p>Teaming agreements and NDAs signed online, projects with budget vs. actual from real timecards, and a close-out check before anything closes.</p></div>
       <div class="land-feat">${icon("user-plus")}<h3>Hiring without the spreadsheet</h3><p>A public apply link for each opening, a candidate board, interviews and blind scorecards. Hire, and onboarding starts on its own.</p></div>
-      <div class="land-feat">${icon("users")}<h3>Contractors included, free</h3><p>Consultants and contractors join with their own code, log time to their projects and see only what they need. They don't count as paid users.</p></div>
+      <div class="land-feat">${icon("team")}<h3>Contractors included, free</h3><p>Consultants and contractors join with their own code, log time to their projects and see only what they need. They don't count as paid users.</p></div>
       <div class="land-feat">${icon("key")}<h3>Your data stays yours</h3><p>Every company gets its own private workspace, enforced in the database on every record. Keys and links you paste are stored encrypted.</p></div>
     </div></section>
   <section class="land-sec" id="how"><p class="land-kicker">Up and running in an afternoon</p><h2>How it works</h2>
     <ol class="land-steps">
       <li><b>Start a workspace</b><span>Name your company and pick a starting setup. You get 14 days of Pro, no card needed.</span></li>
-      <li><b>Add your NAICS codes and keywords</b><span>Paste your SAM.gov key and MyBidMatch link once. Matching work shows up the next morning.</span></li>
+      <li><b>Bring in what you have</b><span>Import your contacts and lists from a spreadsheet. If you sell to government, add your NAICS codes and keywords and matching work shows up the next morning.</span></li>
       <li><b>Invite the team</b><span>Share the company code with staff and the contractor code with consultants. Everyone signs in once.</span></li>
     </ol></section>`;
   const faq = [
     ["Who counts as a user?", "Admins and members (your staff). Contractors and consultants are free."],
     ["What happens when the trial ends?", "Apps outside your plan show a lock until an admin chooses a plan. Nothing is deleted."],
-    ["Do I need a SAM.gov account?", "Only to get a free SAM.gov API key, which takes about five minutes. Grants.gov works with no setup. The Help Center walks you through both."],
+    ["Is Pulse a CRM?", "It includes one: contacts, follow-ups and a pipeline. Pulse also runs what comes after the deal (projects, agreements, timecards, hiring), which a CRM alone doesn't."],
+    ["Do I have to sell to government?", "No. Opportunities is there for firms that bid on public work; every other app works for any small company."],
     ["Can I bring my existing contacts and lists?", "Yes. Import a spreadsheet or CSV into Contacts and most lists; Pulse matches the columns and combines duplicates."],
     ["Can I pay by invoice?", "Yes. Pay by card in Plan and billing, or ask for an invoice."],
   ];

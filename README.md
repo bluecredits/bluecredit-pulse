@@ -13,6 +13,7 @@ the company's code, contractors and consultants with a separate contractor code.
 | `/opportunities/` | **Opportunities** | Two tabs: Contracts (sub-tabs Federal from SAM.gov and Bids from MyBidMatch: federal, state, local, education) and Grants (Grants.gov) from saved searches checked on a schedule (default once a day); add a contract to the pipeline or a grant to Funding |
 | `/timecards/` | **Timecards** | Weekly timesheets by project, approvals, hours and amounts by project |
 | `/people/` | **People** | Hiring (openings with a public apply link, candidate board, interviews, blind scorecards), then onboarding checklists, invite and offboarding. `/onboarding/` redirects here |
+| `/careers/?c=…` | Careers page | Public list of a company's Open openings, turned on in People → Hiring setup; `careers/embed.js` puts it inside the company's own website |
 | `/apply/?t=…` | Apply page | Public, no sign-in: the opening's description and an application form with resume upload |
 | `/projects/` | **Projects** | Portfolio, schedule, task board, team, budget vs. actual, documents, risks, status reports, close-out |
 | `/agreements/` | **Agreements** | Teaming, consulting, confidentiality agreements and amendments: fill in, e-sign, amend, close out |

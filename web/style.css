@@ -572,6 +572,17 @@ label.inline input { width: auto; }
 .agr-box { border: 1px solid #ccc; padding: 10px; min-height: 40px; }
 .agr-small { font-size: 13px; } .agr-ref { text-align: center; font-size: 13px; }
 .agr-cert { page-break-before: always; margin-top: 30px; font-family: var(--font-ui); font-size: 13px; } .agr-cert h2 { font-family: var(--font-ui); }
+.ex-row { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 12px; display: grid; gap: 10px; }
+.ex-head { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; } .ex-letter { white-space: nowrap; font-size: 13px; color: var(--blue); }
+.ex-mode { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 2px; width: max-content; }
+.ex-mode button { border: 0; background: none; padding: 4px 12px; border-radius: 999px; font: 500 13px var(--font-ui); color: var(--muted); cursor: pointer; }
+.ex-mode button[aria-pressed="true"] { background: var(--blue); color: #fff; }
+.ex-row textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.ex-drop { border: 1px dashed var(--line); border-radius: 10px; padding: 12px; color: var(--muted); font-size: 13px; }
+.ex-file { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; } .ex-add select { width: auto; }
+.agr-doc h3 { font: 700 15px "Times New Roman", serif; margin: 14px 0 6px; } .agr-doc .agr-exhibit ul, .agr-doc .agr-exhibit ol { margin: 0 0 10px; }
+.agr-preview .agr-doc .agr-exh-clause { background: #eff6ff; } .agr-doc p.agr-attach { text-align: left; } .agr-attach code { word-break: break-all; }
+@media print { .agr-doc .agr-exh-clause, .agr-doc .agr-special { background: none; } .agr-attach .btn { display: none; } }
 .sp-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-bottom: 12px; } .sp-row textarea { grid-column: 1 / -1; } .sp-btns { display: flex; gap: 4px; }
 .lifecycle { display: flex; list-style: none; padding: 0; margin: 0 0 16px; gap: 4px; flex-wrap: wrap; }
 .lifecycle li { flex: 1 1 110px; text-align: center; padding: 8px 6px; font: 600 12.5px var(--font-ui); color: var(--muted); background: var(--line-2); clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%, 10px 50%); }

@@ -15,8 +15,7 @@ function docHtml(d) {
   return html;
 }
 function render(d) {
-  $("#coName").textContent = d.company || "";
-  $("#coLogo").innerHTML = d.logo_url ? `<img src="${esc(d.logo_url)}" alt="">` : esc((d.company || "?").split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase());
+  // the sender's name is in the heading (the header chip that used to hold it was removed on Nov 6, which broke this page)
   document.title = `${d.title} · Review and sign`;
   const me = d.me, open = d.status === "Out for signature" && !["Signed", "Declined"].includes(me.status);
   const others = (d.signers || []).filter((s) => !(s.name === me.name && s.role === me.role));
@@ -37,6 +36,18 @@ function render(d) {
         <p class="muted small">Your name, the time, your IP address and browser are recorded with your signature. The document's fingerprint is <code>${esc((d.doc_hash || "").slice(0, 16))}…</code></p>
       </form></section>` : ""}
     ${me.status === "Signed" && d.status === "Out for signature" ? `<div class="notice-bar ok">${ic("check")}<div>Thanks, you've signed. You'll be able to download the final copy from this link once everyone has signed.</div></div>` : ""}`;
+  // exhibits attached as separate files: download through the signing link
+  $$("[data-exfile]").forEach((el) => {
+    el.insertAdjacentHTML("beforeend", ` <button class="btn small" type="button">${ic("arrow-out")}Download exhibit</button>`);
+    $("button", el).addEventListener("click", async () => {
+      try {
+        const f = await rpc("sign_exhibit", { p_token: token, p_file: +el.dataset.exfile });
+        const bin = atob(String(f.data_b64).replace(/^data:[^,]+,/, "")), u8 = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+        const url = URL.createObjectURL(new Blob([u8], { type: f.mime || "application/octet-stream" })), l = document.createElement("a");
+        l.href = url; l.download = f.name; l.click(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+      } catch (e) { toast(e.message); }
+    });
+  });
   $("#printIt")?.addEventListener("click", () => {
     const w = window.open("", "_blank"); if (!w) return toast("Allow pop-ups to download");
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(d.title)}</title><link rel="stylesheet" href="${location.origin + location.pathname.replace(/sign\/?(index\.html)?$/, "")}style.css">

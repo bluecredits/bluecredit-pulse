@@ -149,7 +149,7 @@ ${SIG_NOTE}
 <h2>SCHEDULE 1<br><small>Services, Deliverables and Fees</small></h2>
 <table class="agr-table">
 <tr><th>Services</th><td>{{services}}</td></tr>
-<tr><th>Deliverables and due dates</th><td><ul>{{#each deliverables}}<li>{{.}}</li>{{/each}}</ul></td></tr>
+<tr><th>Deliverables and due dates</th><td>{{#if deliverables}}<ul>{{#each deliverables}}<li>{{.}}</li>{{/each}}</ul>{{/if}}{{#unless deliverables}}{{#if sow_ref}}As set out in the Statement of Work attached as {{sow_ref}}{{/if}}{{#unless sow_ref}}{{deliverables_required}}{{/unless}}{{/unless}}</td></tr>
 <tr><th>Start date</th><td>{{start_date_long}}</td></tr>
 <tr><th>End date</th><td>{{#if end_date}}{{end_date_long}}{{/if}}{{#unless end_date}}On completion of the Services{{/unless}}</td></tr>
 <tr><th>Fees</th><td>{{fee_text}}{{#if fee_cap}}; not to exceed {{fee_cap_text}}{{/if}}</td></tr>
@@ -247,8 +247,8 @@ const BUILTIN_TEMPLATES = [
     checklist: ["sign", "agreement"], signers: [{ role: "company", label: "Your company" }, { role: "party", label: "Consultant" }],
     fields: [
       { key: "reference", label: "Reference / PO number", group: "Engagement" },
-      { key: "services", label: "Services (what they'll do)", group: "Engagement", type: "text", required: true },
-      { key: "deliverables", label: "Deliverables and due dates, one per line", group: "Engagement", type: "lines", required: true },
+      { key: "services", label: "Services (what they'll do). Leave blank if a Statement of Work exhibit covers it", group: "Engagement", type: "text" },
+      { key: "deliverables", label: "Deliverables and due dates, one per line (or in the Statement of Work)", group: "Engagement", type: "lines" },
       { key: "key_personnel", label: "Key personnel (optional)", group: "Engagement" },
       { key: "effective_date", label: "Effective date", group: "Engagement", type: "date", required: true, default: "today" },
       { key: "start_date", label: "Start date", group: "Engagement", type: "date", required: true, default: "today" },
@@ -362,8 +362,109 @@ function agreementVars(tpl, v) {
     Consultant: "my retention as a consultant or continued retention as a consultant", Contractor: "my engagement as a contractor or continued engagement" }[v.relationship] || "my retention";
   return x;
 }
+/* ---------------------------------------------------------------- exhibits
+   Exhibits (a Statement of Work, rate schedule, flow-down clauses…) are attached after the signatures and pulled in by one
+   standard clause, so the contract body keeps its standard wording. Each is typed (light formatting) or a separately attached
+   file identified by its SHA-256 fingerprint, which becomes part of the signed text. Letters continue after any exhibit
+   the template already has (Teaming and Confidentiality use Exhibit A). */
+const EXHIBIT_PRESETS = [
+  { key: "sow", title: "Statement of Work", text: (who) => `# Purpose
+[[What the work is for and the outcome needed]]
+
+# Scope of work
+- [[Task]]
+- [[Task]]
+
+# Deliverables and due dates
+1. [[Deliverable, due date]]
+
+# Schedule
+Work begins on [[start date]] and is complete by [[end date or milestone]].
+
+# Acceptance
+The Company will review each deliverable within ten (10) business days of receipt and either accept it or explain in writing how it does not meet this Statement of Work. The ${who} will correct and resubmit a non-conforming deliverable at no additional charge.
+
+# Price and payment
+[[Fixed price, rates or milestone payments]]
+
+# Assumptions and Company responsibilities
+- [[Data, access or approvals the Company will provide]]
+
+# Points of contact
+- Company: [[name, email]]
+- ${who}: [[name, email]]` },
+  { key: "rates", title: "Rate Schedule", text: () => `Rates are fully burdened and fixed for the term unless the Parties agree otherwise in writing.
+
+- [[Labor category]]: [[rate]] per hour
+- [[Labor category]]: [[rate]] per hour
+
+Travel and other direct costs: [[at cost with prior written approval / not reimbursed]].` },
+  { key: "personnel", title: "Key Personnel", text: (who) => `The following are Key Personnel. The ${who} will not remove or replace Key Personnel without the Company's prior written consent, which will not be unreasonably withheld, and any replacement will have equal or better qualifications.
+
+- [[Name]], [[role]]
+- [[Name]], [[role]]` },
+  { key: "flowdown", title: "Flow-Down Clauses", text: (who) => `The following clauses of prime contract [[contract number]] are incorporated by reference, in the version in effect on the date of the prime contract. "Contractor" means the ${who} and "Government" or "Contracting Officer" means the Company, except where the context requires otherwise.
+
+- FAR 52.203-13 Contractor Code of Business Ethics and Conduct
+- FAR 52.204-21 Basic Safeguarding of Covered Contractor Information Systems
+- FAR 52.222-26 Equal Opportunity
+- FAR 52.222-50 Combating Trafficking in Persons
+- [[Add or remove clauses to match the prime contract]]` },
+  { key: "insurance", title: "Insurance Requirements", text: (who) => `During the term the ${who} will maintain, with insurers rated A- or better:
+
+- Commercial general liability: [[$1,000,000]] per occurrence
+- Professional liability (errors and omissions): [[$1,000,000]] per claim
+- Workers' compensation: as required by law
+- Automobile liability (if vehicles are used for the work): [[$1,000,000]] combined single limit
+
+Certificates of insurance will be provided before work begins and on renewal.` },
+  { key: "other", title: "", text: () => `[[Exhibit text]]` },
+];
+const exhibitWho = (kind) => ({ consulting: "Consultant", teaming: "Subcontractor", employment: "Employee" }[kind] || "Contractor");
+// the letter the first added exhibit gets: after the template's own EXHIBIT A, B… (if any)
+function exhibitStart(body) {
+  const used = [...String(body || "").matchAll(/EXHIBIT ([A-Z])\b/g)].map((m) => m[1].charCodeAt(0));
+  return used.length ? Math.max(...used) + 1 : 65;
+}
+const exhibitList = (body, list) => (list || []).filter((e) => e && (e.title || e.text || e.file_id)).map((e, i) => ({ ...e, letter: String.fromCharCode(exhibitStart(body) + i) }));
+const BLANK = (t) => `<span class="agr-blank">[${_esc(t)}]</span>`;
+// typed exhibit text: "# Heading", "- bullet", "1. numbered", blank line = new paragraph, [[…]] = something still to fill in
+function exhibitText(t) {
+  const fmt = (x) => _esc(x).replace(/\[\[(.+?)\]\]/g, (_, k) => BLANK(k));
+  const out = []; let list = null;
+  const flush = () => { if (list) out.push(`<${list.tag}>${list.items.join("")}</${list.tag}>`); list = null; };
+  const add = (tag, item) => { if (list && list.tag !== tag) flush(); (list ||= { tag, items: [] }).items.push(`<li>${fmt(item)}</li>`); };
+  for (const raw of String(t || "").split("\n")) {
+    const line = raw.trim(); let m;
+    if (!line) { flush(); continue; }
+    if ((m = line.match(/^#{1,3}\s+(.*)$/))) { flush(); out.push(`<h3>${fmt(m[1])}</h3>`); }
+    else if ((m = line.match(/^[-*•]\s+(.*)$/))) add("ul", m[1]);
+    else if ((m = line.match(/^\d+[.)]\s+(.*)$/))) add("ol", m[1]);
+    else { flush(); out.push(`<p>${fmt(line)}</p>`); }
+  }
+  flush();
+  return out.join("");
+}
+function exhibitBlock(e) {
+  const head = `<h2>EXHIBIT ${e.letter}<br><small>${e.title ? _esc(e.title) : BLANK("exhibit title")}</small></h2>`;
+  const body = e.mode === "file"
+    ? (e.file_id ? `<p>This Exhibit ${e.letter} is the separately attached document <b>${_esc(e.file_name || "attachment")}</b>, which is incorporated into this Agreement as if set out in full.</p>
+      <p class="agr-small agr-attach" data-exfile="${+e.file_id}">SHA-256 fingerprint of the attached file: <code>${_esc(e.sha256 || "")}</code></p>` : `<p>${BLANK("attach the exhibit file")}</p>`)
+    : (String(e.text || "").trim() ? exhibitText(e.text) : `<p>${BLANK("exhibit text")}</p>`);
+  return `<div class="agr-exhibit agr-added">${head}${body}</div>`;
+}
+function exhibitClause(exs, hasOwn) {
+  const names = exs.map((e) => `Exhibit ${e.letter} (${_esc(e.title || "untitled")})`);
+  const joined = names.length < 3 ? names.join(" and ") : names.slice(0, -1).join(", ") + ", and " + names.at(-1);
+  return `<b>Exhibits.</b> The following ${hasOwn ? "additional " : ""}exhibit${exs.length > 1 ? "s are" : " is"} attached to and made part of this Agreement: ${joined}. If an exhibit conflicts with the body of this Agreement, the body of this Agreement controls${exs.length > 1 ? ", and an earlier-listed exhibit controls over a later one" : ""}, unless the exhibit expressly states that it modifies a specific section of this Agreement.`;
+}
+
 function renderTemplate(body, vars, signaturesHtml = "") {
   let s = String(body);
+  const exs = exhibitList(body, vars.exhibits);
+  const sow = exs.find((e) => /statement of work|\bsow\b/i.test(e.title || ""));
+  vars = { ...vars, sow_ref: sow ? `Exhibit ${sow.letter}` : "" };
+  if (sow && !truthy(vars.services)) vars.services = `The services described in the Statement of Work attached as Exhibit ${sow.letter}.`;
   const extra = (vars.special_provisions || []).filter((p) => p && (p.title || p.text));
   if (extra.length) {   // extra numbered sections go at the end of the main section list
     const items = extra.map((p) => `<li class="agr-special"><b>${_esc(p.title || "Special Provision")}.</b> ${_esc(p.text || "").replace(/\n/g, "<br>")}</li>`).join("");
@@ -377,7 +478,14 @@ function renderTemplate(body, vars, signaturesHtml = "") {
     s = s.replace(/\{\{#unless (\w+)\}\}((?:(?!\{\{#unless )[\s\S])*?)\{\{\/unless\}\}/g, (_, k, inner) => (truthy(vars[k]) ? "" : inner));
   }
   s = s.replace(/\{\{signatures\}\}/g, signaturesHtml);
-  return s.replace(/\{\{(\w+)\}\}/g, (_, k) => (vars[k] == null || vars[k] === "" ? `<span class="agr-blank">[${_esc(k.replace(/_/g, " "))}]</span>` : _esc(vars[k]).replace(/\n/g, "<br>")));
+  s = s.replace(/\{\{(\w+)\}\}/g, (_, k) => (vars[k] == null || vars[k] === "" ? `<span class="agr-blank">[${_esc(k.replace(/_/g, " "))}]</span>` : _esc(vars[k]).replace(/\n/g, "<br>")));
+  if (!exs.length) return s;
+  // the standard clause goes last in the numbered sections (or just above the signatures), the exhibits at the very end
+  const clause = exhibitClause(exs, exhibitStart(body) > 65 || /SCHEDULE 1/.test(body));
+  const i = s.indexOf('class="agr-sections"');
+  if (i >= 0) { const close = s.indexOf("</ol>", i); s = s.slice(0, close) + `<li class="agr-exh-clause">${clause}</li>` + s.slice(close); }
+  else { const at = s.indexOf("<!--sigs-->"); const p = `<p>${clause}</p>`; s = at >= 0 ? s.slice(0, at) + p + s.slice(at) : s + p; }
+  return s + exs.map(exhibitBlock).join("");
 }
 // Signature blocks; signed blocks show the signature, unsigned ones a line (filled in when executed)
 function signatureBlocks(tpl, vars, signers = []) {
@@ -394,11 +502,11 @@ function signatureBlocks(tpl, vars, signers = []) {
   }).join("")}</div><!--/sigs-->`;
 }
 const COMPUTED = new Set(["pay_text", "employment_type_text", "classification_nonexempt", "effective_date_long", "proposal_due_long", "start_date_long", "end_date_long", "original_date_long", "law_place", "venue_place", "us_law",
-  "company_contact", "party_contact", "fee_text", "fee_cap_text", "relationship_text", "signatures", ...["prime", "sub"].flatMap((k) => ["name", "entity", "address", "short", "contact"].map((f) => `${k}_${f}`))]);
+  "company_contact", "party_contact", "sow_ref", "deliverables_required", "fee_text", "fee_cap_text", "relationship_text", "signatures", ...["prime", "sub"].flatMap((k) => ["name", "entity", "address", "short", "contact"].map((f) => `${k}_${f}`))]);
 function templateFields(tpl) {
   const known = new Set(tpl.fields.map((f) => f.key));
   const extra = [...new Set([...String(tpl.body).matchAll(/\{\{[#/]?(?:if |unless |each )?(\w+)\}\}/g)].map((m) => m[1]))]
     .filter((k) => !known.has(k) && !COMPUTED.has(k) && k !== "if" && k !== "unless" && k !== "each");
   return [...tpl.fields, ...extra.map((k) => ({ key: k, label: k.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()), group: "Other details", required: true }))];
 }
-window.PULSE_AGREEMENTS = { templateFields,  BUILTIN_TEMPLATES, JURISDICTIONS, lawPlace, venuePlace, noncompeteWarning, agreementVars, renderTemplate, signatureBlocks, longDate, lines };
+window.PULSE_AGREEMENTS = { templateFields, EXHIBIT_PRESETS, exhibitWho, exhibitStart,  BUILTIN_TEMPLATES, JURISDICTIONS, lawPlace, venuePlace, noncompeteWarning, agreementVars, renderTemplate, signatureBlocks, longDate, lines };

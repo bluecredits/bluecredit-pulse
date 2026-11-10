@@ -100,7 +100,7 @@ async function New(param) {
       Object.assign(meta, { onboarding_id: par.onboarding_id || "", project_id: par.project_id || "", contact_id: par.contact_id || "" });
     }
   }
-  AG.form = { id: null, tpl, v, meta, special: [], title: "" };
+  AG.form = { id: null, tpl, v, meta, special: [], exhibits: [], title: "" };
   renderForm();
 }
 async function Edit(id) {
@@ -108,8 +108,8 @@ async function Edit(id) {
   if (a.status !== "Draft") { location.hash = `#/view/${id}`; return; }
   const tpl = (await loadTemplates()).find((t) => t.key === a.template_key);
   if (!tpl) { toast("This agreement's template no longer exists."); return; }
-  const { special_provisions = [], ...v } = a.fields || {};
-  AG.form = { id: a.id, tpl, v, special: special_provisions, title: a.title, titleTouched: true,
+  const { special_provisions = [], exhibits = [], ...v } = a.fields || {};
+  AG.form = { id: a.id, tpl, v, special: special_provisions, exhibits, title: a.title, titleTouched: true,
     meta: { template_key: a.template_key, template_name: a.template_name, kind: a.kind, onboarding_id: a.onboarding_id || "", contact_id: a.contact_id || "", project_id: a.project_id || "", parent_id: a.parent_id || "" } };
   renderForm();
 }
@@ -142,6 +142,11 @@ function renderForm() {
         <section class="panel"><h2>Special provisions <small>added as numbered sections at the end</small></h2>
           <div id="specials">${F.special.map((s, i) => specialRow(s, i)).join("")}</div>
           <button class="btn small" type="button" id="addSpecial">${icon("plus")}Add a special provision</button></section>
+        <section class="panel"><h2>Exhibits <small>attached after the signatures; one standard clause makes them part of the agreement</small></h2>
+          <div id="exhibits">${F.exhibits.map((x, i) => exhibitRow(x, i)).join("")}</div>
+          <div class="actions-row ex-add">${F.exhibits.some((x) => /statement of work/i.test(x.title || "")) ? "" : `<button class="btn small" type="button" data-ex-add="sow">${icon("plus")}Statement of Work</button>`}
+            <select id="exAddMore" aria-label="Add another exhibit"><option value="">Add another exhibit…</option>${A.EXHIBIT_PRESETS.filter((p) => p.key !== "sow").map((p) => `<option value="${p.key}">${esc(p.title || "Other (blank)")}</option>`).join("")}<option value="sow">Statement of Work</option></select></div>
+          <p class="muted small">Type it (<code># heading</code>, <code>- bullet</code>, <code>1. numbered</code>; <code>[[ ]]</code> marks something still to fill in) or attach a PDF or Word file. An attached file is identified in the agreement by its fingerprint, so it can't be swapped after signing.</p></section>
         <section class="panel"><h2>Link it to</h2><div class="form-grid" id="links"></div></section>
       </form>
       <aside class="agr-preview"><div class="agr-preview-head"><b>Preview</b><span class="muted small" id="blankCount"></span></div><div class="agr-doc" id="preview"></div></aside>
@@ -159,6 +164,22 @@ function renderForm() {
     if (act === "down" && i < F.special.length - 1) [F.special[i + 1], F.special[i]] = [F.special[i], F.special[i + 1]];
     renderFormKeep();
   });
+  const addEx = (key) => { collect(); const p = A.EXHIBIT_PRESETS.find((x) => x.key === key); if (!p) return; F.exhibits.push({ title: p.title, mode: "text", text: p.text(A.exhibitWho(F.tpl.kind)) }); renderFormKeep(); $$("#exhibits [data-ex-title]").at(-1)?.focus(); };
+  $$("[data-ex-add]").forEach((b) => b.addEventListener("click", () => addEx(b.dataset.exAdd)));
+  $("#exAddMore").addEventListener("change", (e) => addEx(e.target.value));
+  $("#exhibits").addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-ex-act]"); if (!b) return; collect();
+    const i = +b.dataset.i, act = b.dataset.exAct, x = F.exhibits[i];
+    if (act === "del") { if (x.file_id && !confirm(`Remove ${x.title || "this exhibit"} and its attached file?`)) return; await dropExFile(x); F.exhibits.splice(i, 1); }
+    if (act === "up" && i > 0) [F.exhibits[i - 1], F.exhibits[i]] = [F.exhibits[i], F.exhibits[i - 1]];
+    if (act === "down" && i < F.exhibits.length - 1) [F.exhibits[i + 1], F.exhibits[i]] = [F.exhibits[i], F.exhibits[i + 1]];
+    if (act === "text" && x.file_id) { if (!confirm("Type this exhibit instead? The attached file will be removed.")) return; await dropExFile(x); }
+    if (act === "text" || act === "file") x.mode = act;
+    if (act === "unfile") { await dropExFile(x); x.mode = "file"; }
+    renderFormKeep();
+    if (F.id && ["del", "unfile", "text"].includes(act)) saveDraft();
+  });
+  $("#exhibits").addEventListener("change", (e) => { if (e.target.matches("[data-ex-file]")) attachExFile(+e.target.dataset.exFile, e.target.files[0]); });
   $("#saveDraft").addEventListener("click", () => saveDraft().then((id) => id && toast("Draft saved")));
   $("#toSend").addEventListener("click", async () => { const id = await saveDraft(); if (id) sendDialog(id); });
   updatePreview();
@@ -169,6 +190,37 @@ function specialRow(s, i) {
     <div class="sp-btns"><button type="button" class="btn small" data-sp-act="up" data-i="${i}" aria-label="Move up">↑</button><button type="button" class="btn small" data-sp-act="down" data-i="${i}" aria-label="Move down">↓</button>
     <button type="button" class="btn small danger" data-sp-act="del" data-i="${i}">Remove</button></div>
     <textarea data-sp-text="${i}" rows="3" placeholder="The provision's text" aria-label="Text">${esc(s.text)}</textarea></div>`;
+}
+function exhibitRow(x, i) {
+  const letter = String.fromCharCode(A.exhibitStart(AG.form.tpl.body) + i), file = x.mode === "file";
+  return `<div class="ex-row" data-ex="${i}"><div class="ex-head"><b class="ex-letter">Exhibit ${letter}</b>
+      <input data-ex-title="${i}" value="${esc(x.title || "")}" placeholder="Title, e.g. Statement of Work" aria-label="Exhibit ${letter} title">
+      <div class="sp-btns"><button type="button" class="btn small" data-ex-act="up" data-i="${i}" aria-label="Move up">↑</button><button type="button" class="btn small" data-ex-act="down" data-i="${i}" aria-label="Move down">↓</button>
+      <button type="button" class="btn small danger" data-ex-act="del" data-i="${i}">Remove</button></div></div>
+    <div class="seg ex-mode" role="group" aria-label="How the exhibit is provided"><button type="button" data-ex-act="text" data-i="${i}" aria-pressed="${!file}">Type it</button><button type="button" data-ex-act="file" data-i="${i}" aria-pressed="${file}">Attach a file</button></div>
+    ${file ? (x.file_id ? `<div class="ex-file">${icon("clipboard", "ic tiny")} <b>${esc(x.file_name)}</b> <span class="muted small">${Math.round((x.size || 0) / 1024)} KB · fingerprint ${esc((x.sha256 || "").slice(0, 12))}…</span>
+          <button type="button" class="btn small" data-ex-act="unfile" data-i="${i}">Replace</button></div>`
+        : `<label class="ex-drop">PDF, Word or image, up to 10 MB<input type="file" data-ex-file="${i}" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"></label>`)
+      : `<textarea data-ex-text="${i}" rows="9" aria-label="Exhibit ${letter} text">${esc(x.text || "")}</textarea>`}</div>`;
+}
+async function dropExFile(x) {
+  if (!x.file_id) return;
+  try { await db.rpc("agr_exhibit_remove", { p_file: +x.file_id }); } catch (e) { toast(e.message); }
+  delete x.file_id; delete x.file_name; delete x.sha256; delete x.size;
+}
+async function attachExFile(i, file) {
+  const F = AG.form; if (!file) return;
+  if (file.size > 10 * 1024 * 1024) { toast("That file is over 10 MB."); return; }
+  collect();
+  const id = F.id || await saveDraft(); if (!id) return;   // the file belongs to the draft, so save it first
+  toast("Attaching…");
+  try {
+    const b64 = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1]); r.onerror = () => rej(new Error("Couldn't read that file.")); r.readAsDataURL(file); });
+    const f = await db.rpc("agr_exhibit_add", { p_id: id, p_name: file.name, p_mime: file.type || "application/octet-stream", p_b64: b64 });
+    Object.assign(F.exhibits[i], { mode: "file", file_id: f.id, file_name: f.name, sha256: f.sha256, size: f.size });
+    if (!F.exhibits[i].title) F.exhibits[i].title = file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ");
+    renderFormKeep(); await saveDraft(); toast("Exhibit attached");
+  } catch (e) { toast(e.message); }
 }
 function defaultTitle() { const F = AG.form; return F.tpl.amendment ? `Amendment ${F.v.amendment_no || ""} to ${F.v.original_title || "agreement"}` : `${F.tpl.name}${F.v.party_name ? " — " + F.v.party_name : ""}`; }
 async function fillLinks() {
@@ -190,10 +242,11 @@ function collect() {
   if (fd.has("__onboarding")) F.meta.onboarding_id = fd.get("__onboarding");
   if (fd.has("__project")) F.meta.project_id = fd.get("__project");
   F.special = $$("#specials .sp-row").map((r) => ({ title: $("[data-sp-title]", r).value.trim(), text: $("[data-sp-text]", r).value.trim() }));
+  $$("#exhibits .ex-row").forEach((r) => { const x = F.exhibits[+r.dataset.ex]; if (!x) return; x.title = $("[data-ex-title]", r).value.trim(); const t = $("[data-ex-text]", r); if (t) x.text = t.value; });
 }
 function onFormChange() { collect(); updatePreview(); }
 function rendered() {
-  const F = AG.form, vars = A.agreementVars(F.tpl, { ...F.v, special_provisions: F.special });
+  const F = AG.form, vars = A.agreementVars(F.tpl, { ...F.v, special_provisions: F.special, exhibits: F.exhibits });
   return A.renderTemplate(F.tpl.body, vars, A.signatureBlocks(F.tpl, vars, []));
 }
 function updatePreview() {
@@ -209,7 +262,7 @@ async function saveDraft() {
   const value = v.fee_cap || (v.fee_type === "Fixed fee" ? v.fee_rate : "") || "";
   try {
     const id = await db.rpc("agr_save", { p: { id: F.id, ...F.meta, title: F.title, party_name: v.party_name || v.party_signer_name || "", party_email: v.party_signer_email || "",
-      fields: { ...v, special_provisions: F.special }, body_html: rendered(), value, currency: v.currency || "", start_date: v.start_date || v.effective_date || "", end_date: v.end_date || "" } });
+      fields: { ...v, special_provisions: F.special, exhibits: F.exhibits }, body_html: rendered(), value, currency: v.currency || "", start_date: v.start_date || v.effective_date || "", end_date: v.end_date || "" } });
     F.id = id; history.replaceState(null, "", `#/edit/${id}`);
     return id;
   } catch (e) { toast(e.message); return null; }
@@ -294,13 +347,15 @@ async function View(id) {
       ...(["Expired", "Terminated", "Closed out"].includes(st) ? [["closeout", "Close-out"]] : [])].map(([k, l]) => `<button role="tab" data-vt="${k}" aria-selected="${tab === k}">${l}</button>`).join("")}</div>
     <div id="vbody"></div>`;
   const body = $("#vbody");
-  if (tab === "doc") body.innerHTML = `<section class="panel agr-doc-wrap"><div class="agr-doc">${executedHtml(a, signers, false)}</div></section>`;
+  if (tab === "doc") { body.innerHTML = `<section class="panel agr-doc-wrap"><div class="agr-doc">${executedHtml(a, signers, false)}</div></section>`;
+    $$("[data-exfile]", body).forEach((el) => el.insertAdjacentHTML("beforeend", ` <button class="btn small" type="button" data-file="${+el.dataset.exfile}">Download exhibit</button>`)); }
+  const exOf = Object.fromEntries((a.fields?.exhibits || []).filter((x) => x.file_id).map((x) => [x.file_id, x]));
   if (tab === "signers") body.innerHTML = `<section class="panel" style="padding:0"><div class="table-wrap"><table><thead><tr><th>Signer</th><th>Role</th><th>Status</th><th>Signed</th><th>From</th>${st === "Out for signature" && staff ? "<th></th>" : ""}</tr></thead><tbody>
       ${signers.map((s) => `<tr style="cursor:default"><td><b>${esc(s.name)}</b><small class="muted" style="display:block">${esc(s.email || "")}${s.title ? " · " + esc(s.title) : ""}</small></td><td>${esc(s.label || s.role)}</td>
         <td>${spill(s.status === "Signed" ? "Closed out" : s.status === "Declined" ? "Declined" : s.status === "Viewed" ? "Out for signature" : "Draft").replace(/>[^<]+</, `>${esc(s.status)}<`)}</td>
         <td class="date">${s.signed_at ? new Date(s.signed_at).toLocaleString() : s.viewed_at ? "Opened " + ago(s.viewed_at) : "—"}</td><td class="small">${esc(s.ip || "")}</td>
         ${st === "Out for signature" && staff ? `<td>${s.status === "Signed" ? "" : `<button class="btn small" data-relink="${s.id}">New link</button>`}</td>` : ""}</tr>`).join("") || `<tr><td colspan="6" class="empty">Not sent yet.</td></tr>`}</tbody></table></div></section>`;
-  if (tab === "files") body.innerHTML = `<section class="panel"><ul class="checklist">${files.map((f) => `<li class="ck"><span>${icon("clipboard", "ic tiny")} <b>${esc(f.name)}</b> <span class="muted small">${Math.round((f.size || 0) / 1024)} KB · ${esc(f.uploaded_by || "")} ${short(f.created_at)}</span></span>
+  if (tab === "files") body.innerHTML = `<section class="panel"><ul class="checklist">${files.map((f) => `<li class="ck"><span>${icon("clipboard", "ic tiny")} <b>${esc(f.name)}</b>${exOf[f.id] ? ` <span class="pill">Exhibit: ${esc(exOf[f.id].title || "")}</span>` : ""} <span class="muted small">${Math.round((f.size || 0) / 1024)} KB · ${esc(f.uploaded_by || "")} ${short(f.created_at)}</span></span>
       <span class="meta"><button class="btn small" data-file="${f.id}">Download</button></span></li>`).join("") || `<li class="empty">No files. The e-signed copy is the Document tab; uploaded signed copies and attachments show here.</li>`}</ul>
       ${staff && !["Voided", "Closed out"].includes(st) ? `<button class="btn small" id="addFile">${icon("plus")}Add a file</button>` : ""}</section>`;
   if (tab === "activity") body.innerHTML = `<section class="panel"><ul class="timeline">${events.map((e) => `<li><b>${esc(e.actor || "")}</b> ${esc(e.detail || e.kind)} <span class="muted small">· ${new Date(e.ts).toLocaleString()}${e.ip ? " · " + esc(e.ip) : ""}</span></li>`).join("")}</ul>

@@ -84,7 +84,7 @@ async function afterSignIn() {
 async function Home() {
   const me = S.user.id, wk = monday(0), lastWk = monday(-7);
   $("#main").innerHTML = `<p class="muted">Loading…</p>`;
-  const [pol, signers, obs, assets, entries, sheet, tickets, chart, tasks] = await Promise.all([
+  const [pol, signers, obs, assets, entries, sheet, tickets, chart, tasks, exps] = await Promise.all([
     on("people") || on("documents") ? safe(db.rpc("my_policies", {}), []) : [],
     safe(sb.from("agreement_signers").select("agreement_id, status, label").eq("user_id", me).in("status", ["Waiting", "Viewed"]), []),
     safe(sb.from("onboardings").select("id, role_title, kind, status, checklist, start_date").eq("user_id", me), []),
@@ -94,6 +94,7 @@ async function Home() {
     on("tickets") ? safe(sb.from("tickets").select("id, number, type, title, status, start_date, end_date, created_at").eq("requester_id", me).order("created_at", { ascending: false }).limit(6), []) : [],
     safe(db.rpc("org_chart", {}), null),
     on("projects") ? safe(db.rpc("my_tasks", {}), []) : [],
+    on("timecards") ? safe(sb.from("expense_reports").select("id, number, title, status").eq("user_id", me).in("status", ["Rejected", "Draft"]), []) : [],
   ]);
   const agrIds = [...new Set(signers.map((s) => s.agreement_id))];
   const agrs = agrIds.length ? await safe(sb.from("agreements").select("id, title, status").in("id", agrIds).eq("status", "Out for signature"), []) : [];
@@ -115,6 +116,7 @@ async function Home() {
     polTodo.length ? { ic: "book", text: `Read and certify <b>${polTodo.length} ${polTodo.length === 1 ? "policy" : "policies"}</b>${polTodo.length <= 3 ? `: ${polTodo.map((p) => esc(p.title)).join(", ")}` : ""}`, href: "../people/#/policies", btn: "Read" } : null,
     steps.length ? { ic: "check", text: `<b>${steps.length}</b> onboarding ${steps.length === 1 ? "step" : "steps"} left: ${esc(steps[0].text)}${steps.length > 1 ? "…" : ""}`, href: "../people/#/mine", btn: "Open checklist" } : null,
     devTodo.length ? { ic: "computer", text: `Confirm you received <b>${devTodo.map((a) => esc(a.name)).join(", ")}</b>`, href: "#devices", btn: "Confirm" } : null,
+    ...exps.filter((x) => x.status === "Rejected").map((x) => ({ ic: "banknotes", text: `Expense report <b>${esc(x.title)}</b> was sent back. Fix it and resubmit.`, href: `../timecards/#/expense/${x.id}`, btn: "Open" })),
     sheetDue ? { ic: "timer", text: `Submit your timesheet for the week of <b>${short(lastWk)}</b> (${hrsLast} h)`, href: `../timecards/#/week/${lastWk}`, btn: "Submit" } : null,
   ].filter(Boolean);
 
@@ -123,7 +125,8 @@ async function Home() {
     on("tickets") && ["sun", "Request time off", "../tickets/#/requests?new=" + encodeURIComponent("Time off")],
     on("tickets") && ["computer", "Ask for equipment", "../tickets/#/requests?new=" + encodeURIComponent("New equipment")],
     on("tickets") && ["wrench", "Get IT help", "../tickets/#/requests?new=" + encodeURIComponent("IT support")],
-    on("tickets") && ["banknotes", "Expense or purchase", "../tickets/#/requests?new=" + encodeURIComponent("Purchase or expense")],
+    on("timecards") && ["banknotes", "Submit expenses", "../timecards/#/expenses"],
+    on("tickets") && ["cube", "Request a purchase", "../tickets/#/requests?new=" + encodeURIComponent("Purchase or expense")],
     (on("people") || on("documents")) && ["book", "Company policies", "../people/#/policies"],
     on("people") && ["team", "Org chart", "../people/#/org"],
     on("projects") && tasks.length && ["briefcase", `My tasks (${tasks.length})`, "../projects/#/mytasks"],

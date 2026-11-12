@@ -8,11 +8,11 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Inter:wght@500;600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../style.css?v=20261110p">
+<link rel="stylesheet" href="../style.css?v=20261112q">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 3C11 11 7 15.5 7 20a9 9 0 0 0 18 0c0-4.5-4-9-9-17z' fill='%233B82F6'/%3E%3C/svg%3E">
 </head>
 <body>
-<script src="../icons.js?v=20261110p"></script>
+<script src="../icons.js?v=20261112q"></script>
 <div id="setup" class="login" hidden>
   <div class="login-card">
     <h1>Almost there</h1>
@@ -37,9 +37,11 @@
     <nav id="nav">
       <div class="nav-label">Timecards</div>
       <a href="#/week" data-r="week"><svg class="ic"><use href="#i-timer"/></svg><span>My timesheet</span></a>
+      <a href="#/expenses" data-r="expenses"><svg class="ic"><use href="#i-banknotes"/></svg><span>Expenses</span></a>
       <a href="#/approvals" data-r="approvals"><svg class="ic"><use href="#i-badge"/></svg><span>Approvals</span><b class="nav-badge alert" id="nb-approvals" hidden></b></a>
       <a href="#/projects" data-r="projects"><svg class="ic"><use href="#i-briefcase"/></svg><span>Projects</span></a>
       <a href="#/reports" data-r="reports"><svg class="ic"><use href="#i-chart"/></svg><span>Reports</span></a>
+      <a href="#/settings" data-r="settings" id="navSettings" hidden><svg class="ic"><use href="#i-cog"/></svg><span>Settings</span></a>
     </nav>
   </aside>
   <div class="scrim" id="scrim"></div>
@@ -58,8 +60,8 @@
 </div>
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="../config.js?v=20261110p"></script>
-<script src="../core.js?v=20261110p"></script>
-<script src="./timecards.js?v=20261110p"></script>
+<script src="../config.js?v=20261112q"></script>
+<script src="../core.js?v=20261112q"></script>
+<script src="./timecards.js?v=20261112q"></script>
 </body>
 </html>

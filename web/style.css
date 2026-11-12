@@ -473,6 +473,16 @@ a.hub-site:hover { background: #fff; box-shadow: var(--shadow-md); }
 .tc-grid th.today { color: var(--blue); }
 .tc-grid td.tc-proj b { display: block; } .tc-grid td.tc-proj small { color: var(--muted); }
 .tc-grid tbody tr { cursor: default; }
+.tc-grid td.tc-proj small { display: block; } .tc-budget { font-size: 12px; } .tc-budget.warn { color: #b45309 !important; } .tc-budget.over { color: #b91c1c !important; font-weight: 600; }
+.tc-grid th small.tc-hol { display: block; font-weight: 500; font-size: 11px; color: #047857; max-width: 120px; margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tc-grid th.future { color: var(--muted); } #addRow { min-width: 200px; } .tc-grid tr.tc-leave td.tc-proj b { color: #047857; } .tc-grid .tc-in:disabled { background: #f8fafc; }
+.exp-table td small { display: block; color: var(--muted); font-size: 12px; } .exp-table tbody tr { cursor: default; }
+.exp-sums { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; padding: 12px 16px; border-top: 1px solid var(--line); }
+.exp-sums h3 { font-size: 13px; margin: 0 0 6px; color: var(--muted); } .exp-sums p { display: flex; justify-content: space-between; margin: 2px 0; font-size: 14px; }
+.exp-decide { border-top: 1px solid var(--line); padding: 14px 16px; display: grid; gap: 10px; } .exp-decide h3 { margin: 0; font-size: 15px; }
+.title-in { font: inherit; border: 1px solid transparent; border-radius: 8px; padding: 2px 6px; margin-left: -6px; width: min(560px, 100%); background: none; }
+.title-in:hover, .title-in:focus { border-color: var(--line); background: #fff; }
+.exp-rc { display: grid; gap: 4px; }
 .tc-in { width: 64px; text-align: right; padding: 6px 8px; border-radius: 10px; }
 .tc-in.saved { border-color: var(--green); box-shadow: 0 0 0 3px rgba(22, 163, 74, .15); }
 .tc-grid tfoot td { font-weight: 600; border-top: 1px solid var(--line); }

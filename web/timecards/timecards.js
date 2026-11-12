@@ -1,4 +1,4 @@
-/* Pulse · Timecards — weekly timesheets by project, approvals, projects and reports.
+/* Pulse · Timecards — weekly timesheets by project (plus time off), expenses, approvals, projects and reports.
    Uses ../core.js helpers. The database decides who may log, see and approve (see "Timecards" in schema.sql);
    this file only chooses what to show. */
 "use strict";
@@ -7,6 +7,8 @@ const TC = { week: null, projects: [], mine: new Set(), entries: [], sheet: null
 const icon = (name, cls = "ic") => `<svg class="${cls}"><use href="#i-${name}"/></svg>`;
 const isAdmin = () => S.profile?.role === "admin";
 const isStaff = () => S.profile && isStaffRole(S.profile.role);
+const isTeam = () => ["admin", "member", "employee"].includes(S.profile?.role);   // paid staff: open projects and time off
+const canStart = () => ["admin", "member"].includes(S.profile?.role);   // who can start a project (employees and contractors log to existing ones)
 const nameOf = (id) => S.team.find((p) => p.id === id)?.display_name || "Former member";
 const hrs = (n) => (Math.round((+n || 0) * 100) / 100).toLocaleString("en-US", { maximumFractionDigits: 2 });
 const weekOf = (iso) => { const d = new Date(iso + "T12:00:00"); const dow = (d.getDay() + 6) % 7; d.setDate(d.getDate() - dow); return d.toLocaleDateString("en-CA"); };
@@ -19,32 +21,60 @@ async function loadProjects() {
   TC.projects = must(await sb.from("projects").select("*").order("name"));
   TC.mine = new Set(must(await sb.from("project_people").select("project_id").eq("user_id", S.user.id)).map((r) => r.project_id));
 }
-const canLog = (p) => p.status === "Active" && ((!p.limited && isStaff()) || TC.mine.has(p.id));
+const canLog = (p) => p.status === "Active" && ((!p.limited && isTeam()) || TC.mine.has(p.id));
 const projName = (id) => TC.projects.find((p) => p.id === id)?.name || "Project";
 
 async function refreshBadge() {
   try {
     const rows = must(await sb.from("timesheets").select("user_id").eq("status", "Submitted"));
-    const n = rows.filter((r) => r.user_id !== S.user.id).length, b = $("#nb-approvals");
+    const ex = await sb.from("expense_reports").select("user_id").eq("status", "Submitted").then((r) => r.data || []);
+    const n = rows.filter((r) => r.user_id !== S.user.id).length + ex.filter((r) => r.user_id !== S.user.id).length, b = $("#nb-approvals");
     if (b) { b.hidden = !n; b.textContent = n; }
   } catch { /* table missing: handled on the page */ }
 }
 
 /* ================================================================ My timesheet */
+// rows are projects ("p12") or time off ("kPTO"); time off is for staff, and only Holiday and PTO can be entered ahead
+const LEAVE = { Holiday: "Company holiday", PTO: "Paid time off", Sick: "Sick" };
+const AHEAD = new Set(["Holiday", "PTO"]);
+const rowKey = (e) => (e.kind && e.kind !== "Work" ? "k" + e.kind : "p" + e.project_id);
+const rowLabel = (k) => (k[0] === "k" ? LEAVE[k.slice(1)] || k.slice(1) : projName(+k.slice(1)));
+const usedHours = async () => {   // all-time hours per project, for the budget line
+  try { const rep = await db.rpc("ts_report", { p_from: "2000-01-01", p_to: addDays(today(), 366) }); const u = {}; rep.forEach((r) => (u[r.project_id] = (u[r.project_id] || 0) + +r.hours)); return u; }
+  catch { return {}; }
+};
+async function loadHolidays() { TC.holidays = await sb.from("company_holidays").select("day, name").order("day").then((r) => r.data || []).catch(() => []); }
+const holidayOn = (d) => (TC.holidays || []).find((h) => h.day === d);
+function cellRule(key, d) {   // why a cell is closed, or "" when it's open
+  const kind = key[0] === "k" ? key.slice(1) : "Work";
+  if (d > today() && !AHEAD.has(kind)) return "Hours can't be logged ahead. Only holidays and paid time off can.";
+  if (kind === "Holiday" && (TC.holidays || []).length && !holidayOn(d)) return "Not a company holiday";
+  return "";
+}
+
 async function Week(param) {
   TC.week = param && /^\d{4}-\d{2}-\d{2}$/.test(param) ? weekOf(param) : TC.week || weekOf(today());
-  await loadProjects();
+  await Promise.all([loadProjects(), loadHolidays()]);
   const days = weekDays(TC.week);
   TC.entries = must(await sb.from("time_entries").select("*").eq("user_id", S.user.id).gte("work_date", days[0]).lte("work_date", days[6]));
   TC.sheet = must(await sb.from("timesheets").select("*").eq("user_id", S.user.id).eq("week_start", TC.week).maybeSingle());
+  TC.used = await usedHours();
   const st = TC.sheet?.status || "Draft", locked = st === "Submitted" || st === "Approved";
-  const rows = [...new Set(TC.entries.map((e) => e.project_id))];
-  (TC.extraRows?.[TC.week] || []).forEach((id) => !rows.includes(id) && rows.push(id));
-  const loggable = TC.projects.filter((p) => canLog(p) && !rows.includes(p.id));
-  const cell = (pid, d) => TC.entries.find((e) => e.project_id === pid && e.work_date === d);
+  const rows = [...new Set(TC.entries.map(rowKey))];
+  (TC.extraRows?.[TC.week] || []).forEach((k) => !rows.includes(k) && rows.push(k));
+  rows.sort((a, b) => (a[0] === b[0] ? 0 : a[0] === "p" ? -1 : 1));
+  const loggable = TC.projects.filter((p) => canLog(p) && !rows.includes("p" + p.id));
+  const leaveOpts = isTeam() ? Object.keys(LEAVE).filter((k) => !rows.includes("k" + k)) : [];
+  const cell = (k, d) => TC.entries.find((e) => rowKey(e) === k && e.work_date === d);
   const total = TC.entries.reduce((a, e) => a + +e.hours, 0);
+  const budgetLine = (pid) => {
+    const p = TC.projects.find((x) => x.id === pid); if (!p?.budget_hours) return "";
+    const used = TC.used[pid] || 0, left = p.budget_hours - used, pct = Math.round(100 * used / p.budget_hours);
+    return `<small class="tc-budget ${pct > 100 ? "over" : pct >= 85 ? "warn" : ""}" data-budget="${pid}">${hrs(used)} of ${hrs(p.budget_hours)} h budget · ${left >= 0 ? hrs(left) + " h left" : hrs(-left) + " h over"}</small>`;
+  };
+  const anyAddable = loggable.length || leaveOpts.length || canStart();
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>My timesheet</h1><p class="muted">Log hours by project each day, then submit the week for approval.</p></div>
+    <div class="page-head"><div><h1>My timesheet</h1><p class="muted">Log hours by project each day, then submit the week for approval. Time off and holidays can be entered ahead; work hours can't.</p></div>
       <div class="actions-row week-nav">
         <a class="btn small" href="#/week/${addDays(TC.week, -7)}" aria-label="Previous week">${icon("chevron-left")}</a>
         <b class="week-label">${weekLabel(TC.week)}</b>
@@ -54,22 +84,28 @@ async function Week(param) {
     ${st === "Approved" ? `<div class="notice-bar ok">${icon("check")}<div>Approved by ${esc(nameOf(TC.sheet.decided_by))} ${ago(TC.sheet.decided_at)}.</div></div>` : ""}
     ${st === "Submitted" ? `<div class="notice-bar">${icon("clock")}<div>Submitted ${ago(TC.sheet.submitted_at)}. Waiting for approval. <button class="link" id="pullBack">Pull it back to edit</button></div></div>` : ""}
     <section class="panel tc-panel"><div class="table-wrap"><table class="tc-grid">
-      <thead><tr><th>Project</th>${days.map((d) => `<th class="num ${d === today() ? "today" : ""}">${dayHead(d)}</th>`).join("")}<th class="num">Total</th></tr></thead>
-      <tbody>${rows.length ? rows.map((pid) => {
-        const rt = days.reduce((a, d) => a + +(cell(pid, d)?.hours || 0), 0);
-        return `<tr><td class="tc-proj"><b>${esc(projName(pid))}</b>${TC.projects.find((p) => p.id === pid)?.client ? `<small>${esc(TC.projects.find((p) => p.id === pid).client)}</small>` : ""}</td>
-          ${days.map((d) => `<td class="num"><input class="tc-in" type="number" min="0" max="24" step="0.25" inputmode="decimal" data-p="${pid}" data-d="${d}"
-            value="${cell(pid, d) ? +cell(pid, d).hours : ""}" ${locked ? "disabled" : ""} aria-label="${esc(projName(pid))} ${dayHead(d)}"></td>`).join("")}
+      <thead><tr><th>Project</th>${days.map((d) => `<th class="num ${d === today() ? "today" : ""} ${d > today() ? "future" : ""}">${dayHead(d)}${holidayOn(d) ? `<small class="tc-hol" title="${esc(holidayOn(d).name)}">${esc(holidayOn(d).name)}</small>` : ""}</th>`).join("")}<th class="num">Total</th></tr></thead>
+      <tbody>${rows.length ? rows.map((k) => {
+        const rt = days.reduce((a, d) => a + +(cell(k, d)?.hours || 0), 0), pid = k[0] === "p" ? +k.slice(1) : null, pr = pid && TC.projects.find((p) => p.id === pid);
+        return `<tr class="${pid ? "" : "tc-leave"}"><td class="tc-proj"><b>${pid ? "" : icon("sun", "ic tiny") + " "}${esc(rowLabel(k))}</b>${pr?.client ? `<small>${esc(pr.client)}</small>` : ""}${pid ? budgetLine(pid) : ""}</td>
+          ${days.map((d) => { const why = cellRule(k, d), c = cell(k, d);
+            return `<td class="num"><input class="tc-in" type="number" min="0" max="24" step="0.25" inputmode="decimal" data-k="${k}" data-d="${d}"
+            value="${c ? +c.hours : ""}" ${locked || (why && !c) ? "disabled" : ""} ${why ? `title="${esc(why)}"` : ""} aria-label="${esc(rowLabel(k))} ${dayHead(d)}"></td>`; }).join("")}
           <td class="num"><b>${hrs(rt)}</b></td></tr>`; }).join("")
-        : `<tr><td colspan="9" class="empty">${loggable.length ? "No hours this week yet. Add a project below." : TC.projects.length ? "You aren't on any open projects. Ask an admin to add you." : "No projects yet." + (isAdmin() ? ` <a href="#/projects">Add one</a>.` : " Ask an admin to add one.")}</td></tr>`}</tbody>
-      <tfoot><tr><td>${!locked && loggable.length ? `<select id="addRow" aria-label="Add a project"><option value="">+ Add a project…</option>${loggable.map((p) => `<option value="${p.id}">${esc(p.name)}${p.client ? " · " + esc(p.client) : ""}</option>`).join("")}</select>` : "<b>Total</b>"}</td>
+        : `<tr><td colspan="9" class="empty">${anyAddable ? "No hours this week yet. Add a project below." : TC.projects.length ? "You aren't on any open projects. Ask an admin to add you." : "No projects yet. Ask an admin to add one."}</td></tr>`}</tbody>
+      <tfoot><tr><td>${!locked && anyAddable ? `<select id="addRow" aria-label="Add a row"><option value="">+ Add a project${leaveOpts.length ? " or time off" : ""}…</option>
+          ${loggable.length ? `<optgroup label="Projects">${loggable.map((p) => `<option value="p${p.id}">${esc(p.name)}${p.client ? " · " + esc(p.client) : ""}</option>`).join("")}</optgroup>` : ""}
+          ${leaveOpts.length ? `<optgroup label="Time off">${leaveOpts.map((k) => `<option value="k${k}">${LEAVE[k]}</option>`).join("")}</optgroup>` : ""}
+          ${canStart() ? `<option value="new">+ New project…</option>` : ""}</select>` : "<b>Total</b>"}</td>
         ${days.map((d) => `<td class="num">${hrs(TC.entries.filter((e) => e.work_date === d).reduce((a, e) => a + +e.hours, 0)) || ""}</td>`).join("")}<td class="num"><b id="weekTotal">${hrs(total)}</b></td></tr></tfoot>
     </table></div>
     <div class="tc-foot"><label>Notes for the approver<textarea id="weekNote" rows="2" ${locked ? "disabled" : ""} placeholder="Anything they should know about this week">${esc(TC.sheet?.note || "")}</textarea></label>
       <div class="actions-row">${pill(STATUS_PILL[st])}${!locked ? `<button class="btn primary" id="submitWeek" ${total ? "" : "disabled"}>Submit ${hrs(total)} hours</button>` : ""}</div></div></section>`;
+  const addRow = (k) => { TC.extraRows = TC.extraRows || {}; (TC.extraRows[TC.week] ||= []).push(k); Week(TC.week); };
   $("#addRow")?.addEventListener("change", (e) => {
-    const id = +e.target.value; if (!id) return;
-    TC.extraRows = TC.extraRows || {}; (TC.extraRows[TC.week] ||= []).push(id); Week(TC.week);
+    const v = e.target.value; if (!v) return;
+    if (v === "new") { e.target.value = ""; quickProject((p) => addRow("p" + p.id)); return; }
+    addRow(v);
   });
   $$(".tc-in").forEach((inp) => inp.addEventListener("change", () => saveCell(inp)));
   $("#submitWeek")?.addEventListener("click", async () => {
@@ -81,13 +117,16 @@ async function Week(param) {
   refreshBadge();
 }
 async function saveCell(inp) {
-  const pid = +inp.dataset.p, d = inp.dataset.d, v = inp.value === "" ? 0 : Math.round(+inp.value * 100) / 100;
+  const k = inp.dataset.k, d = inp.dataset.d, v = inp.value === "" ? 0 : Math.round(+inp.value * 100) / 100;
   if (v < 0 || v > 24 || Number.isNaN(v)) { toast("Enter between 0 and 24 hours"); return; }
-  const cur = TC.entries.find((e) => e.project_id === pid && e.work_date === d);
+  const cur = TC.entries.find((e) => rowKey(e) === k && e.work_date === d), why = cellRule(k, d);
+  if (v && why) { toast(why); inp.value = cur ? +cur.hours : ""; return; }
+  const pid = k[0] === "p" ? +k.slice(1) : null, before = cur ? +cur.hours : 0;
   try {
     if (cur && !v) { must(await sb.from("time_entries").delete().eq("id", cur.id)); TC.entries = TC.entries.filter((e) => e !== cur); }
     else if (cur) { must(await sb.from("time_entries").update({ hours: v }).eq("id", cur.id)); cur.hours = v; }
-    else if (v) { const r = must(await sb.from("time_entries").insert({ project_id: pid, work_date: d, hours: v }).select("*").single()); TC.entries.push(r); }
+    else if (v) { const r = must(await sb.from("time_entries").insert(pid ? { project_id: pid, kind: "Work", work_date: d, hours: v } : { project_id: null, kind: k.slice(1), work_date: d, hours: v }).select("*").single()); TC.entries.push(r); }
+    if (!document.contains(inp)) return;   // the page moved on while saving (e.g. typed, then clicked the next week)
     inp.classList.add("saved"); setTimeout(() => inp.classList.remove("saved"), 700);
     const total = TC.entries.reduce((a, e) => a + +e.hours, 0);
     $("#weekTotal").textContent = hrs(total);
@@ -95,7 +134,42 @@ async function saveCell(inp) {
     const row = inp.closest("tr"), rt = $$(".tc-in", row).reduce((a, i) => a + (+i.value || 0), 0); row.lastElementChild.innerHTML = `<b>${hrs(rt)}</b>`;
     const col = [...row.children].indexOf(inp.closest("td")), foot = $(".tc-grid tfoot tr").children[col];
     foot.textContent = hrs(TC.entries.filter((e) => e.work_date === d).reduce((a, e) => a + +e.hours, 0)) || "";
+    if (pid) {   // keep the budget line current and say so when the project goes over
+      const p = TC.projects.find((x) => x.id === pid), was = TC.used[pid] || 0; TC.used[pid] = was - before + v;
+      const el = $(`[data-budget="${pid}"]`);
+      if (p?.budget_hours && el) {
+        const used = TC.used[pid], left = p.budget_hours - used, pct = Math.round(100 * used / p.budget_hours);
+        el.className = `tc-budget ${pct > 100 ? "over" : pct >= 85 ? "warn" : ""}`;
+        el.textContent = `${hrs(used)} of ${hrs(p.budget_hours)} h budget · ${left >= 0 ? hrs(left) + " h left" : hrs(-left) + " h over"}`;
+        if (was <= p.budget_hours && used > p.budget_hours) toast(`${p.name} is now over its ${hrs(p.budget_hours)} hour budget. Let the project manager know.`);
+      }
+    }
   } catch (e) { toast(e.message); inp.value = cur ? +cur.hours : ""; }
+}
+// a new project anyone on staff can start from their timesheet; it opens in Projects too (same project)
+function quickProject(done) {
+  $("#drawerTitle").textContent = "New project";
+  $("#drawerBody").innerHTML = `<form id="qpForm" class="form-grid">
+    <p class="muted" style="grid-column:1/-1">The project shows up in Projects too, where you can add milestones, tasks and costs. Hours logged here count against its budget.</p>
+    <label style="grid-column:1/-1">Project name<input name="name" required placeholder="e.g. Fairfax stormwater inventory"></label>
+    <label>Client<input name="client"></label>
+    <label>Code <small class="muted">(PO or charge code)</small><input name="code"></label>
+    <label>Budget (hours)<input name="budget_hours" type="number" min="0" step="0.5" placeholder="e.g. 120"></label>
+    <label>Billing rate per hour (USD)<input name="rate" type="number" min="0" step="0.01"></label>
+    <label>Start<input name="start_date" type="date" value="${today()}"></label>
+    <label>End<input name="end_date" type="date"></label>
+    <label class="check" style="grid-column:1/-1"><input type="checkbox" name="billable" checked> Billable to the client</label>
+    <div class="actions-row" style="grid-column:1/-1"><button class="btn primary">Create and add to my timesheet</button></div></form>`;
+  openDrawer();
+  $("#qpForm").addEventListener("submit", async (e) => {
+    e.preventDefault(); const f = new FormData(e.target), num = (k) => (f.get(k) === "" ? null : +f.get(k));
+    try {
+      const p = must(await sb.from("projects").insert({ name: f.get("name").trim(), client: f.get("client").trim() || null, code: f.get("code").trim() || null,
+        budget_hours: num("budget_hours"), rate: num("rate"), billable: !!f.get("billable"), start_date: f.get("start_date") || null, end_date: f.get("end_date") || null,
+        status: "Active", manager_id: S.user.id }).select("*").single());
+      toast(`${p.name} created`); closeDrawer(); done(p);
+    } catch (err) { toast(err.message); }
+  });
 }
 
 /* ================================================================ Approvals */
@@ -120,11 +194,16 @@ async function Approvals() {
       <header>${icon("timer")}<div><span class="tno">${weekLabel(t.week_start)}</span><h3>${esc(nameOf(t.user_id))}</h3></div>${pill(t.status)}</header>
       <p class="muted">${hrs(totals[t.user_id + "|" + t.week_start] || 0)} hours${t.note ? ` · “${esc(t.note)}”` : ""}${t.decision_note ? ` · ${esc(t.decision_note)}` : ""}</p>
       ${act ? `<div class="actions-row"><button class="btn small" data-view>Review hours</button></div>` : ""}</article>`;
+  const exWait = await sb.from("expense_reports").select("*").eq("status", "Submitted").neq("user_id", S.user.id).order("submitted_at").then((r) => r.data || []);
+  const exTot = await expTotals(exWait.map((r) => r.id));
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>Approvals</h1><p class="muted">${isAdmin() ? "Admins approve every timesheet. Project approvers approve weeks with hours on their projects." : "Weeks with hours on projects you approve."}</p></div></div>
     ${missing.length ? `<div class="notice-bar">${icon("alert")}<div><b>Not submitted for ${weekLabel(addDays(weekOf(today()), -7))}:</b> ${missing.map((p) => esc(p.display_name)).join(", ")}</div></div>` : ""}
     <h2 class="hub-h">Waiting for you <small class="muted">${waiting.length}</small></h2>
     <div class="appr-grid">${waiting.map((t) => card(t, true)).join("") || `<div class="empty">Nothing waiting. 🎉</div>`}</div>
+    ${exWait.length ? `<h2 class="hub-h">Expense reports waiting <small class="muted">${exWait.length}</small></h2>
+      <div class="appr-grid">${exWait.map((r) => `<article class="appr-card tc-card"><header>${icon("banknotes")}<div><span class="tno">EXP-${String(r.number).padStart(4, "0")}</span><h3>${esc(nameOf(r.user_id))}</h3></div>${pill("Submitted")}</header>
+        <p class="muted">${esc(r.title)} · ${usd(exTot[r.id] || 0)}${r.note ? ` · “${esc(r.note)}”` : ""}</p><div class="actions-row"><a class="btn small" href="#/expense/${r.id}">Review expenses</a></div></article>`).join("")}</div>` : ""}
     ${decided.length ? `<h2 class="hub-h">Recently decided</h2><div class="appr-grid">${decided.map((t) => card(t, false)).join("")}</div>` : ""}`;
   $$("[data-view]").forEach((b) => b.addEventListener("click", () => { const [u, w] = b.closest("[data-sheet]").dataset.sheet.split("|"); openSheet(u, w); }));
   refreshBadge();
@@ -133,12 +212,12 @@ async function openSheet(user, week) {
   const days = weekDays(week);
   const ents = must(await sb.from("time_entries").select("*").eq("user_id", user).gte("work_date", days[0]).lte("work_date", days[6]));
   const t = must(await sb.from("timesheets").select("*").eq("user_id", user).eq("week_start", week).maybeSingle());
-  const pids = [...new Set(ents.map((e) => e.project_id))];
-  const h = (p, d) => ents.filter((e) => e.project_id === p && e.work_date === d).reduce((a, e) => a + +e.hours, 0);
+  const pids = [...new Set(ents.map(rowKey))];
+  const h = (p, d) => ents.filter((e) => rowKey(e) === p && e.work_date === d).reduce((a, e) => a + +e.hours, 0);
   $("#drawerTitle").textContent = `${nameOf(user)} · ${weekLabel(week)}`;
   $("#drawerBody").innerHTML = `
     <div class="table-wrap"><table class="tc-grid ro"><thead><tr><th>Project</th>${days.map((d) => `<th class="num">${dayHead(d)}</th>`).join("")}<th class="num">Total</th></tr></thead>
-      <tbody>${pids.map((p) => `<tr><td>${esc(projName(p))}</td>${days.map((d) => `<td class="num">${hrs(h(p, d)) === "0" ? "" : hrs(h(p, d))}</td>`).join("")}<td class="num"><b>${hrs(days.reduce((a, d) => a + h(p, d), 0))}</b></td></tr>`).join("")}</tbody>
+      <tbody>${pids.map((p) => `<tr><td>${esc(rowLabel(p))}</td>${days.map((d) => `<td class="num">${hrs(h(p, d)) === "0" ? "" : hrs(h(p, d))}</td>`).join("")}<td class="num"><b>${hrs(days.reduce((a, d) => a + h(p, d), 0))}</b></td></tr>`).join("")}</tbody>
       <tfoot><tr><td><b>Total</b></td>${days.map((d) => `<td class="num">${hrs(ents.filter((e) => e.work_date === d).reduce((a, e) => a + +e.hours, 0)) || ""}</td>`).join("")}<td class="num"><b>${hrs(ents.reduce((a, e) => a + +e.hours, 0))}</b></td></tr></tfoot></table></div>
     ${t?.note ? `<p><b>Their note:</b> ${esc(t.note)}</p>` : ""}
     ${t?.status === "Submitted" ? `<label>Reason (needed to send back)<textarea id="decNote" rows="2"></textarea></label>
@@ -238,6 +317,7 @@ async function Reports() {
     <div class="kpis"><div class="kpi panel"><div><span>Hours</span><b>${hrs(tot(rows, "hours"))}</b><small>${hrs(tot(rows, "approved_hours"))} approved</small></div><div class="bubble">${icon("timer")}</div></div>
       <div class="kpi panel"><div><span>Billable amount</span><b>${money(tot(rows.filter((r) => r.billable), "amount"))}</b><small>at project or person rates</small></div><div class="bubble">${icon("banknotes")}</div></div>
       <div class="kpi panel"><div><span>Projects</span><b>${Object.keys(byProj).length}</b><small>with hours in this range</small></div><div class="bubble">${icon("briefcase")}</div></div></div>
+    ${await timeOffSection()}
     ${Object.values(byProj).map((p) => `<section class="panel"><h2>${esc(p.name)} <small>${esc(p.client || "")} · ${hrs(tot(p.rows, "hours"))} h${tot(p.rows, "amount") ? " · " + money(tot(p.rows, "amount")) : ""}</small></h2>
       <div class="table-wrap"><table><thead><tr><th>Person</th><th class="num">Hours</th><th class="num">Approved</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead>
       <tbody>${p.rows.map((r) => `<tr style="cursor:default"><td>${esc(r.person)}</td><td class="num">${hrs(r.hours)}</td><td class="num">${hrs(r.approved_hours)}</td><td class="num">${r.rate ? money(r.rate) : "—"}</td><td class="num">${r.billable && r.amount ? money(r.amount) : "—"}</td></tr>`).join("")}</tbody></table></div></section>`).join("")
@@ -248,24 +328,246 @@ async function Reports() {
     ["project", "client", "person", "hours", "approved_hours", "rate", "amount", "billable"], rows));
 }
 
+/* ================================================================ Time off in reports */
+async function timeOffSection() {
+  const rows = await sb.from("time_entries").select("user_id, kind, hours").is("project_id", null).gte("work_date", TC.from).lte("work_date", TC.to).then((r) => r.data || []).catch(() => []);
+  if (!rows.length) return "";
+  const by = {};
+  rows.forEach((r) => { const x = (by[r.user_id] ||= { Holiday: 0, PTO: 0, Sick: 0 }); x[r.kind] = (x[r.kind] || 0) + +r.hours; });
+  return `<section class="panel"><h2>Time off <small>${hrs(rows.reduce((a, r) => a + +r.hours, 0))} h</small></h2><div class="table-wrap"><table>
+    <thead><tr><th>Person</th><th class="num">Holiday</th><th class="num">PTO</th><th class="num">Sick</th></tr></thead>
+    <tbody>${Object.entries(by).map(([u, x]) => `<tr style="cursor:default"><td>${esc(nameOf(u))}</td><td class="num">${hrs(x.Holiday) === "0" ? "" : hrs(x.Holiday)}</td><td class="num">${hrs(x.PTO) === "0" ? "" : hrs(x.PTO)}</td><td class="num">${hrs(x.Sick) === "0" ? "" : hrs(x.Sick)}</td></tr>`).join("")}</tbody></table></div></section>`;
+}
+
+/* ================================================================ Expenses
+   Expenses go on a report: add each one (receipt, mileage at the company rate, an optional project and whether it's billable),
+   submit the report, an admin or the project's approver approves it, and an admin records the reimbursement.
+   Approved expenses on a project show in that project's costs in Projects. */
+const usd = (n) => "$" + (+n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const EXP_CATS = ["Airfare", "Lodging", "Meals", "Ground transport", "Mileage", "Parking and tolls", "Per diem", "Supplies", "Software and subscriptions",
+  "Training and conferences", "Phone and internet", "Shipping and postage", "Other"];
+const expNo = (r) => "EXP-" + String(r.number || 0).padStart(4, "0");
+const EXP_PILL = { Draft: "Draft", Submitted: "Submitted", Approved: "Approved", Rejected: "Rejected", Paid: "Reimbursed" };
+async function expSettings() { return (await sb.from("expense_settings").select("*").maybeSingle().then((r) => r.data).catch(() => null)) || { mileage_rate: 0.76, receipt_over: 75 }; }
+async function expTotals(ids) {
+  if (!ids.length) return {};
+  const items = await sb.from("expense_items").select("report_id, amount").in("report_id", ids).then((r) => r.data || []);
+  const t = {}; items.forEach((i) => (t[i.report_id] = (t[i.report_id] || 0) + +i.amount)); return t;
+}
+
+async function Expenses(param) {
+  const all = isAdmin() && param === "all";
+  let q = sb.from("expense_reports").select("*").order("created_at", { ascending: false }).limit(300);
+  if (!all) q = q.eq("user_id", S.user.id);
+  const reps = must(await q), tot = await expTotals(reps.map((r) => r.id));
+  const sum = (f) => reps.filter(f).reduce((a, r) => a + (tot[r.id] || 0), 0), yr = today().slice(0, 4);
+  const filt = TC.expFilter || "", show = filt ? reps.filter((r) => r.status === filt) : reps;
+  $("#main").innerHTML = `
+    <div class="page-head"><div><h1>${all ? "All expense reports" : "My expenses"}</h1><p class="muted">Put expenses on a report, attach receipts, then submit it for approval and reimbursement.${!all ? " Need approval before buying something? Ask in <a href=\"../tickets/#/requests?new=" + encodeURIComponent("Purchase or expense") + "\">Tickets</a>." : ""}</p></div>
+      <div class="actions-row">${isAdmin() ? `<div class="tabs"><a role="tab" href="#/expenses" aria-selected="${!all}">Mine</a><a role="tab" href="#/expenses/all" aria-selected="${all}">Everyone</a></div>` : ""}
+        <button class="btn primary" id="newRep">${icon("plus")}New expense report</button></div></div>
+    <div class="kpis">
+      <div class="kpi panel"><div><span>Drafts</span><b>${usd(sum((r) => ["Draft", "Rejected"].includes(r.status)))}</b><small>not submitted yet</small></div><div class="bubble">${icon("clipboard")}</div></div>
+      <div class="kpi panel"><div><span>Waiting for approval</span><b>${usd(sum((r) => r.status === "Submitted"))}</b><small>${reps.filter((r) => r.status === "Submitted").length} reports</small></div><div class="bubble">${icon("clock")}</div></div>
+      <div class="kpi panel"><div><span>Approved, to reimburse</span><b>${usd(sum((r) => r.status === "Approved"))}</b><small>${reps.filter((r) => r.status === "Approved").length} reports</small></div><div class="bubble">${icon("banknotes")}</div></div>
+      <div class="kpi panel"><div><span>Reimbursed in ${yr}</span><b>${usd(sum((r) => r.status === "Paid" && String(r.paid_at || "").startsWith(yr)))}</b><small>paid out</small></div><div class="bubble">${icon("check")}</div></div></div>
+    <div class="filters"><div class="tabs">${["", "Draft", "Submitted", "Approved", "Rejected", "Paid"].map((x) => `<button data-ef="${x}" aria-selected="${filt === x}">${x ? EXP_PILL[x] : "All"}</button>`).join("")}</div></div>
+    <section class="panel" style="padding:0"><div class="table-wrap"><table><thead><tr><th>Report</th>${all ? "<th>Person</th>" : ""}<th>Title</th><th class="num">Total</th><th>Status</th><th>Updated</th></tr></thead>
+      <tbody>${show.map((r) => `<tr data-rep="${r.id}" tabindex="0"><td><b>${expNo(r)}</b></td>${all ? `<td>${esc(nameOf(r.user_id))}</td>` : ""}<td>${esc(r.title)}</td>
+        <td class="num">${usd(tot[r.id] || 0)}</td><td>${pill(EXP_PILL[r.status])}</td><td class="muted">${r.status === "Paid" ? "Reimbursed " + short(r.paid_at) : ago(r.updated_at)}</td></tr>`).join("")
+        || `<tr><td colspan="6" class="empty">No expense reports${filt ? " here" : " yet"}. ${filt ? "" : "Start one for your next trip or purchase."}</td></tr>`}</tbody></table></div></section>`;
+  $$("[data-ef]").forEach((b) => b.addEventListener("click", () => { TC.expFilter = b.dataset.ef; Expenses(param); }));
+  $$("[data-rep]").forEach((r) => { const go = () => (location.hash = `#/expense/${r.dataset.rep}`); r.addEventListener("click", go); r.addEventListener("keydown", (e) => e.key === "Enter" && go()); });
+  $("#newRep").addEventListener("click", async () => {
+    const m = new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" });
+    try { const r = must(await sb.from("expense_reports").insert({ title: `Expenses, ${m}` }).select("*").single()); location.hash = `#/expense/${r.id}`; } catch (e) { toast(e.message); }
+  });
+}
+
+async function Expense(id) {
+  await loadProjects();
+  const r = must(await sb.from("expense_reports").select("*").eq("id", +id).maybeSingle());
+  if (!r) { $("#main").innerHTML = `<div class="empty">That report isn't there, or you can't see it. <a href="#/expenses">Back to expenses</a></div>`; return; }
+  const items = must(await sb.from("expense_items").select("*").eq("report_id", r.id).order("spent_on"));
+  const rcIds = items.map((i) => i.receipt_id).filter(Boolean);
+  const rcs = rcIds.length ? must(await sb.from("expense_receipts").select("id, name, size").in("id", rcIds)) : [];
+  const set = await expSettings(), mine = r.user_id === S.user.id, edit = mine && ["Draft", "Rejected"].includes(r.status);
+  const canDecide = r.status === "Submitted" && !mine || (r.status === "Submitted" && mine && isAdmin() && S.team.filter((p) => p.role === "admin" && p.active).length === 1);
+  const total = items.reduce((a, i) => a + +i.amount, 0), billable = items.filter((i) => i.billable).reduce((a, i) => a + +i.amount, 0);
+  const missing = items.filter((i) => !i.receipt_id && !["Mileage", "Per diem"].includes(i.category) && +i.amount >= +set.receipt_over);
+  const byCat = {}, byProj = {};
+  items.forEach((i) => { byCat[i.category] = (byCat[i.category] || 0) + +i.amount; const k = i.project_id ? projName(i.project_id) : "No project"; byProj[k] = (byProj[k] || 0) + +i.amount; });
+  $("#main").innerHTML = `
+    <div class="page-head"><div><a class="muted small" href="#/expenses${!mine && isAdmin() ? "/all" : ""}">← Expenses</a>
+        <h1>${edit ? `<input id="repTitle" class="title-in" value="${esc(r.title)}" aria-label="Report title">` : esc(r.title)}</h1>
+        <p class="muted">${expNo(r)} · ${esc(nameOf(r.user_id))} · ${pill(EXP_PILL[r.status])}${r.submitted_at ? ` · submitted ${ago(r.submitted_at)}` : ""}${r.status === "Paid" ? ` · reimbursed ${short(r.paid_at)}${r.paid_ref ? " (" + esc(r.paid_ref) + ")" : ""}` : ""}</p></div>
+      <div class="actions-row"><button class="btn" id="expCsv">Export CSV</button>${edit && !items.length ? `<button class="btn danger" id="delRep">Delete report</button>` : ""}</div></div>
+    ${r.status === "Rejected" ? `<div class="notice-bar alert">${icon("alert")}<div><b>Sent back by ${esc(nameOf(r.decided_by))}:</b> ${esc(r.decision_note || "")}<br><span class="muted">Fix it and submit again.</span></div></div>` : ""}
+    ${r.status === "Approved" ? `<div class="notice-bar ok">${icon("check")}<div>Approved by ${esc(nameOf(r.decided_by))} ${ago(r.decided_at)}. ${isAdmin() ? "Record the reimbursement when it's paid." : "Reimbursement is on its way."}</div></div>` : ""}
+    ${r.status === "Submitted" && mine ? `<div class="notice-bar">${icon("clock")}<div>Waiting for approval. <button class="link" id="pullBack">Pull it back to edit</button></div></div>` : ""}
+    <section class="panel tc-panel"><div class="table-wrap"><table class="exp-table">
+      <thead><tr><th>Date</th><th>Category</th><th>Merchant and purpose</th><th>Project</th><th>Receipt</th><th class="num">Amount</th>${edit ? "<th></th>" : ""}</tr></thead>
+      <tbody>${items.map((i) => { const rc = rcs.find((x) => x.id === i.receipt_id), need = missing.includes(i);
+        return `<tr data-item="${i.id}"><td>${short(i.spent_on)}</td><td>${esc(i.category)}${i.category === "Mileage" ? `<small>${hrs(i.miles)} mi × ${usd(set.mileage_rate)}</small>` : ""}</td>
+          <td><b>${esc(i.merchant || "")}</b>${i.description ? `<small>${esc(i.description)}</small>` : ""}</td>
+          <td>${i.project_id ? esc(projName(i.project_id)) + (i.billable ? ` <span class="pill s-low">Billable</span>` : "") : `<span class="muted">—</span>`}</td>
+          <td>${rc ? `<button class="link" data-rc="${rc.id}">${icon("clipboard", "ic tiny")} ${esc(rc.name)}</button>` : need ? `<span class="pill s-high">Receipt needed</span>` : `<span class="muted">—</span>`}</td>
+          <td class="num"><b>${usd(i.amount)}</b></td>${edit ? `<td class="num"><button class="btn small" data-edit="${i.id}">Edit</button></td>` : ""}</tr>`; }).join("")
+        || `<tr><td colspan="7" class="empty">No expenses on this report yet.${edit ? " Add the first one." : ""}</td></tr>`}</tbody>
+      <tfoot><tr><td colspan="${edit ? 3 : 3}">${edit ? `<button class="btn small" id="addItem">${icon("plus")}Add an expense</button>` : "<b>Total</b>"}</td><td colspan="2" class="muted small">${billable ? usd(billable) + " billable to clients" : ""}</td><td class="num"><b>${usd(total)}</b></td>${edit ? "<td></td>" : ""}</tr></tfoot>
+    </table></div>
+    ${items.length > 1 ? `<div class="exp-sums"><div><h3>By category</h3>${Object.entries(byCat).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<p><span>${esc(k)}</span><b>${usd(v)}</b></p>`).join("")}</div>
+      <div><h3>By project</h3>${Object.entries(byProj).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<p><span>${esc(k)}</span><b>${usd(v)}</b></p>`).join("")}</div></div>` : ""}
+    <div class="tc-foot"><label>Note for the approver<textarea id="repNote" rows="2" ${edit ? "" : "disabled"} placeholder="Trip, client or purpose">${esc(r.note || "")}</textarea></label>
+      <div class="actions-row">${edit ? `<button class="btn primary" id="submitRep" ${items.length ? "" : "disabled"}>Submit ${usd(total)}</button>` : ""}</div></div>
+    ${missing.length && edit ? `<p class="muted small">Receipts are needed for expenses of ${usd(set.receipt_over)} or more (mileage and per diem excepted).</p>` : ""}
+    ${canDecide ? `<div class="exp-decide"><label>Reason (needed to send back)<textarea id="decNote" rows="2"></textarea></label>
+      <div class="actions-row"><button class="btn primary" id="approve">${icon("check")}Approve ${usd(total)}</button><button class="btn danger" id="reject">Send back</button></div></div>` : ""}
+    ${isAdmin() && r.status === "Approved" ? `<form class="exp-decide" id="paidForm"><h3>Record the reimbursement</h3><div class="form-grid">
+      <label>Paid on<input type="date" name="date" value="${today()}" required></label><label>Reference <small class="muted">(payroll run, transfer or check no.)</small><input name="ref"></label></div>
+      <div class="actions-row"><button class="btn primary">Mark reimbursed</button><button class="btn" type="button" id="reopen">Reopen</button></div></form>` : ""}
+    ${isAdmin() && r.status === "Rejected" && !mine ? `<div class="actions-row"><button class="btn" id="reopen">Reopen as draft</button></div>` : ""}
+    </section>`;
+  const reload = () => Expense(r.id);
+  $("#repTitle")?.addEventListener("change", async (e) => { try { must(await sb.from("expense_reports").update({ title: e.target.value.trim() || r.title }).eq("id", r.id)); toast("Saved"); } catch (err) { toast(err.message); } });
+  $("#repNote")?.addEventListener("change", async (e) => { if (!edit) return; try { must(await sb.from("expense_reports").update({ note: e.target.value.trim() || null }).eq("id", r.id)); } catch (err) { toast(err.message); } });
+  $("#addItem")?.addEventListener("click", () => itemForm(r, null, set, reload));
+  $$("[data-edit]").forEach((b) => b.addEventListener("click", () => itemForm(r, items.find((i) => i.id === +b.dataset.edit), set, reload)));
+  $$("[data-rc]").forEach((b) => b.addEventListener("click", () => openReceipt(+b.dataset.rc)));
+  $("#submitRep")?.addEventListener("click", async () => {
+    try { await db.rpc("exp_submit", { p_report: r.id, p_note: $("#repNote").value }); toast("Submitted for approval"); reload(); } catch (e) { toast(e.message); }
+  });
+  $("#pullBack")?.addEventListener("click", async () => { try { await db.rpc("exp_reopen", { p_report: r.id }); toast("Back to draft"); reload(); } catch (e) { toast(e.message); } });
+  $("#reopen")?.addEventListener("click", async () => { if (!confirm("Reopen this report as a draft? Its costs come off the projects until it's approved again.")) return; try { await db.rpc("exp_reopen", { p_report: r.id }); toast("Reopened"); reload(); } catch (e) { toast(e.message); } });
+  const decide = async (ok) => { try { await db.rpc("exp_decide", { p_report: r.id, p_approve: ok, p_note: $("#decNote").value }); toast(ok ? "Approved" : "Sent back"); refreshBadge(); reload(); } catch (e) { toast(e.message); } };
+  $("#approve")?.addEventListener("click", () => decide(true));
+  $("#reject")?.addEventListener("click", () => decide(false));
+  $("#paidForm")?.addEventListener("submit", async (e) => {
+    e.preventDefault(); const f = new FormData(e.target);
+    try { await db.rpc("exp_paid", { p_report: r.id, p_date: f.get("date"), p_ref: f.get("ref") }); toast("Marked reimbursed"); reload(); } catch (err) { toast(err.message); }
+  });
+  $("#delRep")?.addEventListener("click", async () => { try { must(await sb.from("expense_reports").delete().eq("id", r.id)); toast("Deleted"); location.hash = "#/expenses"; } catch (e) { toast(e.message); } });
+  $("#expCsv").addEventListener("click", () => downloadCsv(`${expNo(r)}.csv`, ["date", "category", "merchant", "description", "project", "billable", "miles", "amount", "receipt"],
+    items.map((i) => ({ date: i.spent_on, category: i.category, merchant: i.merchant || "", description: i.description || "", project: i.project_id ? projName(i.project_id) : "",
+      billable: i.billable ? "yes" : "", miles: i.miles ?? "", amount: i.amount, receipt: rcs.find((x) => x.id === i.receipt_id)?.name || "" }))));
+}
+
+function itemForm(r, it, set, done) {
+  const projs = TC.projects.filter((p) => (p.status === "Active" && canLog(p)) || p.id === it?.project_id);
+  $("#drawerTitle").textContent = it ? "Edit expense" : "Add an expense";
+  $("#drawerBody").innerHTML = `<form id="itForm" class="form-grid">
+    <label>Date<input type="date" name="spent_on" required max="${today()}" value="${it?.spent_on || today()}"></label>
+    <label>Category<select name="category">${EXP_CATS.map((c) => `<option ${c === (it?.category || "Meals") ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+    <label class="exp-amt">Amount (USD)<input name="amount" type="number" min="0" step="0.01" inputmode="decimal" value="${it && it.category !== "Mileage" ? it.amount : ""}"></label>
+    <label class="exp-mi" hidden>Miles<input name="miles" type="number" min="0" step="0.1" inputmode="decimal" value="${it?.miles ?? ""}"><small class="muted" id="miCalc"></small></label>
+    <label>Merchant<input name="merchant" value="${esc(it?.merchant || "")}" placeholder="e.g. Delta, Marriott, Uber"></label>
+    <label style="grid-column:1/-1">Business purpose<input name="description" value="${esc(it?.description || "")}" placeholder="e.g. Client site visit, Fairfax County"></label>
+    <label>Project <small class="muted">(optional)</small><select name="project_id"><option value="">No project (overhead)</option>${projs.map((p) => `<option value="${p.id}" ${p.id === it?.project_id ? "selected" : ""}>${esc(p.name)}${p.client ? " · " + esc(p.client) : ""}</option>`).join("")}</select></label>
+    <label class="check exp-bill"><input type="checkbox" name="billable" ${it?.billable ? "checked" : ""}> Billable to the client</label>
+    <div style="grid-column:1/-1" class="exp-rc"><span class="muted small">Receipt</span>
+      ${it?.receipt_id ? `<p class="small">A receipt is attached. <button class="link" type="button" id="rcView">View</button> · <button class="link" type="button" id="rcDrop">Remove</button></p>` : ""}
+      <input type="file" name="receipt" accept="image/*,.pdf" capture="environment"><small class="muted">Photo or PDF, up to 10 MB. Needed for ${usd(set.receipt_over)} or more.</small></div>
+    <div class="actions-row" style="grid-column:1/-1"><button class="btn primary">${it ? "Save" : "Add expense"}</button>${it ? `<button class="btn danger" type="button" id="itDel">Delete</button>` : ""}
+      ${!it ? `<button class="btn" type="submit" data-another>Add and start another</button>` : ""}</div></form>`;
+  openDrawer();
+  const f = $("#itForm"), sync = () => {
+    const mi = f.category.value === "Mileage";
+    $(".exp-amt", f).hidden = mi; $(".exp-mi", f).hidden = !mi; f.amount.required = !mi; f.miles.required = mi;
+    $("#miCalc").textContent = mi ? `${usd((+f.miles.value || 0) * set.mileage_rate)} at ${usd(set.mileage_rate)} a mile` : "";
+    $(".exp-bill", f).hidden = !f.project_id.value; if (!f.project_id.value) f.billable.checked = false;
+  };
+  ["change", "input"].forEach((ev) => f.addEventListener(ev, sync)); sync();
+  let dropRc = false;
+  $("#rcView")?.addEventListener("click", () => openReceipt(it.receipt_id));
+  $("#rcDrop")?.addEventListener("click", (e) => { dropRc = true; e.target.closest("p").remove(); });
+  f.addEventListener("submit", async (e) => {
+    e.preventDefault(); const again = e.submitter?.hasAttribute("data-another"), d = new FormData(f), file = f.receipt.files[0];
+    if (file && file.size > 10 * 1024 * 1024) { toast("That receipt is over 10 MB."); return; }
+    const row = { report_id: r.id, spent_on: d.get("spent_on"), category: d.get("category"), merchant: d.get("merchant").trim() || null, description: d.get("description").trim() || null,
+      amount: d.get("category") === "Mileage" ? 0 : +d.get("amount") || 0, miles: d.get("category") === "Mileage" ? +d.get("miles") || 0 : null,
+      project_id: d.get("project_id") ? +d.get("project_id") : null, billable: !!d.get("billable") };
+    try {
+      if (file) {
+        const b64 = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(",")[1]); fr.onerror = () => rej(new Error("Couldn't read that file.")); fr.readAsDataURL(file); });
+        row.receipt_id = must(await sb.from("expense_receipts").insert({ name: file.name, mime: file.type || "application/octet-stream", size: file.size, data_b64: b64 }).select("id").single()).id;
+      } else if (dropRc) row.receipt_id = null;
+      if (it) must(await sb.from("expense_items").update(row).eq("id", it.id)); else must(await sb.from("expense_items").insert(row));
+      toast(it ? "Saved" : "Expense added");
+      if (again) { await done(); itemForm(r, null, set, done); } else { closeDrawer(); done(); }
+    } catch (err) { toast(err.message); }
+  });
+  $("#itDel")?.addEventListener("click", async () => { try { must(await sb.from("expense_items").delete().eq("id", it.id)); toast("Deleted"); closeDrawer(); done(); } catch (err) { toast(err.message); } });
+}
+async function openReceipt(id) {
+  try {
+    const f = must(await sb.from("expense_receipts").select("name, mime, data_b64").eq("id", id).single());
+    const bin = atob(f.data_b64), u8 = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    const url = URL.createObjectURL(new Blob([u8], { type: f.mime || "application/octet-stream" }));
+    const w = window.open(url, "_blank"); if (!w) { const a = document.createElement("a"); a.href = url; a.download = f.name; a.click(); }
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (e) { toast(e.message); }
+}
+
+/* ================================================================ Settings (admins): holidays and expense rules */
+function usFederal(y) {   // US federal holidays with their observed dates (Saturday → Friday, Sunday → Monday)
+  const iso = (d) => d.toLocaleDateString("en-CA");
+  const nth = (m, dow, n) => { const d = new Date(y, m, 1); while (d.getDay() !== dow) d.setDate(d.getDate() + 1); d.setDate(d.getDate() + 7 * (n - 1)); return iso(d); };
+  const last = (m, dow) => { const d = new Date(y, m + 1, 0); while (d.getDay() !== dow) d.setDate(d.getDate() - 1); return iso(d); };
+  const obs = (m, day) => { const d = new Date(y, m, day); if (d.getDay() === 6) d.setDate(d.getDate() - 1); if (d.getDay() === 0) d.setDate(d.getDate() + 1); return iso(d); };
+  return [[obs(0, 1), "New Year's Day"], [nth(0, 1, 3), "Martin Luther King Jr. Day"], [nth(1, 1, 3), "Washington's Birthday"], [last(4, 1), "Memorial Day"],
+    [obs(5, 19), "Juneteenth"], [obs(6, 4), "Independence Day"], [nth(8, 1, 1), "Labor Day"], [nth(9, 1, 2), "Columbus Day"], [obs(10, 11), "Veterans Day"],
+    [nth(10, 4, 4), "Thanksgiving Day"], [obs(11, 25), "Christmas Day"]].map(([day, name]) => ({ day, name }));
+}
+async function Settings() {
+  if (!isAdmin()) { $("#main").innerHTML = `<div class="empty">Only admins can change these settings.</div>`; return; }
+  await loadHolidays();
+  const set = await expSettings(), y = +today().slice(0, 4);
+  const upcoming = TC.holidays.filter((h) => h.day >= y + "-01-01");
+  $("#main").innerHTML = `
+    <div class="page-head"><div><h1>Settings</h1><p class="muted">Company holidays for timesheets, and the rules for expenses.</p></div></div>
+    <section class="panel"><h2>Company holidays <small>Holiday hours can only go on these dates. Leave the list empty to allow Holiday on any day.</small></h2>
+      <div class="table-wrap"><table><thead><tr><th>Date</th><th>Holiday</th><th></th></tr></thead><tbody>
+        ${upcoming.map((h) => `<tr style="cursor:default"><td>${new Date(h.day + "T12:00:00").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })}</td><td>${esc(h.name)}</td>
+          <td class="num"><button class="btn small danger" data-delhol="${h.day}">Remove</button></td></tr>`).join("") || `<tr><td colspan="3" class="empty">No holidays listed.</td></tr>`}</tbody></table></div>
+      <form id="holForm" class="actions-row" style="margin-top:12px"><input type="date" name="day" required aria-label="Holiday date"><input name="name" required placeholder="Holiday name" aria-label="Holiday name"><button class="btn">${icon("plus")}Add</button></form>
+      <div class="actions-row" style="margin-top:8px">${[y, y + 1].map((yr) => `<button class="btn small" data-fed="${yr}">Add US federal holidays for ${yr}</button>`).join("")}</div></section>
+    <section class="panel"><h2>Expenses</h2><form id="expSet" class="form-grid">
+      <label>Mileage rate (USD a mile)<input name="mileage_rate" type="number" min="0" step="0.005" value="${set.mileage_rate}"><small class="muted">The IRS business rate is 76¢ from July 1, 2026 (72.5¢ before).</small></label>
+      <label>Receipts required from (USD)<input name="receipt_over" type="number" min="0" step="1" value="${set.receipt_over}"><small class="muted">IRS rules need receipts for lodging and for any expense of $75 or more.</small></label>
+      <div class="actions-row" style="grid-column:1/-1"><button class="btn primary">Save</button></div></form></section>`;
+  $("#holForm").addEventListener("submit", async (e) => {
+    e.preventDefault(); const f = new FormData(e.target);
+    try { must(await sb.from("company_holidays").upsert({ day: f.get("day"), name: f.get("name").trim() })); toast("Holiday added"); Settings(); } catch (err) { toast(err.message); }
+  });
+  $$("[data-fed]").forEach((b) => b.addEventListener("click", async () => {
+    try { must(await sb.from("company_holidays").upsert(usFederal(+b.dataset.fed), { onConflict: "workspace_id,day", ignoreDuplicates: true })); toast(`US federal holidays for ${b.dataset.fed} added`); Settings(); } catch (err) { toast(err.message); }
+  }));
+  $$("[data-delhol]").forEach((b) => b.addEventListener("click", async () => { try { must(await sb.from("company_holidays").delete().eq("day", b.dataset.delhol)); Settings(); } catch (err) { toast(err.message); } }));
+  $("#expSet").addEventListener("submit", async (e) => {
+    e.preventDefault(); const f = new FormData(e.target);
+    try { must(await sb.from("expense_settings").upsert({ workspace_id: S.profile.workspace_id, mileage_rate: +f.get("mileage_rate"), receipt_over: +f.get("receipt_over"), updated_at: new Date().toISOString() })); toast("Saved"); } catch (err) { toast(err.message); }
+  });
+}
+
 /* ================================================================ router */
-const routes = { week: Week, approvals: Approvals, projects: Projects, reports: Reports };
+const routes = { week: Week, approvals: Approvals, projects: Projects, reports: Reports, expenses: Expenses, expense: Expense, settings: Settings };
+
 window.addEventListener("hashchange", route);
 function route() {
   if (!S.profile) return;
   const [name, param] = location.hash.replace(/^#\/?/, "").split("/");
   const key = routes[name] ? name : "week";
-  $$("#nav a[data-r]").forEach((a) => a.classList.toggle("on", a.dataset.r === key));
+  $$("#nav a[data-r]").forEach((a) => a.classList.toggle("on", a.dataset.r === (key === "expense" ? "expenses" : key)));
   document.body.classList.remove("nav-open"); closeDrawer();
   $("#main").innerHTML = `<p class="muted">Loading…</p>`;
-  Promise.resolve(routes[key](param)).catch((e) => ($("#main").innerHTML = /projects|time_entries|timesheets|ts_|schema cache|does not exist/i.test(e.message)
+  Promise.resolve(routes[key](param)).catch((e) => ($("#main").innerHTML = /projects|time_entries|timesheets|ts_|expense|holiday|schema cache|does not exist|kind/i.test(e.message)
     ? `<section class="panel"><h2>One-time setup needed</h2><p>Timecards needs the latest database update. ${isAdmin() ? "Run the latest <code>supabase/schema.sql</code> in the Supabase SQL Editor." : "Ask an admin to run the Pulse database update."}</p></section>`
     : `<div class="empty">Couldn't load this page: ${esc(e.message)}</div>`));
   $("#main").focus({ preventScroll: true });
 }
 async function boot() {
   if (!sb) { $("#setup").hidden = false; return; }
-  try { if (!(await requireMember())) return; showShell(); route(); }
+  try { if (!(await requireMember())) return; showShell(); const ns = $("#navSettings"); if (ns) ns.hidden = !isAdmin(); route(); }
   catch (e) { showShell(); $("#main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
 }
 boot();

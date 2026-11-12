@@ -184,8 +184,8 @@ async function InvoiceEdit(id) {
       ${field("Due date", `<input name="due_date" type="date" value="${inv.due_date || ""}">`)}
       ${field("Currency", `<select name="currency">${opts(["USD", "EUR", "GBP", "CAD", "AUD", "KES", "ZAR", "NGN", "INR", "PKR"], inv.currency)}</select>`)}
     </form>
-    <section class="panel"><div class="bill-head"><h2>Line items</h2><div class="actions-row"><button class="btn small" id="ieHours" type="button">${icon("timer")}Add approved hours</button><button class="btn small" id="ieAdd" type="button">${icon("plus")}Add line</button></div></div>
-      <div id="ieHoursBox" hidden class="row inv-hours"><label>From<input type="date" id="ihFrom"></label><label>To<input type="date" id="ihTo" value="${today()}"></label><button class="btn small primary" id="ihGo" type="button">Add hours</button><span class="muted small">Approved timesheets on the project above, at its billing rate (or each person's rate).</span></div>
+    <section class="panel"><div class="bill-head"><h2>Line items</h2><div class="actions-row"><button class="btn small" id="ieHours" type="button">${icon("timer")}Add approved hours and expenses</button><button class="btn small" id="ieAdd" type="button">${icon("plus")}Add line</button></div></div>
+      <div id="ieHoursBox" hidden class="row inv-hours"><label>From<input type="date" id="ihFrom"></label><label>To<input type="date" id="ihTo" value="${today()}"></label><button class="btn small primary" id="ihGo" type="button">Add hours and expenses</button><span class="muted small">Approved timesheets on the project above, at its billing rate (or each person's rate), plus approved expenses marked billable.</span></div>
       <div class="table-wrap"><table class="inv-items"><thead><tr><th>Description</th><th class="num">Qty / hours</th><th class="num">Rate</th><th class="num">Amount</th><th></th></tr></thead><tbody id="ieRows"></tbody></table></div>
       <div class="inv-sum" id="ieSum"></div>
       <div class="form-grid" style="margin-top:12px">${field("Discount (amount)", `<input id="ieDisc" type="number" step="0.01" value="${inv.discount || 0}">`)}${field("Tax rate (%)", `<input id="ieTax" type="number" step="0.01" value="${inv.tax_rate || 0}">`)}
@@ -211,9 +211,11 @@ async function InvoiceEdit(id) {
     const pid = +$("#ieForm").project_id.value; if (!pid) return toast("Pick the project first");
     try {
       const rows = await db.rpc("inv_hours", { p_project: pid, p_from: $("#ihFrom").value, p_to: $("#ihTo").value }), pn = projects.find((p) => p.id === pid)?.name || "";
-      if (!rows.length) return toast("No approved hours on that project in those dates");
+      const exps = await db.rpc("inv_expenses", { p_project: pid, p_from: $("#ihFrom").value, p_to: $("#ihTo").value }).catch(() => []);
+      if (!rows.length && !exps.length) return toast("No approved hours or billable expenses on that project in those dates");
       items = items.filter((x) => x.description || +x.rate); rows.forEach((r) => items.push({ description: `${pn}: ${r.name}, ${fmtD($("#ihFrom").value)} – ${fmtD($("#ihTo").value)}`, qty: +r.hours, rate: +r.rate }));
-      paint(); $("#ieHoursBox").hidden = true; toast(`Added ${rows.length} line${rows.length === 1 ? "" : "s"}`);
+      exps.forEach((x) => items.push({ description: `Expense: ${x.category}${x.merchant ? ", " + x.merchant : ""}${x.description ? " (" + x.description + ")" : ""}, ${fmtD(x.date)}`, qty: 1, rate: +x.amount }));
+      paint(); $("#ieHoursBox").hidden = true; toast(`Added ${rows.length + exps.length} line${rows.length + exps.length === 1 ? "" : "s"}`);
     } catch (e) { toast(e.message); }
   });
   $("#ieSave").addEventListener("click", async () => {

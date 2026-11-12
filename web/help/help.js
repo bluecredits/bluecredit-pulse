@@ -183,13 +183,20 @@ const TOPICS = [
       { id: "onboarding", title: "Team, onboarding and offboarding", html: `<p>${app("people/#/people", "Team &amp; onboarding")} lists employees, contractors, consultants and interns with their checklist: paperwork, access and equipment from first day to last. New people start from the <b>Checklist template</b> (changing it doesn't change checklists already started). Each person sees what's left under <b>My checklist</b>. Offboarding runs the same way at the end.</p>` }] },
 
   // ── Every day ──
-  { id: "timecards", group: "daily", icon: "timer", title: "Timecards", plan: "Starter", blurb: "Log hours by project, submit the week, approve timesheets.",
+  { id: "timecards", group: "daily", icon: "timer", title: "Timecards", plan: "Starter", blurb: "Log hours and time off, submit expenses, approve both.",
     sections: [
       { id: "log", title: "Log your week", html: steps(
-          ["Open My timesheet", `Enter hours by project for each day.`],
+          ["Open My timesheet", `Enter hours by project for each day. Work hours can't be entered for future days; <b>Paid time off</b> and <b>Company holiday</b> can (add them from <b>+ Add a project or time off</b>). Sick time is logged on or after the day.`],
+          ["Start a project if it isn't there", `Admins and members can choose <b>+ New project…</b>, give it a budget in hours and a rate, and log to it straight away. It's the same project in Projects, where milestones, tasks and costs live. Each project row shows hours used against its budget and warns when it goes over.`],
           ["Submit the week", `Add a note if needed and submit it for approval.`],
           ["If it comes back", `A rejected week shows the reason; fix it and submit again.`]) },
-      { id: "approve", title: "Approve timesheets", html: `<p>Admins approve every timesheet; project approvers approve weeks with hours on their projects. <b>Reports</b> show hours and amounts by project and person (approved hours come from approved weeks). Admins add projects, limit them to assigned people, and set rates and budgets under <b>Projects</b>.</p>` }] },
+      { id: "approve", title: "Approve timesheets", html: `<p>Admins approve every timesheet; project approvers approve weeks with hours on their projects. <b>Reports</b> show hours and amounts by project and person (approved hours come from approved weeks). Admins add projects, limit them to assigned people, and set rates and budgets under <b>Projects</b>.</p>` },
+      { id: "timeoff", title: "Time off and holidays", html: `<p>Staff (admins, members and employees) log Holiday, PTO and Sick hours on their timesheet next to project work; contractors log project work only. Admins list company holidays under <b>Settings</b> (one click adds the US federal holidays for a year). When holidays are listed, Holiday hours go on those dates only. <b>Reports</b> show time off by person. Requesting time off ahead still goes through Tickets.</p>` },
+      { id: "expenses", title: "Expenses", html: steps(
+          ["Start a report", `<b>Expenses → New expense report</b>. Add each expense: date, category, merchant, purpose, and a receipt photo or PDF. Mileage is miles times the company rate (Settings; the IRS business rate is 76¢ a mile from July 1, 2026).`],
+          ["Charge it to a project", `Pick a project and tick <b>Billable</b> if the client pays for it. Approved expenses on a project appear in its costs in Projects.`],
+          ["Submit", `Receipts are needed for anything at or above the receipt threshold (default $75, the IRS rule), except mileage and per diem.`],
+          ["Approval and reimbursement", `Admins approve (or the project's approver, when every line is on their projects); nobody approves their own when another admin exists. A sent-back report shows the reason. An admin records the reimbursement with a date and reference.`]) }] },
 
   { id: "tickets", group: "daily", icon: "ticket", title: "Tickets", plan: "Starter", blurb: "Equipment, purchases, time off, travel, access and IT help.",
     sections: [

@@ -7,7 +7,7 @@
 const DESK_TYPES = [
   { type: "IT support", icon: "wrench", blurb: "Something isn't working: email, VPN, software, printer.", asset: "optional", title: "What's not working?" },
   { type: "New equipment", icon: "computer", blurb: "A laptop, phone, monitor or other gear you need.", approval: true, ref: "What do you need?", needed: true, title: "e.g. Laptop for the new analyst" },
-  { type: "Purchase or expense", icon: "banknotes", blurb: "Buy something, or get paid back for something you bought.", approval: true, amount: "Amount (USD)", ref: "Vendor", needed: true, title: "e.g. Design software annual license" },
+  { type: "Purchase or expense", icon: "banknotes", blurb: "Get approval before buying something. To get paid back for something you already bought, use Expenses in Timecards.", approval: true, amount: "Amount (USD)", ref: "Vendor", needed: true, title: "e.g. Design software annual license" },
   { type: "Time off", icon: "sun", blurb: "Vacation, a sick day or personal leave.", approval: true, dates: true, title: "e.g. Thanksgiving week" },
   { type: "Travel", icon: "globe", blurb: "Client visits, conferences or site work.", approval: true, dates: true, amount: "Estimated cost (USD)", ref: "Destination", title: "e.g. Industry conference, Chicago" },
   { type: "Access or account", icon: "key", blurb: "Access to a system, shared drive or tool.", approval: true, ref: "System or account", needed: true, title: "e.g. Access to the shared finance drive" },

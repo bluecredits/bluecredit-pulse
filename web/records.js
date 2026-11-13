@@ -924,10 +924,21 @@ async function WorkspaceSettings() {
       <p class="muted">Replaces the lists and agendas above with a pack's. Records you already have keep their values.</p>
       <div class="add-action" style="grid-template-columns:1fr auto;max-width:560px;margin:0"><select id="wsPack">${Object.entries(window.PULSE_PACKS).map(([k, p]) => `<option value="${k}" ${k === w.template ? "selected" : ""}>${esc(p.label)} — ${esc(p.blurb)}</option>`).join("")}</select>
         <button class="btn" id="wsReset">Use this pack</button></div></section>
-    <section class="panel danger-zone"><h2>Delete workspace</h2>
-      <p class="muted">Permanently deletes ${esc(w.name)}: every record, review, request, asset and member. Export what you need first (each list page has Export CSV).</p>
-      <div class="add-action" style="grid-template-columns:1fr auto;max-width:560px;margin:0"><input id="wsDelName" placeholder="Type ${esc(w.name)} to confirm" aria-label="Workspace name">
-        <button class="btn danger" id="wsDelete">Delete workspace</button></div></section>`;
+    <section class="panel danger-zone" id="closeZone"><h2>Close the business</h2>
+      ${S.closed ? `<div class="notice-bar ${S.closed.delete_after ? "alert" : ""}">${ricon("alert")}<div><b>${S.closed.delete_after ? "Closed" : "Archived"} ${new Date(S.closed.archived_at).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</b>${S.closed.reason ? ` · ${esc(S.closed.reason)}` : ""}.
+          ${S.closed.delete_after ? `Everything will be deleted on <b>${new Date(S.closed.delete_after).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</b>. Reopen before then to keep it.` : "It's read-only until you reopen it."}</div></div>
+        <div class="actions-row"><button class="btn primary" id="wsReopen">Reopen ${esc(w.name)}</button><button class="btn" id="wsExport">${ricon("arrow-out")}Download everything</button>
+          ${S.closed.delete_after ? "" : `<button class="btn danger" id="wsCloseNow">Close and delete in 30 days…</button>`}</div>`
+      : `<p class="muted">Winding down or pausing? <b>Archive</b> keeps everything read-only: people can still sign in, look things up and export, but nothing can be added or changed, nobody new can join, and bid checks and GitHub sync stop. You can reopen any time. <b>Close</b> does the same and deletes everything after 30 days unless you reopen it.</p>
+        <label style="max-width:560px">Reason <small class="muted">(optional, shown to your team)</small><input id="wsReason" maxlength="200" placeholder="e.g. Business wound down December 2026"></label>
+        <div class="actions-row"><button class="btn" id="wsExport">${ricon("arrow-out")}Download everything</button><button class="btn" id="wsArchive">Archive the business</button><button class="btn danger" id="wsCloseNow">Close and delete in 30 days…</button></div>`}
+      <div id="wsCloseConfirm" hidden><p class="muted">Download everything first: after 30 days the records, files and members are gone for good. Billing stops while the business is archived or closed.</p>
+        <div class="add-action" style="grid-template-columns:1fr auto;max-width:560px;margin:0"><input id="wsCloseName" placeholder="Type ${esc(w.name)} to confirm" aria-label="Business name">
+          <button class="btn danger" id="wsCloseGo">Close ${esc(w.name)}</button></div></div>
+      <details class="muted small" style="margin-top:12px"><summary>Delete it right now instead</summary>
+        <p>Permanently deletes ${esc(w.name)} immediately: every record, review, request, asset and member. This can't be undone.</p>
+        <div class="add-action" style="grid-template-columns:1fr auto;max-width:560px;margin:0"><input id="wsDelName" placeholder="Type ${esc(w.name)} to confirm" aria-label="Workspace name">
+          <button class="btn danger" id="wsDelete">Delete now</button></div></details></section>`;
   const prev = () => { $("#wsNamePrev").textContent = $("#wsName").value; const u = $("#wsLogo").value.trim();
     $("#wsLogoPrev").innerHTML = /^https:\/\//i.test(u) ? `<img src="${esc(u)}" alt="">` : esc($("#wsName").value.split(/\s+/).map((x) => x[0] || "").slice(0, 2).join("").toUpperCase()); };
   prev(); $("#wsName").addEventListener("input", prev); $("#wsLogo").addEventListener("input", prev);
@@ -950,6 +961,28 @@ async function WorkspaceSettings() {
     const k = $("#wsPack").value;
     if (!confirm(`Replace the lists and agendas with the ${window.PULSE_PACKS[k].label} pack?`)) return;
     try { await save({ template: k, config: { lists: {}, agendas: {}, working_exclude: null } }); toast("Starter pack applied"); WorkspaceSettings(); } catch (e) { toast(e.message); }
+  });
+  const afterClose = async (msg) => { toast(msg); await loadWorkspace(); closedBanner(); WorkspaceSettings(); };
+  $("#wsExport")?.addEventListener("click", async (e) => {
+    e.target.disabled = true; toast("Preparing your download…");
+    try {
+      const data = await db.rpc("ws_export", {}), n = Object.values(data.tables || {}).reduce((a, r) => a + r.length, 0);
+      const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" })), a = document.createElement("a");
+      a.href = url; a.download = `${w.name.replace(/[^\w]+/g, "-")}-pulse-export-${today()}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+      toast(`Downloaded ${n.toLocaleString()} records from ${Object.keys(data.tables || {}).length} lists`);
+    } catch (err) { toast(err.message); } e.target.disabled = false;
+  });
+  $("#wsArchive")?.addEventListener("click", async () => {
+    if (!confirm(`Archive ${w.name}? Everything becomes read-only until an admin reopens it.`)) return;
+    try { await db.rpc("ws_archive", { p_reason: $("#wsReason")?.value || null, p_delete: false }); await afterClose("Archived. Everything is read-only now."); } catch (e) { toast(e.message); }
+  });
+  $("#wsCloseNow")?.addEventListener("click", () => { $("#wsCloseConfirm").hidden = false; $("#wsCloseName").focus(); });
+  $("#wsCloseGo")?.addEventListener("click", async () => {
+    if ($("#wsCloseName").value.trim() !== w.name) return toast(`Type ${w.name} exactly to confirm`);
+    try { await db.rpc("ws_archive", { p_reason: $("#wsReason")?.value || null, p_delete: true, p_confirm: $("#wsCloseName").value.trim() }); await afterClose("Closed. It will be deleted in 30 days unless you reopen it."); } catch (e) { toast(e.message); }
+  });
+  $("#wsReopen")?.addEventListener("click", async () => {
+    try { await db.rpc("ws_reopen", {}); await afterClose(`${w.name} is open again`); } catch (e) { toast(e.message); }
   });
   $("#wsDelete").addEventListener("click", async () => {
     if ($("#wsDelName").value.trim() !== w.name) return toast(`Type ${w.name} exactly to confirm`);

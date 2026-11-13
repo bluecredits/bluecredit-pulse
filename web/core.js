@@ -114,6 +114,8 @@ async function loadWorkspace() {
   S.workspace = must(await sb.from("workspaces").select(WS_COLS).maybeSingle());
   // the plan decides which apps open (the database enforces it too); null = billing not set up yet, so nothing is locked
   try { const r = await sb.rpc("billing_status"); S.billing = r.error ? null : r.data; } catch { S.billing = null; }
+  // archived (closed) business: read-only everywhere; null when the database predates it
+  try { const r = await sb.rpc("ws_close_status"); S.closed = !r.error && r.data?.status === "Archived" ? r.data : null; } catch { S.closed = null; }
   applyBrand();
   return S.workspace;
 }
@@ -172,7 +174,17 @@ const PULSE_APPS = [
 function showShell() {
   $("#shell").hidden = false; $("#topbar").hidden = false;
   if (S.profile) setWho(S.profile.display_name);
-  buildUserMenu(); buildAppsMenu(); addFooter(); addHelpBtn();
+  buildUserMenu(); buildAppsMenu(); addFooter(); addHelpBtn(); closedBanner();
+}
+// a closed or archived business shows a read-only bar on every page
+function closedBanner() {
+  $("#closedBar")?.remove();
+  const c = S.closed; if (!c) return;
+  const day = (d) => new Date(d).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  const bar = document.createElement("div"); bar.id = "closedBar"; bar.className = "closed-bar"; bar.setAttribute("role", "status");
+  bar.innerHTML = `<b>${esc(S.workspace?.name || "This business")} is ${c.delete_after ? "closed" : "archived"}.</b> Everything is read-only${c.delete_after ? `, and it will be deleted on ${day(c.delete_after)}` : ""}.
+    ${S.profile?.role === "admin" ? `<a href="${HUB}admin/#/settings">${c.delete_after ? "Download your records or cancel" : "Reopen or download"}</a>` : "Ask an admin if you need it reopened."}`;
+  const shell = $("#shell"); shell?.parentNode.insertBefore(bar, shell);
 }
 // Help (?) in the top bar on every page: opens the Help Center at the topic for the app you're in
 const HELP_TOPICS = ["review", "contacts", "funding", "opportunities", "projects", "documents", "people", "timecards", "tickets", "scheduler", "chief"];

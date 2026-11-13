@@ -223,6 +223,11 @@ const TOPICS = [
   // ── Admin and billing ──
   { id: "admin", group: "admin", icon: "cog", title: "Team and workspace settings", blurb: "Invite people, roles, codes, lists, logo and apps.",
     sections: [
+      { id: "close", title: "Close or archive the business", html: `<p>In <b>Workspace settings → Close the business</b>, an admin can:</p><ul>
+          <li><b>Download everything</b>: every record as one JSON file (file contents and secrets left out). Each list page also has Export CSV.</li>
+          <li><b>Archive</b>: everything becomes read-only. People can still sign in, look things up and export; nothing can be added or changed, nobody new can join, and bid checks and GitHub sync stop. A bar on every page says it's archived. Reopen any time and everything, including the join codes, comes back.</li>
+          <li><b>Close</b>: archives it and deletes it permanently 30 days later. Reopening before then cancels the deletion. You type the business name to confirm.</li>
+          <li><b>Delete now</b> is still there for an immediate, permanent delete.</li></ul>` },
       { id: "team", title: "Invite and manage the team", html: steps(
           ["Add new hires in People first", `${app("people/#/people", "People → Team &amp; onboarding")} with their work email, so their checklist, contract and devices are waiting.`],
           ["Send the invite", `Your name → <b>Team and access</b>. There are three codes: <b>Staff</b> (members, every app), <b>Employees</b> (the employee portal) and <b>Contractors</b> (the portal, free). <b>Invite…</b> writes the welcome email with a link that fills the code in.`],

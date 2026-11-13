@@ -117,6 +117,7 @@ const TOPICS = [
   // ── Deliver ──
   { id: "projects", group: "deliver", icon: "briefcase", title: "Projects", plan: "Pro", blurb: "Schedule, tasks, team, budget vs. actual, status reports and close-out.",
     sections: [
+      { id: "assign", title: "Assign work", html: `<p><b>Assign work</b> (on the Projects page, a project's page and My work) gives someone a <b>task</b> (new, or reassign an existing one), a <b>milestone</b> (new, or make them the owner of one), or a <b>role</b> on a project: project manager, approver of timesheets and expenses, or team member. Employees and contractors are added to the project so they can see it; managers and approvers need an admin or member login. In Tickets, <b>Make it a project task</b> turns a request into a task and notes it on the request. <b>My work</b> lists your tasks, the milestones you own (mark them done there) and the projects you run.</p>` },
       { id: "setup", title: "Set up a project", html: steps(
           ["New project", `Give it a manager, dates, contract value, cost budget and budget hours.`],
           ["Add milestones and tasks", `Milestones show on a timeline; tasks on a board and a list. Assign each task to someone.`],

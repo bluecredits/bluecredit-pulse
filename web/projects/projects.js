@@ -25,9 +25,10 @@ async function Portfolio() {
   const groups = { active: (r) => ["Active", "Planned", "Paused"].includes(r.status), done: (r) => ["Complete", "Closed"].includes(r.status), all: () => true };
   const list = rows.filter(groups[PJ.filter]);
   const act = rows.filter((r) => r.status === "Active");
+  setTimeout(() => $("#assignWork")?.addEventListener("click", () => openAssign({ onDone: Portfolio })), 0);
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>Projects</h1><p class="muted">Funded work from kickoff to close-out: schedule, tasks, team, budget and status.</p></div>
-      ${isStaff() ? `<div class="actions-row"><a class="btn primary" href="#/new">${icon("plus")}New project</a></div>` : ""}</div>
+      ${isStaff() ? `<div class="actions-row"><button class="btn" id="assignWork">${icon("user-plus")}Assign work</button><a class="btn primary" href="#/new">${icon("plus")}New project</a></div>` : ""}</div>
     ${isStaff() ? `<div class="kpis">
       <div class="kpi panel"><div><span>Active projects</span><b>${act.length}</b><small>${act.filter((r) => r.health !== "On track").length} need attention</small></div><div class="bubble">${icon("briefcase")}</div></div>
       <div class="kpi panel"><div><span>Late tasks</span><b>${act.reduce((a, r) => a + r.tasks_late, 0)}</b><small>past their due date</small></div><div class="bubble">${icon("alert")}</div></div>
@@ -114,10 +115,11 @@ async function Project(id, tab) {
   $("#main").innerHTML = `
     <div class="page-head"><div><p class="muted small"><a href="#/portfolio">Projects</a>${p.client ? " › " + esc(p.client) : ""}</p><h1>${esc(p.name)}</h1>
       <p class="muted">${hpill(p.health)} ${esc(p.status)}${p.manager_id ? " · PM " + esc(nameOf(p.manager_id)) : ""}${p.start_date ? " · " + short(p.start_date) + (p.end_date ? " – " + short(p.end_date) : "") : ""}${p.code ? " · " + esc(p.code) : ""}</p></div>
-      ${canManage(p) ? `<div class="actions-row"><button class="btn" id="editProj">Edit project</button>${["Active", "Paused", "Planned", "Complete"].includes(p.status) ? `<button class="btn" id="closeProj">Close out…</button>` : ""}</div>` : ""}</div>
+      ${isStaff() || canManage(p) ? `<div class="actions-row">${isStaff() ? `<button class="btn" id="assignWork">${icon("user-plus")}Assign work</button>` : ""}${canManage(p) ? `<button class="btn" id="editProj">Edit project</button>` : ""}${canManage(p) && ["Active", "Paused", "Planned", "Complete"].includes(p.status) ? `<button class="btn" id="closeProj">Close out…</button>` : ""}</div>` : ""}</div>
     <nav class="proj-toolbar" role="tablist">${tabs.map(([k, l, ic]) => `<a href="#/p/${id}/${k}" role="tab" aria-selected="${PJ.tab === k}">${icon(ic)}<span>${l}</span></a>`).join("")}</nav>
     <div id="ptab"></div>`;
   $("#editProj")?.addEventListener("click", () => editProject(p));
+  $("#assignWork")?.addEventListener("click", () => openAssign({ project_id: p.id, onDone: () => Project(id, PJ.tab) }));
   $("#closeProj")?.addEventListener("click", () => closeProject(p));
   await ({ overview: Overview, schedule: Schedule, board: Board, list: TaskList, team: Team, cost: Cost, documents: Documents, risks: Risks, reports: Reports, github: GitHubTab })[PJ.tab](p, roll);
 }
@@ -158,7 +160,7 @@ async function Schedule(p) {
     <div class="gantt"><div class="gantt-head"><span>${new Date(t0).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span><span>${new Date(t1).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</span></div>
       ${ms.map((m) => { const late = !m.done_at && m.due_date && m.due_date < today(); const s = m.start_date || m.due_date;
         return `<div class="gantt-row ${m.done_at ? "done" : ""} ${late ? "late" : ""}"><div class="gantt-name"><label class="check"><input type="checkbox" data-msdone="${m.id}" ${m.done_at ? "checked" : ""} ${manage && m.gh_number == null ? "" : "disabled"}> ${m.deliverable ? icon("badge", "ic tiny") : ""} ${esc(m.name)}</label>${m.gh_url ? ` <a class="gh-chip" href="${esc(m.gh_url)}" target="_blank" rel="noopener" title="Milestone on GitHub">${icon("code")}GitHub</a>` : ""}
-          <small class="muted">${m.due_date ? short(m.due_date) : "No date"}${m.done_at ? " · done " + short(m.done_at) : late ? " · late" : ""}</small></div>
+          <small class="muted">${m.owner_id ? esc(nameOf(m.owner_id)) + " · " : ""}${m.due_date ? short(m.due_date) : "No date"}${m.done_at ? " · done " + short(m.done_at) : late ? " · late" : ""}</small></div>
           <div class="gantt-track">${todayX >= 0 && todayX <= 100 ? `<b class="gantt-today" style="left:${todayX}%"></b>` : ""}${m.due_date ? (m.start_date && m.start_date < m.due_date
             ? `<i class="gantt-bar" style="left:${x(s)}%;width:${Math.max(1, x(m.due_date) - x(s))}%"></i>` : `<i class="gantt-dot" style="left:${x(m.due_date)}%"></i>`) : ""}</div>
           ${manage && m.gh_number == null ? `<button class="btn small" data-msedit="${m.id}">Edit</button>` : manage ? `<span></span>` : ""}</div>`; }).join("") || `<p class="muted">No milestones yet.</p>`}</div></section>`;
@@ -173,12 +175,13 @@ function editMilestone(p, m) {
   $("#drawerBody").innerHTML = `<form id="msForm" class="form-grid"><label style="grid-column:1/-1">Name<input name="name" required value="${esc(m?.name || "")}"></label>
     <label>Start (optional)<input type="date" name="start_date" value="${m?.start_date || ""}"></label><label>Due<input type="date" name="due_date" value="${m?.due_date || ""}"></label>
     <label class="check" style="grid-column:1/-1"><input type="checkbox" name="deliverable" ${m?.deliverable ? "checked" : ""}> This is a contract deliverable</label>
+    <label style="grid-column:1/-1">Owner<select name="owner_id"><option value="">No owner</option>${S.team.filter((x) => x.active).map((x) => `<option value="${x.id}" ${x.id === m?.owner_id ? "selected" : ""}>${esc(x.display_name)}</option>`).join("")}</select></label>
     <label style="grid-column:1/-1">Notes<textarea name="notes" rows="2">${esc(m?.notes || "")}</textarea></label>
     <div class="actions-row" style="grid-column:1/-1"><button class="btn primary">Save</button>${m ? `<button type="button" class="btn danger" id="msDel">Delete</button>` : ""}</div></form>`;
   openDrawer();
   $("#msForm").addEventListener("submit", async (e) => {
     e.preventDefault(); const d = Object.fromEntries(new FormData(e.target));
-    const row = { name: d.name.trim(), start_date: d.start_date || null, due_date: d.due_date || null, deliverable: !!d.deliverable, notes: d.notes || null };
+    const row = { name: d.name.trim(), start_date: d.start_date || null, due_date: d.due_date || null, deliverable: !!d.deliverable, notes: d.notes || null, owner_id: d.owner_id || null };
     try { must(m ? await sb.from("project_milestones").update(row).eq("id", m.id) : await sb.from("project_milestones").insert({ ...row, project_id: p.id })); closeDrawer(); reload(); } catch (err) { toast(err.message); }
   });
   $("#msDel")?.addEventListener("click", async () => { if (!confirm("Delete this milestone? Its tasks stay.")) return; try { must(await sb.from("project_milestones").delete().eq("id", m.id)); closeDrawer(); reload(); } catch (err) { toast(err.message); } });
@@ -466,14 +469,22 @@ async function closeProject(p) {
   });
 }
 
-/* ================================================================ my tasks */
+/* ================================================================ my work: tasks, milestones I own, projects I run */
 async function MyTasks() {
-  const rows = await db.rpc("my_tasks", {});
-  $("#main").innerHTML = `<div class="page-head"><div><h1>My tasks</h1><p class="muted">Open tasks assigned to you across projects.</p></div></div>
-    <section class="panel" style="padding:0"><div class="table-wrap"><table><thead><tr><th>Task</th><th>Project</th><th>Status</th><th>Priority</th><th>Due</th></tr></thead><tbody>
-    ${rows.map((t) => `<tr style="cursor:default"><td><b>${esc(t.title)}</b></td><td>${esc(t.project)}</td><td><select data-ts="${t.id}">${COLS.map((c) => `<option ${c === t.status ? "selected" : ""}>${c}</option>`).join("")}</select></td>
-      <td>${esc(t.priority)}</td><td class="date">${t.due ? dueCell(t.due, true) : ""}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">Nothing assigned to you. 🎉</td></tr>`}</tbody></table></div></section>`;
+  const rows = await db.rpc("my_tasks", {}), tasks = rows.filter((r) => r.kind !== "milestone"), ms = rows.filter((r) => r.kind === "milestone");
+  const runs = isStaff() ? await sb.from("projects").select("id, name, client, status, end_date").or(`manager_id.eq.${S.user.id},approver_id.eq.${S.user.id}`).in("status", ["Active", "Planned", "Paused"]).order("name").then((r) => r.data || []) : [];
+  $("#main").innerHTML = `<div class="page-head"><div><h1>My work</h1><p class="muted">Tasks assigned to you, milestones you own and projects you run.</p></div>
+      ${isStaff() ? `<div class="actions-row"><button class="btn" id="assignWork">${icon("user-plus")}Assign work</button></div>` : ""}</div>
+    <section class="panel" style="padding:0"><h2 style="padding:14px 16px 0">Tasks <small>${tasks.length}</small></h2><div class="table-wrap"><table><thead><tr><th>Task</th><th>Project</th><th>Status</th><th>Priority</th><th>Due</th></tr></thead><tbody>
+    ${tasks.map((t) => `<tr style="cursor:default"><td><b>${esc(t.title)}</b>${t.milestone ? `<small class="muted" style="display:block">${esc(t.milestone)}</small>` : ""}</td><td><a href="#/p/${t.project_id}/board">${esc(t.project)}</a></td><td><select data-ts="${t.id}">${COLS.map((c) => `<option ${c === t.status ? "selected" : ""}>${c}</option>`).join("")}</select></td>
+      <td>${esc(t.priority)}</td><td class="date">${t.due ? dueCell(t.due, true) : ""}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">No tasks assigned to you. 🎉</td></tr>`}</tbody></table></div></section>
+    ${ms.length ? `<section class="panel" style="padding:0"><h2 style="padding:14px 16px 0">Milestones you own <small>${ms.length}</small></h2><div class="table-wrap"><table><thead><tr><th>Milestone</th><th>Project</th><th>Open tasks</th><th>Due</th><th></th></tr></thead><tbody>
+      ${ms.map((m) => `<tr style="cursor:default"><td><b>${m.deliverable ? icon("badge", "ic tiny") + " " : ""}${esc(m.title)}</b></td><td><a href="#/p/${m.project_id}/schedule">${esc(m.project)}</a></td><td>${m.tasks_open}</td>
+        <td class="date">${m.due ? dueCell(m.due, true) : ""}</td><td class="num"><button class="btn small" data-msdone="${m.id}">Mark done</button></td></tr>`).join("")}</tbody></table></div></section>` : ""}
+    ${runs.length ? `<section class="panel"><h2>Projects you run <small>${runs.length}</small></h2><ul class="checklist">${runs.map((p) => `<li class="ck"><span><a href="#/p/${p.id}">${esc(p.name)}</a>${p.client ? ` <span class="muted small">${esc(p.client)}</span>` : ""}</span><span class="meta">${esc(p.status)}${p.end_date ? " · ends " + short(p.end_date) : ""}</span></li>`).join("")}</ul></section>` : ""}`;
   $$("[data-ts]").forEach((s) => s.addEventListener("change", async () => { try { must(await sb.from("project_tasks").update({ status: s.value }).eq("id", +s.dataset.ts)); toast("Updated"); } catch (e) { toast(e.message); } }));
+  $$("[data-msdone]").forEach((b) => b.addEventListener("click", async () => { try { await db.rpc("pm_milestone_done", { p_id: +b.dataset.msdone, p_done: true }); toast("Milestone done"); MyTasks(); } catch (e) { toast(e.message); } }));
+  $("#assignWork")?.addEventListener("click", () => openAssign({ onDone: MyTasks }));
 }
 
 /* ================================================================ router */

@@ -129,7 +129,7 @@ async function Home() {
     on("tickets") && ["cube", "Request a purchase", "../tickets/#/requests?new=" + encodeURIComponent("Purchase or expense")],
     (on("people") || on("documents")) && ["book", "Company policies", "../people/#/policies"],
     on("people") && ["team", "Org chart", "../people/#/org"],
-    on("projects") && tasks.length && ["briefcase", `My tasks (${tasks.length})`, "../projects/#/mytasks"],
+    on("projects") && tasks.length && ["briefcase", `My work (${tasks.length})`, "../projects/#/mytasks"],
     on("agreements") && ["clipboard", "My documents", "../agreements/#/list"],
   ].filter(Boolean);
 

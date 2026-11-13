@@ -364,6 +364,8 @@ async function openTicket(id, onChange) {
       $("#tSoftware").innerHTML = `<div class="callout sw-callout"><b>${esc(sw.name)}</b>${sw.vendor ? ` · ${esc(sw.vendor)}` : ""} · ${esc(swCost(sw))}
         ${sw.how_to_get ? `<div class="sw-how">${esc(sw.how_to_get)}</div>` : ""}${sw.url ? `<a href="${esc(sw.url)}" target="_blank" rel="noopener">${esc(sw.url.replace(/^https?:\/\//, "").slice(0, 60))}</a>` : ""}</div>`;
   }
+  const linked = await sb.from("project_tasks").select("id, title, status, assignee_id, project_id").eq("ticket_id", id).then((r) => r.data || []).catch(() => []);
+  if (linked.length) $("#tSoftware").insertAdjacentHTML("beforeend", linked.map((k) => `<div class="callout">Project task: <a href="../projects/#/p/${k.project_id}/board">${esc(k.title)}</a> · ${esc(k.status)}${k.assignee_id ? " · " + esc(personName(k.assignee_id)) : ""}</div>`).join(""));
   const A = $("#tActions"), add = (html) => A.insertAdjacentHTML("beforeend", html);
   if (approver && t.status === "Pending approval") {
     add(`<div class="decide"><textarea id="dNote" rows="2" placeholder="Note for ${esc(personName(t.requester_id).split(" ")[0])} (needed if you reject)"></textarea>
@@ -379,6 +381,7 @@ async function openTicket(id, onChange) {
   }
   if (worker && ["Done", "Cancelled"].includes(t.status)) row.push(`<button class="btn" id="aReopen">Reopen</button>`);
   if (canEdit) row.push(`<button class="btn" id="aEdit">Edit</button>`);
+  if (isStaffRole(S.profile?.role) && worker && !closed && !linked.length) row.push(`<button class="btn" id="aTask">Make it a project task</button>`);
   if ((mineReq || isAdmin()) && !closed) row.push(`<button class="btn danger" id="aCancel">Cancel request</button>`);
   if (row.length) add(`<div class="actions-row">${row.join("")}</div>`);
   if (isAdmin() && !closed) {
@@ -395,6 +398,7 @@ async function openTicket(id, onChange) {
   $("#aReopen")?.addEventListener("click", (e) => run(e.target, () => db.rpc("desk_set_status", { p_id: id, p_status: "Reopen", p_note: note() }), "Reopened"));
   $("#aCancel")?.addEventListener("click", (e) => { if (!confirm("Cancel this request?")) return;
     run(e.target, () => db.rpc("desk_set_status", { p_id: id, p_status: "Cancelled", p_note: note() }), "Request cancelled"); });
+  $("#aTask")?.addEventListener("click", () => openAssign({ kind: "task", title: t.title, description: t.description || "", ticket_id: t.id, onDone: () => openTicket(id, onChange) }));
   $("#aEdit")?.addEventListener("click", () => editTicket(t, onChange));
   $("#tSend").addEventListener("click", (e) => { if (!note()) return $("#tComment").focus(); run(e.target, () => db.rpc("desk_comment", { p_id: id, p_body: note() }), "Comment added"); });
 }

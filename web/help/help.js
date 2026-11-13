@@ -200,7 +200,8 @@ const TOPICS = [
 
   { id: "tickets", group: "daily", icon: "ticket", title: "Tickets", plan: "Starter", blurb: "Equipment, purchases, time off, travel, access and IT help.",
     sections: [
-      { id: "request", title: "Make a request", html: `<p>Choose a type: IT support, New equipment, Purchase or expense, Time off, Travel, Access or account, Asset problem, Return an asset, or Other. Equipment, purchases, time off, travel and access need approval: pick an approver (by default an admin).</p>` },
+      { id: "software", title: "Software requests and the approved list", html: `<p><b>Software</b> lists the software your company has approved, with its license and cost. Pick one and choose <b>Request</b>, or choose <b>Software request</b> under New request, where the same list appears. Pre-approved software goes straight to the admins to set up; software marked <b>needs approval</b>, or anything not on the list, goes to an approver first (and needs a reason). Admins add, edit and remove software on the Software page (or start from suggestions), including install notes that the requester sees once it's approved.</p>` },
+      { id: "request", title: "Make a request", html: `<p>Choose a type: IT support, Software request, New equipment, Purchase or expense, Time off, Travel, Access or account, Asset problem, Return an asset, or Other. Equipment, purchases, time off, travel and access need approval: pick an approver (by default an admin).</p>` },
       { id: "approve", title: "Approvals and fulfilment", html: `<ul><li>Nobody approves their own request. Rejecting needs a reason, which the requester sees.</li>
           <li>Admins (or whoever it's assigned to) start and finish approved requests. Finishing <b>Return an asset</b> checks the asset back in; <b>Asset problem</b> marks it In repair.</li>
           <li>A request is visible only to the requester, the approver, the assignee and admins.</li>

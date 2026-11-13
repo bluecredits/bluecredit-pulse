@@ -1,7 +1,7 @@
 /* Pulse · Tickets — router and start-up. Pages live in desk.js; helpers and sign-in in ../core.js. */
 "use strict";
 
-const routes = { requests: DeskRequests, approvals: DeskApprovals, assets: DeskAssets };
+const routes = { requests: DeskRequests, approvals: DeskApprovals, assets: DeskAssets, software: DeskSoftware };
 window.addEventListener("hashchange", route);
 function route() {
   if (!S.profile) return;
@@ -14,7 +14,7 @@ function route() {
   const main = $("#main");
   main.innerHTML = `<p class="muted">Loading…</p>`;
   Promise.resolve((routes[name] || DeskRequests)()).then(() => {
-    if (preset && DESK_TYPE[preset]) { history.replaceState(null, "", "#/" + (routes[name] ? name : "requests")); openNewRequest({ type: preset }); }
+    if (preset && DESK_TYPE[preset]) { history.replaceState(null, "", "#/" + (routes[name] ? name : "requests")); openNewRequest({ type: preset, software_id: new URLSearchParams(qs || "").get("software") || undefined }); }
   }).catch((e) => (main.innerHTML = deskMissing(e) ? deskSetupNotice() : `<div class="empty">Couldn't load this page: ${esc(e.message)}</div>`));
   main.focus({ preventScroll: true });
 }

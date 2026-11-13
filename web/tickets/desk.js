@@ -6,6 +6,7 @@
 
 const DESK_TYPES = [
   { type: "IT support", icon: "wrench", blurb: "Something isn't working: email, VPN, software, printer.", asset: "optional", title: "What's not working?" },
+  { type: "Software request", icon: "code", blurb: "Install an app from the approved software list, or ask for something new.", software: true, ref: "Software", amount: "Cost (USD)", title: "e.g. QGIS for the floodplain project" },
   { type: "New equipment", icon: "computer", blurb: "A laptop, phone, monitor or other gear you need.", approval: true, ref: "What do you need?", needed: true, title: "e.g. Laptop for the new analyst" },
   { type: "Purchase or expense", icon: "banknotes", blurb: "Get approval before buying something. To get paid back for something you already bought, use Expenses in Timecards.", approval: true, amount: "Amount (USD)", ref: "Vendor", needed: true, title: "e.g. Design software annual license" },
   { type: "Time off", icon: "sun", blurb: "Vacation, a sick day or personal leave.", approval: true, dates: true, title: "e.g. Thanksgiving week" },
@@ -22,6 +23,21 @@ const DESK_WORK = ["Open", "Approved", "In progress"];
 const ASSET_CATEGORIES = ["Laptop", "Desktop", "Monitor", "Phone", "Tablet", "Software license", "Vehicle", "Field equipment", "Furniture", "Other"];
 const ASSET_STATUSES = ["In use", "Available", "In repair", "Lost", "Retired"];
 const ASSET_ICON = { Laptop: "computer", Desktop: "computer", Monitor: "computer", Phone: "phone", Tablet: "phone", Vehicle: "truck", "Software license": "key" };
+const SW_CATS = ["Engineering and modeling", "GIS and mapping", "Office and documents", "Design", "Communication", "Development", "Data and analysis", "Security", "Other"];
+const SW_SUGGEST = [   // a starter list for a water-engineering firm; admins add prices and install notes
+  ["QGIS", "QGIS.org", "GIS and mapping", "Free"], ["ArcGIS Pro", "Esri", "GIS and mapping", "Paid per user"], ["Google Earth Pro", "Google", "GIS and mapping", "Free"],
+  ["HEC-RAS", "US Army Corps of Engineers", "Engineering and modeling", "Free"], ["HEC-HMS", "US Army Corps of Engineers", "Engineering and modeling", "Free"],
+  ["EPA SWMM", "US EPA", "Engineering and modeling", "Free"], ["EPANET", "US EPA", "Engineering and modeling", "Free"], ["AutoCAD Civil 3D", "Autodesk", "Engineering and modeling", "Paid per user"],
+  ["Microsoft 365", "Microsoft", "Office and documents", "Company license"], ["Adobe Acrobat Pro", "Adobe", "Office and documents", "Paid per user"],
+  ["Zoom", "Zoom", "Communication", "Company license"], ["Slack", "Slack", "Communication", "Company license"],
+  ["Python (Anaconda)", "Anaconda", "Data and analysis", "Free"], ["R and RStudio", "Posit", "Data and analysis", "Free"], ["Visual Studio Code", "Microsoft", "Development", "Free"],
+  ["GitHub", "GitHub", "Development", "Company license"], ["1Password", "1Password", "Security", "Company license"]];
+const swCost = (x) => (x.license === "Free" ? "Free" : x.cost ? `${money(x.cost)}${x.cost_period && x.cost_period !== "one time" ? " a " + x.cost_period.replace("month", "month").replace("year", "year") : ""}${x.license === "Paid per user" ? " per user" : ""}` : x.license);
+async function loadSoftware(all = false) {
+  let q = sb.from("software_catalog").select("*").order("category").order("name");
+  if (!all) q = q.eq("active", true);
+  return must(await q);
+}
 const DESK = { reqTab: "mine", reqFilter: "open", apprTab: "waiting", assetTab: "mine", assetQ: "", assetStatus: "", counts: null };
 
 const ticketNo = (id) => "REQ-" + String(id).padStart(4, "0");
@@ -58,7 +74,7 @@ function deskFacts(t) {
   const rows = [];
   if (t.amount != null) rows.push([cfg.amount || "Amount", money(t.amount)]);
   if (t.start_date) rows.push(["Dates", `${dateRange(t.start_date, t.end_date)} · ${days(t.start_date, t.end_date || t.start_date)} day${days(t.start_date, t.end_date || t.start_date) === 1 ? "" : "s"}`]);
-  if (t.reference) rows.push([cfg.ref || "Reference", esc(t.reference)]);
+  if (t.reference) rows.push([cfg.ref || "Reference", esc(t.reference) + (t.type === "Software request" ? (t.software_id ? ` <span class="pill s-low">On the approved list</span>` : ` <span class="pill s-high">Not on the list</span>`) : "")]);
   if (t.needed_by) rows.push(["Needed by", dueCell(t.needed_by, DESK_OPEN.includes(t.status))]);
   if (t.asset_label) rows.push(["Asset", esc(t.asset_label)]);
   return rows;
@@ -128,6 +144,7 @@ async function openNewRequest(preset = {}) {
   if (cfg.asset) { try { myAssets = must(await sb.from("assets").select("*").eq("assigned_to", me()).order("name")); } catch (e) { if (deskMissing(e)) { $("#drawerBody").innerHTML = deskSetupNotice(); openDrawer(); return; } } }
   const approvers = approverOptions();
   const needsAppr = cfg.approval;
+  if (cfg.software) return softwareForm(preset, approvers);
   $("#drawerBody").innerHTML = `
     <button class="link" id="backTypes" style="margin-bottom:12px">← All request types</button>
     <div class="type-head">${icon(cfg.icon)}<div><b>${esc(cfg.type)}</b><span class="muted">${esc(cfg.blurb)}</span></div></div>
@@ -168,6 +185,137 @@ async function openNewRequest(preset = {}) {
     } catch (err) { toast(err.message); e.target.disabled = false; }
   });
 }
+/* ---------------- software request: pick from the approved list (or ask for something new) */
+async function softwareForm(preset, approvers) {
+  const cfg = DESK_TYPE["Software request"];
+  let list = [];
+  try { list = await loadSoftware(); } catch (e) { if (deskMissing(e) || /software/i.test(e.message)) { $("#drawerBody").innerHTML = deskSetupNotice(); openDrawer(); return; } throw e; }
+  const cats = [...new Set(list.map((x) => x.category))];
+  $("#drawerBody").innerHTML = `
+    <button class="link" id="backTypes" style="margin-bottom:12px">← All request types</button>
+    <div class="type-head">${icon(cfg.icon)}<div><b>${esc(cfg.type)}</b><span class="muted">${esc(cfg.blurb)}</span></div></div>
+    <form class="form" id="reqForm" style="margin-top:16px">
+      <div class="full sw-pick"><span class="lbl">Approved software${list.length ? ` <small class="muted">(${list.length})</small>` : ""}</span>
+        ${list.length > 8 ? `<input id="swSearch" type="search" placeholder="Search the list" aria-label="Search the approved software">` : ""}
+        <div class="sw-list" role="radiogroup" aria-label="Approved software">
+          ${cats.map((c) => `<div class="sw-cat" data-cat="${esc(c)}"><h4>${esc(c)}</h4>${list.filter((x) => x.category === c).map((x) => `
+            <label class="sw-item" data-name="${esc((x.name + " " + (x.vendor || "") + " " + (x.description || "")).toLowerCase())}"><input type="radio" name="software_id" value="${x.id}" ${String(preset.software_id) === String(x.id) ? "checked" : ""}>
+              <span><b>${esc(x.name)}</b>${x.vendor ? ` <small class="muted">${esc(x.vendor)}</small>` : ""}${x.description ? `<small>${esc(x.description)}</small>` : ""}</span>
+              <em>${esc(swCost(x))}${x.needs_approval ? " · needs approval" : ""}</em></label>`).join("")}</div>`).join("")}
+          ${list.length ? "" : `<p class="muted small">${isAdmin() ? `The list is empty. <a href="#/software">Add approved software</a>.` : "Your admin hasn't added any approved software yet."}</p>`}
+          <label class="sw-item sw-other"><input type="radio" name="software_id" value="" ${!preset.software_id && !list.length ? "checked" : ""}><span><b>Something not on the list</b><small>Needs approval. Say what it is and why you need it.</small></span></label>
+        </div></div>
+      <label class="full sw-name" hidden>Software name<input name="reference" placeholder="e.g. Tableau Desktop"></label>
+      <label class="full">Title<input name="title" required maxlength="140" placeholder="${esc(cfg.title)}"></label>
+      <label>Needed by<input type="date" name="needed_by"></label>
+      <label>Priority<select name="priority"><option>Low</option><option selected>Normal</option><option>High</option><option>Urgent</option></select></label>
+      <label class="sw-appr" hidden>Approver<select name="approver_id">${approvers.map((p, i) => `<option value="${p.id}" ${i === 0 ? "selected" : ""}>${esc(p.label)}</option>`).join("")}</select></label>
+      <label class="full">Details<textarea name="description" rows="4" placeholder="Which computer, the project it's for, anything the installer should know"></textarea></label>
+    </form>
+    <p class="muted small" id="swNote"></p>
+    <div class="form-foot"><button class="btn primary" id="sendReq">Submit request</button><button class="btn" data-close>Cancel</button></div>`;
+  openDrawer();
+  $("#backTypes").addEventListener("click", () => openNewRequest({}));
+  const f = $("#reqForm");
+  let titled = "";
+  const sync = () => {
+    const id = f.querySelector("[name=software_id]:checked")?.value, sw = list.find((x) => String(x.id) === id), other = id === "";
+    const needs = other || !!sw?.needs_approval;
+    $(".sw-name", f).hidden = !other; f.reference.required = other; f.description.required = other;
+    $(".sw-appr", f).hidden = !needs;
+    if (sw && (!f.title.value || f.title.value === titled)) { titled = `Install ${sw.name}`; f.title.value = titled; }
+    $("#swNote").textContent = !id && !other ? "Pick the software you need." : needs ? (approvers.length ? "This goes to the approver first, then to the admins to set up." : "There's no one to approve this yet.") : "This is pre-approved: it goes straight to the admins to set up.";
+    $("#sendReq").textContent = needs ? "Send for approval" : "Submit request";
+    $("#sendReq").disabled = (!id && !other) || (needs && !approvers.length);
+  };
+  f.addEventListener("change", sync);
+  f.reference.addEventListener("input", () => { if (!f.title.value || f.title.value === titled) { titled = f.reference.value ? `Install ${f.reference.value}` : ""; f.title.value = titled; } });
+  $("#swSearch")?.addEventListener("input", (e) => { const q = e.target.value.trim().toLowerCase();
+    $$(".sw-item[data-name]", f).forEach((l) => (l.hidden = q && !l.dataset.name.includes(q)));
+    $$(".sw-cat", f).forEach((c) => (c.hidden = !$$(".sw-item[data-name]", c).some((l) => !l.hidden))); });
+  sync();
+  $("#sendReq").addEventListener("click", async (e) => {
+    if (!f.reportValidity()) return;
+    const data = Object.fromEntries(new FormData(f)), id = data.software_id, sw = list.find((x) => String(x.id) === id);
+    if (!(sw?.needs_approval || id === "")) delete data.approver_id;
+    e.target.disabled = true;
+    try {
+      const tid = await db.rpc("desk_submit", { p: { ...data, type: cfg.type } });
+      toast(data.approver_id ? `Request sent to ${personName(data.approver_id).split(" ")[0]} for approval` : "Request submitted");
+      await refreshDeskBadges();
+      const onReq = !location.hash || location.hash.startsWith("#/requests");
+      if (onReq) { DESK.reqTab = "mine"; await DeskRequests(); } else location.hash = "#/requests";
+      setTimeout(() => openTicket(tid, loadRequests), onReq ? 0 : 350);
+    } catch (err) { toast(err.message); e.target.disabled = false; }
+  });
+}
+
+/* ================================================================ Approved software (everyone browses; admins keep the list) */
+async function DeskSoftware() {
+  const all = await loadSoftware(isAdmin()), list = isAdmin() && DESK.swShowRetired ? all : all.filter((x) => x.active);
+  const cats = [...new Set(list.map((x) => x.category))], q = (DESK.swQ || "").toLowerCase();
+  const hit = (x) => !q || (x.name + " " + (x.vendor || "") + " " + (x.description || "") + " " + x.category).toLowerCase().includes(q);
+  $("#main").innerHTML = `
+    <div class="page-head"><div><h1>Approved software</h1><p class="muted">Software you can ask for. ${isAdmin() ? "Pre-approved items go straight to admins to set up; ones marked <b>needs approval</b> go to an approver first." : "Pick one and send a request; anything not on the list needs approval."}</p></div>
+      <div class="actions-row">${isAdmin() ? `<button class="btn" id="swSuggest">Add suggestions</button><button class="btn primary" id="swAdd">${icon("plus")}Add software</button>` : `<button class="btn primary" id="swReq">${icon("plus")}Request software</button>`}</div></div>
+    <div class="filters"><input id="swQ" type="search" placeholder="Search software" value="${esc(DESK.swQ || "")}" aria-label="Search software">
+      ${isAdmin() && all.some((x) => !x.active) ? `<label class="check"><input type="checkbox" id="swRet" ${DESK.swShowRetired ? "checked" : ""}> Show removed</label>` : ""}</div>
+    ${cats.map((c) => { const xs = list.filter((x) => x.category === c && hit(x)); return xs.length ? `<h2 class="hub-h">${esc(c)}</h2><div class="sw-grid">${xs.map((x) => `
+      <article class="panel sw-card ${x.active ? "" : "retired"}"><header><div><h3>${esc(x.name)}</h3>${x.vendor ? `<span class="muted small">${esc(x.vendor)}</span>` : ""}</div>
+        <span class="pill ${x.license === "Free" ? "s-low" : ""}">${esc(swCost(x))}</span></header>
+        ${x.description ? `<p>${esc(x.description)}</p>` : ""}
+        <div class="actions-row">${x.active ? `<button class="btn small" data-swreq="${x.id}">Request</button>` : `<span class="muted small">Removed from the list</span>`}${x.needs_approval ? `<span class="muted small">Needs approval</span>` : `<span class="muted small">Pre-approved</span>`}
+          ${isAdmin() ? `<button class="btn small" data-swedit="${x.id}">Edit</button>` : ""}</div></article>`).join("")}</div>` : ""; }).join("")
+      || `<div class="panel empty">${list.length ? "Nothing matches." : isAdmin() ? "No approved software yet. Add your own, or start from the suggestions." : "Your admin hasn't added any approved software yet. You can still request software; it will need approval."}</div>`}`;
+  $("#swQ").addEventListener("input", (e) => { DESK.swQ = e.target.value; const pos = e.target.selectionStart; DeskSoftware().then(() => { const i = $("#swQ"); i.focus(); i.setSelectionRange(pos, pos); }); });
+  $("#swRet")?.addEventListener("change", (e) => { DESK.swShowRetired = e.target.checked; DeskSoftware(); });
+  $$("[data-swreq]").forEach((b) => b.addEventListener("click", () => openNewRequest({ type: "Software request", software_id: b.dataset.swreq })));
+  $("#swReq")?.addEventListener("click", () => openNewRequest({ type: "Software request" }));
+  $("#swAdd")?.addEventListener("click", () => softwareEdit(null));
+  $$("[data-swedit]").forEach((b) => b.addEventListener("click", () => softwareEdit(all.find((x) => x.id === +b.dataset.swedit))));
+  $("#swSuggest")?.addEventListener("click", () => softwareSuggest(all));
+}
+function softwareEdit(x) {
+  $("#drawerTitle").textContent = x ? `Edit ${x.name}` : "Add approved software";
+  $("#drawerBody").innerHTML = `<form class="form" id="swForm">
+      <label class="full">Name<input name="name" required value="${esc(x?.name || "")}" placeholder="e.g. ArcGIS Pro"></label>
+      <label>Vendor<input name="vendor" value="${esc(x?.vendor || "")}"></label>
+      <label>Category<select name="category">${SW_CATS.concat(x && !SW_CATS.includes(x.category) ? [x.category] : []).map((c) => `<option ${c === (x?.category || "Other") ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></label>
+      <label class="full">What it's for<input name="description" value="${esc(x?.description || "")}" placeholder="Shown to people choosing what to request"></label>
+      <label>License<select name="license">${["Free", "Company license", "Paid per user"].map((l) => `<option ${l === (x?.license || "Free") ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <label>Cost (USD)<input name="cost" type="number" min="0" step="0.01" value="${x?.cost ?? ""}"></label>
+      <label>Per<select name="cost_period"><option value="">—</option>${["month", "year", "one time"].map((c) => `<option ${c === x?.cost_period ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+      <label class="check"><input type="checkbox" name="needs_approval" ${x?.needs_approval ? "checked" : ""}> Requests need approval first</label>
+      <label class="full">How to get it <small class="muted">(shown to the requester once approved and to whoever sets it up)</small><textarea name="how_to_get" rows="3" placeholder="e.g. Install from Company Portal → Apps. License key in 1Password → Software.">${esc(x?.how_to_get || "")}</textarea></label>
+      <label class="full">Link<input name="url" type="url" value="${esc(x?.url || "")}" placeholder="https://"></label>
+    </form>
+    <div class="form-foot"><button class="btn primary" id="swSave">${x ? "Save" : "Add to the list"}</button>
+      ${x ? (x.active ? `<button class="btn danger" id="swOff">Remove from the list</button>` : `<button class="btn" id="swOn">Put back on the list</button>`) : ""}<button class="btn" data-close>Cancel</button></div>`;
+  openDrawer();
+  const f = $("#swForm"), syncLic = () => { const free = f.license.value === "Free"; f.cost.disabled = free; f.cost_period.disabled = free; if (free) { f.cost.value = ""; f.cost_period.value = ""; } };
+  f.license.addEventListener("change", syncLic); syncLic();
+  const save = async (patch) => { try { must(x ? await sb.from("software_catalog").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", x.id) : await sb.from("software_catalog").insert(patch)); toast("Saved"); closeDrawer(); DeskSoftware(); }
+    catch (e) { toast(/duplicate|unique/i.test(e.message) ? "That software is already on the list." : e.message); } };
+  $("#swSave").addEventListener("click", () => { if (!f.reportValidity()) return; const d = new FormData(f);
+    save({ name: d.get("name").trim(), vendor: d.get("vendor").trim() || null, category: d.get("category"), description: d.get("description").trim() || null, license: d.get("license"),
+      cost: d.get("cost") ? +d.get("cost") : null, cost_period: d.get("cost_period") || null, needs_approval: !!d.get("needs_approval"), how_to_get: d.get("how_to_get").trim() || null, url: d.get("url").trim() || null }); });
+  $("#swOff")?.addEventListener("click", () => save({ active: false }));
+  $("#swOn")?.addEventListener("click", () => save({ active: true }));
+}
+function softwareSuggest(all) {
+  const have = new Set(all.map((x) => x.name.toLowerCase())), rows = SW_SUGGEST.filter(([n]) => !have.has(n.toLowerCase()));
+  $("#drawerTitle").textContent = "Add suggested software";
+  $("#drawerBody").innerHTML = rows.length ? `<p class="muted" style="margin-top:0">Tick what your team uses. Add prices and install notes afterwards with <b>Edit</b>; paid ones start as needing approval.</p>
+    <div class="sw-suggest">${rows.map(([n, v, c, l], i) => `<label class="check"><input type="checkbox" data-sg="${i}" ${l !== "Paid per user" ? "checked" : ""}> <b>${esc(n)}</b> <span class="muted small">${esc(v)} · ${esc(c)} · ${esc(l)}</span></label>`).join("")}</div>
+    <div class="form-foot"><button class="btn primary" id="sgAdd">Add selected</button><button class="btn" data-close>Cancel</button></div>` : `<p class="muted">Everything suggested is already on the list.</p>`;
+  openDrawer();
+  $("#sgAdd")?.addEventListener("click", async () => {
+    const pick = $$("[data-sg]:checked").map((b) => rows[+b.dataset.sg]).map(([name, vendor, category, license]) => ({ name, vendor, category, license, needs_approval: license === "Paid per user" }));
+    if (!pick.length) return toast("Tick at least one");
+    try { must(await sb.from("software_catalog").insert(pick)); toast(`Added ${pick.length}`); closeDrawer(); DeskSoftware(); } catch (e) { toast(e.message); }
+  });
+}
+
 function approverOptions() {
   const active = S.team.filter((p) => p.active);
   const otherAdmins = active.filter((p) => p.role === "admin" && p.id !== me());
@@ -204,11 +352,18 @@ async function openTicket(id, onChange) {
     ${t.status === "Pending approval" ? `<div class="callout">${approver ? "This is waiting for <b>your</b> decision." : `Waiting for ${esc(personName(t.approver_id))} to approve.`}</div>` : ""}
     <dl class="facts">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>
     ${t.description ? `<div class="ticket-desc">${esc(t.description)}</div>` : ""}
+    <div id="tSoftware"></div>
     <div id="tActions" class="ticket-actions"></div>
     <section class="history"><h3>Timeline</h3><ol class="tl">${events.map(eventLi).join("")}</ol>
       <div class="comment-box"><textarea id="tComment" rows="2" placeholder="Add a comment or an update…"></textarea><button class="btn small" id="tSend">Comment</button></div></section>`;
   openDrawer();
 
+  if (t.software_id) {   // install notes from the approved list: for whoever does the work, and for the requester once it's approved
+    const sw = await sb.from("software_catalog").select("*").eq("id", t.software_id).maybeSingle().then((r) => r.data).catch(() => null);
+    if (sw && (worker || ["Approved", "In progress", "Done"].includes(t.status) || (t.status === "Open" && !t.approver_id)))
+      $("#tSoftware").innerHTML = `<div class="callout sw-callout"><b>${esc(sw.name)}</b>${sw.vendor ? ` · ${esc(sw.vendor)}` : ""} · ${esc(swCost(sw))}
+        ${sw.how_to_get ? `<div class="sw-how">${esc(sw.how_to_get)}</div>` : ""}${sw.url ? `<a href="${esc(sw.url)}" target="_blank" rel="noopener">${esc(sw.url.replace(/^https?:\/\//, "").slice(0, 60))}</a>` : ""}</div>`;
+  }
   const A = $("#tActions"), add = (html) => A.insertAdjacentHTML("beforeend", html);
   if (approver && t.status === "Pending approval") {
     add(`<div class="decide"><textarea id="dNote" rows="2" placeholder="Note for ${esc(personName(t.requester_id).split(" ")[0])} (needed if you reject)"></textarea>

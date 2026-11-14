@@ -40,7 +40,7 @@ const b64u = (b: ArrayBuffer | Uint8Array) => btoa(String.fromCharCode(...new Ui
 export async function appJwt(d: Deps) {
   const { GITHUB_APP_ID: id, GITHUB_APP_PRIVATE_KEY: pem } = d.env;
   if (!id || !pem) throw new HttpError(503, "The GitHub app isn't set up: add GITHUB_APP_ID and GITHUB_APP_PRIVATE_KEY to the function's secrets.");
-  const key = await crypto.subtle.importKey("pkcs8", pkcs8(pem.replace(/\\n/g, "\n")), { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
+  const key = await crypto.subtle.importKey("pkcs8", pkcs8(pem.replace(/\\n/g, "\n")) as Uint8Array<ArrayBuffer>, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
   const now = Math.floor((d.now?.() ?? Date.now()) / 1000);
   const part = (o: unknown) => b64u(enc.encode(JSON.stringify(o)));
   const head = `${part({ alg: "RS256", typ: "JWT" })}.${part({ iat: now - 60, exp: now + 540, iss: id })}`;

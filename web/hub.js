@@ -114,7 +114,7 @@ const fill = (key, html) => { const el = $("#stats-" + key); if (el && !el.datas
 function loadAppStats() {
   Promise.all([db.rpc("project_rollup", {}), db.rpc("my_tasks", {})]).then(([ps, mine]) => {
     const act = ps.filter((r) => r.status === "Active"), attn = act.filter((r) => r.health !== "On track").length, due = mine.filter((t) => t.due && new Date(t.due) - Date.now() < 3 * 864e5).length;
-    fill("projects", hstat(act.length, "active projects", "./projects/") + (attn ? hstat(attn, "need attention", "./projects/", true) : "") + hstat(mine.length, "tasks assigned to you", "./projects/#/mytasks", due > 0));
+    fill("projects", hstat(act.length, "active projects", "./projects/") + (attn ? hstat(attn, "need attention", "./projects/", true) : "") + hstat(mine.length, mine.length === 1 ? "item assigned to you" : "items assigned to you", "./projects/#/mytasks", due > 0));
   }).catch(() => fill("projects", ""));
   if (isStaffRole(S.profile.role)) Promise.all([db.rpc("fed_status", {}), db.rpc("fed_counts", {})]).then(([st, n]) => {
     const bs = n.by_source || {};

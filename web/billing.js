@@ -15,7 +15,7 @@ async function paypalReturn() {
   catch (err) { BILL.back = "error:" + err.message; }
 }
 const bicon = (n) => `<svg class="ic"><use href="#i-${n}"/></svg>`;
-const appName = (k) => k === "hiring" ? "Hiring" : PULSE_APPS.find((a) => a.key === k)?.name || k;
+const appName = (k) => k !== "documents" && FEATURE_NAMES[k] || PULSE_APPS.find((a) => a.key === k)?.name || k;
 const fmtDate = (ts) => ts ? new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
 
 async function Billing() {

@@ -48,8 +48,8 @@ function world(opts: { verify?: string; subStatus?: string; customId?: string } 
   const post = (tok: string, body: unknown) => handle(new Request("https://proj.supabase.co/functions/v1/billing", {
     method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${tok}` }, body: JSON.stringify(body) }), d);
   const hook = (ev: unknown) => handle(new Request("https://proj.supabase.co/functions/v1/billing/webhook", {
-    method: "POST", headers: { "content-type": "application/json", "paypal-transmission-id": "t1" }, body: JSON.stringify(ev) }), d);
-  return { db, calls, post, hook };
+    method: "POST", headers: { "content-type": "application/json", "paypal-transmission-id": "t1", "paypal-auth-algo": "SHA256withRSA", "paypal-cert-url": "https://api.paypal.com/cert", "paypal-transmission-sig": "sig", "paypal-transmission-time": "2026-11-14T00:00:00Z" }, body: JSON.stringify(ev) }), d);
+  return { db, calls, post, hook, d };
 }
 
 Deno.test("checkout creates the product and a per-user plan once, then a subscription for the staff count", async () => {
@@ -134,4 +134,11 @@ Deno.test("not set up yet without PayPal keys", async () => {
   const r = await handle(new Request("https://x/functions/v1/billing", { method: "POST", headers: { authorization: "Bearer jwt-ann" }, body: "{}" }),
     { fetch: (() => { throw new Error("no"); }) as any, env: { ...env, PAYPAL_CLIENT_ID: "" } });
   eq(r.status, 503);
+});
+
+Deno.test("webhook: a call without PayPal's signature headers is refused without asking PayPal", async () => {
+  const w = world();
+  const r = await handle(new Request("https://proj.supabase.co/functions/v1/billing/webhook", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }),
+    { fetch: (() => { throw new Error("PayPal should not be called"); }) as any, env });
+  eq(r.status, 400); void w;
 });

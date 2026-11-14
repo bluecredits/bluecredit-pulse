@@ -188,6 +188,8 @@ export async function webhook(req: Request, d: Deps) {
   const payload = await req.text();
   let ev: any; try { ev = JSON.parse(payload); } catch { throw new HttpError(400, "Bad payload."); }
   const h = (k: string) => req.headers.get(k) || "";
+  // not from PayPal at all (no signature headers): refuse without asking PayPal
+  if (!["paypal-auth-algo", "paypal-cert-url", "paypal-transmission-id", "paypal-transmission-sig", "paypal-transmission-time"].every((k) => h(k))) throw new HttpError(400, "Bad signature.");
   const v = await pp(d, "/v1/notifications/verify-webhook-signature", {
     auth_algo: h("paypal-auth-algo"), cert_url: h("paypal-cert-url"), transmission_id: h("paypal-transmission-id"),
     transmission_sig: h("paypal-transmission-sig"), transmission_time: h("paypal-transmission-time"), webhook_id: d.env.PAYPAL_WEBHOOK_ID, webhook_event: ev,

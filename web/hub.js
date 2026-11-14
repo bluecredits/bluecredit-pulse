@@ -190,19 +190,36 @@ function renderLanding() {
     <div class="land-groups">${GROUPS.map((g) => `<div class="land-group"><h3>${esc(g.title)}</h3><p class="muted small">${esc(g.note)}</p>
       <ul>${PULSE_APPS.filter((a) => a.group === g.key).map((a) => `<li><span class="hub-ic ${a.key === "chief" ? "ai" : ""}">${icon(a.icon)}</span><span><b>${esc(a.name)}</b>${badge(a.key)}<small>${esc(a.blurb)}</small></span></li>`).join("")}</ul></div>`).join("")}</div></section>
   <section class="land-sec land-feats"><p class="land-kicker">Why small firms switch to Pulse</p><h2>From first contact to finished work</h2>
-    <div class="land-feat-grid">
-      <div class="land-feat">${icon("users")}<h3>A simple CRM</h3><p>Contacts, follow-ups and a pipeline by stage. Import your spreadsheet in one step; duplicates are combined. Daily to quarterly reviews open with a live snapshot of what moved and what's due.</p></div>
-      <div class="land-feat">${icon("gov")}<h3>New work, found for you</h3><p>Selling to government? Pulse checks SAM.gov, Grants.gov and your APEX bids every day against your NAICS codes and keywords, and saves the contracting officer to Contacts.</p></div>
-      <div class="land-feat">${icon("clipboard")}<h3>Contracts, policies and invoices</h3><p>Employment, consulting and teaming agreements signed online. Policies your team reads and certifies in a click, a compliance calendar for filings and renewals, and invoices built from approved hours.</p></div>
+    <div class="feat-row">
+      <div class="feat-copy">${icon("gov")}<h3>New work, found for you</h3><p>Selling to government? Pulse checks SAM.gov, Grants.gov and your APEX bids every day against your NAICS codes and keywords, scores each listing for relevance and hides the junk. Add the good ones to your pipeline in a click, and the contracting officer lands in Contacts.</p>
+        <ul class="feat-points"><li>Every NAICS code, searchable by name</li><li>State, local and international bid sites too</li></ul></div>
+      <figure class="feat-shot"><img src="img/landing/opportunities.webp" width="1300" height="1237" loading="lazy" alt="Contract notices scored for relevance, with NAICS codes and matching keywords highlighted"></figure>
+    </div>
+    <div class="feat-row flip">
+      <div class="feat-copy">${icon("briefcase")}<h3>Projects that stay on schedule</h3><p>Milestones, tasks and a live schedule for every project. Hours from Timecards roll into budget vs. actual, risks and issues sit next to the work, and weekly status reports fill themselves in.</p>
+        <ul class="feat-points"><li>Assign tasks, milestones or whole projects</li><li>Contractors see only the projects they're on</li></ul></div>
+      <figure class="feat-shot"><img src="img/landing/schedule.webp" width="1300" height="727" loading="lazy" alt="A project schedule with milestones, deliverables and today's line"></figure>
+    </div>
+    <div class="feat-row">
+      <div class="feat-copy">${icon("clipboard")}<h3>Contracts signed online</h3><p>Consulting, employment and teaming agreements built from your standard language, with a Statement of Work as an exhibit. Send a link, sign on any device, and keep the fingerprinted original. Policies your team certifies in a click, and invoices built from approved hours.</p>
+        <ul class="feat-points"><li>Typed or drawn signatures, with an audit trail</li><li>W-9s and tax forms collected at onboarding</li></ul></div>
+      <figure class="feat-shot stack"><img src="img/landing/agreement.webp" width="1100" height="840" loading="lazy" alt="A consulting agreement ready to review">
+        <img class="over" src="img/landing/signature.webp" width="760" height="368" loading="lazy" alt="The signing box with a typed signature and consent"></figure>
+    </div>
+    <div class="land-feat-grid four">
+      <div class="land-feat">${icon("users")}<h3>A simple CRM</h3><p>Contacts, follow-ups and a pipeline by stage. Daily to quarterly reviews open with a live snapshot of what moved and what's due.</p></div>
       <div class="land-feat">${icon("user-plus")}<h3>Hiring without the spreadsheet</h3><p>A public apply link for each opening, a candidate board, interviews and blind scorecards. Hire, and onboarding starts on its own.</p></div>
-      <div class="land-feat">${icon("team")}<h3>Contractors included, free</h3><p>Consultants and contractors join with their own code, log time to their projects and see only what they need. They don't count as paid users.</p></div>
-      <div class="land-feat">${icon("key")}<h3>Your data stays yours</h3><p>Every company gets its own private workspace, enforced in the database on every record. Keys and links you paste are stored encrypted.</p></div>
+      <div class="land-feat">${icon("team")}<h3>Contractors included, free</h3><p>Contractors and partner companies join with their own code, log time to their projects and see only what they need.</p></div>
+      <div class="land-feat">${icon("key")}<h3>Your data stays yours</h3><p>Every company gets its own private workspace, enforced in the database on every record. Keys you paste are stored encrypted.</p></div>
     </div></section>
   <section class="land-sec" id="how"><p class="land-kicker">Up and running in an afternoon</p><h2>How it works</h2>
     <ol class="land-steps">
-      <li><b>Start a workspace</b><span>Name your company and pick a starting setup. You get 14 days of Pro, no card needed.</span></li>
-      <li><b>Bring in what you have</b><span>Import your contacts and lists from a spreadsheet. If you sell to government, add your NAICS codes and keywords and matching work shows up the next morning.</span></li>
-      <li><b>Invite the team</b><span>Staff who run the business get the company code. Everyone else signs in to the employee portal for their checklist, policies, contract, devices, hours and requests. Contractors are free.</span></li>
+      <li><div class="step-shot"><img src="img/landing/step-create.webp" width="520" height="964" loading="lazy" alt="The Start a workspace form"></div>
+        <b>Start a workspace</b><span>Name your company and pick a starting setup. You get 14 days of Pro, no card needed.</span></li>
+      <li><div class="step-shot"><img src="img/landing/step-import.webp" width="560" height="650" loading="lazy" alt="Importing contacts from a spreadsheet: columns matched automatically, duplicates combined"></div>
+        <b>Bring in what you have</b><span>Import your contacts and lists from a spreadsheet. If you sell to government, add your NAICS codes and keywords and matching work shows up the next morning.</span></li>
+      <li><div class="step-shot code"><img src="img/landing/step-invite.webp" width="624" height="478" loading="lazy" alt="The staff invite code with Copy code and Invite buttons"></div>
+        <b>Invite the team</b><span>Staff who run the business get the company code. Everyone else signs in to the employee portal for their checklist, policies, contract, devices, hours and requests. Contractors are free.</span></li>
     </ol></section>`;
   const faq = [
     ["Who counts as a user?", "Admins, members and employees. Contractors and consultants are free."],

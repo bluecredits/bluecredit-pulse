@@ -193,7 +193,7 @@ const TOPICS = [
           <li>${app("people/#/taxes", "People → Tax forms &amp; 1099s")} shows who still owes a form and what each contractor was paid in a year (project costs linked to their agreements or with their name as vendor). A 1099-NEC is due for US contractors who aren't corporations once payments reach the threshold: $600 through 2025, $2,000 from 2026.</li></ul><p class="muted">Not tax advice: check with your accountant.</p>` },
       { id: "onboarding", title: "Team, onboarding and offboarding", html: `<p>${app("people/#/people", "Team &amp; onboarding")} lists employees, contractors, consultants and interns with their checklist: paperwork, access and equipment from first day to last. New people start from the <b>Checklist template</b> (changing it doesn't change checklists already started). Each person sees what's left under <b>My checklist</b>. Offboarding runs the same way at the end.</p>` }] },
 
-  { id: "finance", group: "deliver", icon: "banknotes", title: "Finance", plan: "Pro", sub: "admins", blurb: "Income statement, cash flow, balance sheet, budget, project margins, receivables and taxes.",
+  { id: "finance", group: "deliver", icon: "banknotes", title: "Finance", plan: "Enterprise", sub: "admins", blurb: "Income statement, cash flow, balance sheet, budget, project margins, receivables and taxes.",
     sections: [
       { id: "start", title: "Set it up once", html: steps(
           ["Open Settings", `Choose <b>cash</b> or <b>accrual</b> (use the same basis as your tax return), the month your fiscal year starts, and your <b>opening cash</b>: your bank balance on the first day you track in Pulse.`],

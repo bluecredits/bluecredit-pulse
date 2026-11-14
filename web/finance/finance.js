@@ -1,7 +1,7 @@
 /* Pulse · Finance — income statement, cash flow, balance sheet, budget, project profitability, receivables and taxes.
    Laid out like the SBDC financial model (monthly income statement and cash flow, payroll and loan planners) and fed
    by what Pulse records: invoices, project costs, expense reports, and transactions entered or imported here.
-   Uses ../core.js helpers. The database keeps Finance to admins on the Pro plan (see "fix z" in schema.sql). */
+   Uses ../core.js helpers. The database keeps Finance to admins on the Enterprise plan (see "fix z" and "fix z2" in schema.sql). */
 "use strict";
 
 const F = { rep: {}, accounts: [], ready: false };
@@ -192,7 +192,7 @@ async function Pnl(param) {
   const view = F.pnlView || "actual", hide = F.pnlHide ?? true;
   const R = await report(from, to, c.basis);
   const A = pnlRows(R, months, "actual"), B = pnlRows(R, months, "budget");
-  const ytd = months.filter((m) => m <= now), past = ytd.length === 12 || months[11] < now ? months : ytd;
+  const ytd = months.filter((m) => m <= now), past = ytd.length === 12 || months[11] < now || !ytd.length ? months : ytd;
   const tot = (vals, ms = months) => ms.reduce((s, m) => s + (vals?.[m] || 0), 0);
   let table;
   if (view === "compare") {
@@ -243,6 +243,14 @@ function tidyRows(html) {
     let j = i + 1, any = false;
     while (j < trs.length && !trs[j].classList.contains("grp") && !trs[j].classList.contains("head") && !trs[j].classList.contains("total")) { if (trs[j].classList.contains("acct")) any = true; j++; }
     if (!any) for (let k = i; k < j; k++) trs[k].remove();
+    else if (trs.slice(i + 1, j).filter((t) => t.classList.contains("acct")).length === 1) trs.slice(i + 1, j).filter((t) => t.classList.contains("sub")).forEach((t) => t.remove());   // no subtotal for a single line
+  });
+  const left = [...box.children];
+  left.forEach((tr, i) => {   // a section heading with no lines under it
+    if (!tr.classList.contains("head")) return;
+    let j = i + 1, any = false;
+    while (j < left.length && !left[j].classList.contains("head") && !left[j].classList.contains("total")) { if (left[j].classList.contains("acct")) any = true; j++; }
+    if (!any) tr.remove();
   });
   return box.innerHTML;
 }
@@ -438,6 +446,7 @@ async function saveBud(inp, R, y) {
       if (a.section === "Revenue" && +a.unit_cost) {
         const cor = await companionCost(a);
         await putBudget([{ account_id: cor.id, month: m + "-01", qty: raw || null, amount: r2(raw * +a.unit_cost) }]);
+        ((R.budget[cor.id] ||= {})[m] = { q: raw || null, v: r2(raw * +a.unit_cost) });
       }
     } else await putBudget([{ account_id: a.id, month: m + "-01", qty: R.budget[a.id]?.[m]?.q ?? null, amount: raw }]);
     inp.classList.add("saved"); setTimeout(() => inp.classList.remove("saved"), 700);
@@ -673,7 +682,9 @@ function importModel() {
         try {
           if (f.get("fy")) await saveCfg({ fy_start: startMo });
           const n = await runImport(M, f.get("as"), file.name);
-          closeDrawer(); toast(n); location.hash = f.get("as") === "budget" ? `#/budget/${fyOf(M.months[0] + "-01")}` : `#/pnl/${fyOf(M.months[0] + "-01")}`; route();
+          closeDrawer(); toast(n);
+          const next = f.get("as") === "budget" ? `#/budget/${fyOf(M.months[0] + "-01")}` : `#/pnl/${fyOf(M.months[0] + "-01")}`;
+          if (location.hash === next) route(); else location.hash = next;
         } catch (err) { toast(err.message); }
       });
     } catch (err) { $("#mdOut").innerHTML = `<p class="notice-bar alert" style="margin-top:12px">${esc(err.message)}</p>`; }
@@ -744,8 +755,8 @@ async function Ledger() {
   let qry = sb.from("fin_entries").select("*").gte("entry_date", range.from).lte("entry_date", range.to).order("entry_date", { ascending: false }).limit(2000);
   if (q.get("a")) qry = qry.eq("account_id", +q.get("a"));
   const rows = must(await qry);
-  const batches = (await safe(sb.from("fin_entries").select("batch, amount").limit(20000))).filter((b) => b.batch);
-  const bsum = {}; batches.forEach((b) => { const x = (bsum[b.batch] ||= { n: 0, v: 0 }); x.n++; x.v += +b.amount; });
+  const batches = (await safe(sb.from("fin_entries").select("batch, amount, created_at").order("created_at", { ascending: false }).limit(20000))).filter((b) => b.batch);
+  const bsum = {}; batches.forEach((b) => { const x = (bsum[b.batch] ||= { n: 0, v: 0 }); x.n++; x.v += +b.amount; });   // newest import first
   const projects = must(await sb.from("projects").select("id, name").order("name"));
   F.projects = projects;
   $("#main").innerHTML = `
@@ -756,7 +767,7 @@ async function Ledger() {
       <input type="search" id="fq" placeholder="Search payee or memo"></div>
     <section class="panel fin-panel"><div class="table-wrap"><table class="fin-table" id="tTable"><thead><tr><th>Date</th><th>Account</th><th>Payee</th><th>Memo</th><th class="num">Amount</th><th></th></tr></thead><tbody>
       ${rows.length ? rows.map((e) => { const a = acct(e.account_id); return `<tr data-id="${e.id}" data-s="${esc((e.payee || "") + " " + (e.memo || "")).toLowerCase()}"><td>${short(e.entry_date)}</td><td>${esc(a?.name || "")}<small>${esc(a?.section || "")}</small></td><td>${esc(e.payee || "")}</td>
-        <td>${esc(e.memo || "")}${e.batch ? ` <span class="pill">imported</span>` : ""}</td><td class="num ${a?.direction === "in" ? "pos" : ""}">${a?.direction === "in" ? "+" : "−"}${usd(e.amount, 2).replace("−", "")}</td><td><button class="btn small" data-edit="${e.id}">Edit</button></td></tr>`; }).join("")
+        <td>${esc(e.memo || "")}${e.batch ? ` <span class="pill">imported</span>` : ""}</td><td class="num ${a?.direction === "in" ? "pos" : ""}">${(() => { const v = (a?.direction === "in" ? 1 : -1) * +e.amount; return (v > 0 ? "+" : "") + usd(v, 2); })()}</td><td><button class="btn small" data-edit="${e.id}">Edit</button></td></tr>`; }).join("")
         : `<tr><td colspan="6" class="empty">No transactions here yet.</td></tr>`}</tbody></table></div></section>
     ${Object.keys(bsum).length ? `<section class="panel"><div class="panel-head"><h2>Imports</h2></div><table class="mini"><tbody>${Object.entries(bsum).map(([b, x]) => `<tr><td>${esc(b)}</td><td class="num">${x.n} rows</td><td class="num">${usd(x.v)}</td><td><button class="btn small" data-undo="${esc(b)}">Undo import</button></td></tr>`).join("")}</tbody></table></section>` : ""}`;
   $("#tAdd").addEventListener("click", () => editEntry(null));
@@ -964,7 +975,7 @@ async function Settings() {
       <label>Fiscal year starts in<select name="fy_start">${MONTHS_LONG.map((m, i) => `<option value="${i + 1}" ${c.fy_start === i + 1 ? "selected" : ""}>${m}</option>`).join("")}</select></label>
       <label>Opening cash (USD)<input name="opening_cash" type="number" step="0.01" value="${c.opening_cash ?? 0}"></label>
       <label>As of<input name="opening_date" type="date" value="${c.opening_date || ""}"></label>
-      <p class="muted" style="grid-column:1/-1">Opening cash is your bank balance (all business accounts) at the start of the day you begin tracking in Pulse. Taxes always use the calendar year; the fiscal year is for the income statement, cash flow and budget. Use the same basis your return uses (most small companies file on the cash basis).</p>
+      <p class="muted" style="grid-column:1/-1">Opening cash is your bank balance (all business accounts) at the start of the day you begin tracking in Pulse; the first day of a month works best. Taxes always use the calendar year; the fiscal year is for the income statement, cash flow and budget. Use the same basis your return uses (most small companies file on the cash basis).</p>
       <div class="actions-row" style="grid-column:1/-1"><button class="btn primary">Save</button></div></form></section>
     <section class="panel"><div class="panel-head"><h2>Where Pulse's records post</h2></div>
       <div class="fin-maps"><div><h3>Invoices</h3><label>Default income account ${sel("invoice", "*", ["Revenue", "Other income"])}</label><p class="muted small">Change a single invoice's account in <a href="#/receivables/all">Receivables</a>.</p></div>
@@ -991,7 +1002,7 @@ function editAcct(a) {
     <label style="grid-column:1/-1">Name<input name="name" required value="${esc(a?.name || "")}"></label>
     <label>Section<select name="section" ${a?.sys ? "disabled" : ""}>${SECTIONS.map((s) => `<option ${s === (a?.section || "Operating expenses") ? "selected" : ""}>${s}</option>`).join("")}</select></label>
     <label>Group <small class="muted">(optional)</small><input name="grp" value="${esc(a?.grp || "")}" placeholder="e.g. Hourly, Fixed-fee"></label>
-    <label>Money<select name="direction"><option value="out" ${a?.direction !== "in" ? "selected" : ""}>Out</option><option value="in" ${a?.direction === "in" ? "selected" : ""}>In</option></select></label>
+    <label>Money in or out <small class="muted">(owner and financing lines)</small><select name="direction" ${a?.sys ? "disabled" : ""}><option value="out" ${a?.direction !== "in" ? "selected" : ""}>Out</option><option value="in" ${a?.direction === "in" ? "selected" : ""}>In</option></select></label>
     <label>Planned by<select name="driver">${[["amount", "Amount"], ["units", "Units"], ["hours", "Hours"]].map(([k, l]) => `<option value="${k}" ${k === (a?.driver || "amount") ? "selected" : ""}>${l}</option>`).join("")}</select></label>
     <label>Price per unit or hourly rate<input name="unit_price" type="number" step="0.0001" value="${a?.unit_price ?? ""}"></label>
     <label>Direct cost per unit<input name="unit_cost" type="number" step="0.0001" value="${a?.unit_cost ?? ""}"></label>
@@ -1005,6 +1016,10 @@ function editAcct(a) {
     const row = { name: f.get("name").trim(), grp: f.get("grp").trim() || null, direction: f.get("direction"), driver: f.get("driver"), unit_price: f.get("unit_price") === "" ? null : +f.get("unit_price"),
       unit_cost: f.get("unit_cost") === "" ? null : +f.get("unit_cost"), tax_line: f.get("tax_line") || null, note: f.get("note").trim() || null, active: !!f.get("active") };
     if (!a?.sys) row.section = f.get("section") || a?.section;
+    const sec = row.section || a?.section;
+    // the section decides the direction, except for owner and financing lines
+    if (a?.sys) delete row.direction;
+    else if (sec !== "Owner and financing") row.direction = ["Revenue", "Other income"].includes(sec) ? "in" : "out";
     try {
       if (a) must(await sb.from("fin_accounts").update(row).eq("id", a.id));
       else must(await sb.from("fin_accounts").insert({ workspace_id: S.profile.workspace_id, sort: (SECTIONS.indexOf(row.section) + 1) * 100 + 95, ...row }));

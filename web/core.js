@@ -124,8 +124,8 @@ async function loadWorkspace() {
    Per staff user per month; contractors and consultants are free. Yearly = 10 months (2 free). */
 const PLANS = {
   starter: { name: "Starter", price: 3, blurb: "Run the business day to day.", apps: ["review", "contacts", "funding", "timecards", "tickets", "people", "documents"], limit: "Up to 10 users" },
-  pro: { name: "Pro", price: 6, blurb: "Find and win work, deliver it, hire.", apps: ["opportunities", "projects", "agreements", "invoices", "hiring", "finance"], limit: "Unlimited users" },
-  enterprise: { name: "Enterprise", price: 10, blurb: "Everything, with your AI chief of staff.", apps: ["chief", "scheduler"], limit: "Unlimited users, priority support" },
+  pro: { name: "Pro", price: 6, blurb: "Find and win work, deliver it, hire.", apps: ["opportunities", "projects", "agreements", "invoices", "hiring"], limit: "Unlimited users" },
+  enterprise: { name: "Enterprise", price: 10, blurb: "Everything, with your AI chief of staff and finance.", apps: ["chief", "scheduler", "finance"], limit: "Unlimited users, priority support" },
 };
 const FEATURE_NAMES = { hiring: "Hiring", agreements: "Agreements and e-signing", invoices: "Invoices", documents: "Policies and sign-offs" };
 const PLAN_ORDER = ["starter", "pro", "enterprise"];

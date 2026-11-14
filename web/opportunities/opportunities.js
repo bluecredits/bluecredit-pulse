@@ -4,7 +4,7 @@
    to Funding (contacts go to the Contacts list), and holds the profile and settings. */
 "use strict";
 
-const FD = { source: "SAM.gov", status: "New", search: "", q: "", sort: "posted", level: "", kw: "", naics: "", src: "" };
+const FD = { source: "SAM.gov", status: "New", search: "", q: "", sort: "relevance", level: "", kw: "", naics: "", src: "", show: "relevant" };
 const LEVELS = ["Federal", "State", "Local", "Education"];
 const SRC = { "SAM.gov": { tab: "contracts", label: "Contracts", noun: "notices", site: "SAM.gov" }, "Grants.gov": { tab: "grants", label: "Grants", noun: "grants", site: "Grants.gov" }, BidMatch: { tab: "contracts/bids", label: "Bids", noun: "bids", site: "MyBidMatch" }, Link: { tab: "contracts/links", label: "Added by link", noun: "opportunities", site: "the link" }, Web: { tab: "contracts/sources", label: "Bid sources", noun: "listings", site: "your bid sources" } };
 const icon = (name, cls = "ic") => `<svg class="${cls}"><use href="#i-${name}"/></svg>`;
@@ -73,13 +73,17 @@ const setupNeeded = (e) => /fed_|schema cache|does not exist/i.test(e.message ||
 async function Matches() {
   const grants = FD.source === "Grants.gov", bm = FD.source === "BidMatch", lk = FD.source === "Link", web = FD.source === "Web", src = SRC[FD.source];
   const sources = web ? await sb.from("fed_sources").select("*").order("name").then((r) => r.data || []) : [];
-  const [prof, st, counts] = await Promise.all([db.rpc("fed_profile", { p_source: grants ? "Grants.gov" : "SAM.gov" }), db.rpc("fed_status", {}), db.rpc("fed_counts", {})]);
+  const [prof, st, counts, flt] = await Promise.all([db.rpc("fed_profile", { p_source: grants ? "Grants.gov" : "SAM.gov" }), db.rpc("fed_status", {}), db.rpc("fed_counts", {}),
+    db.rpc("fed_filter_get", {}).catch(() => null)]);
+  FLT = flt; const relOn = !!flt && flt.enabled !== false && FD.status === "New" && !lk;
   const searches = bm ? [] : [prof]; FD.search = "";
   // contracts and bids use your contracts profile; grants use your grants profile
   const mine = [prof];
   const uniq = (a) => [...new Map(a.filter(Boolean).map((x) => [String(x).toLowerCase(), String(x).trim()])).values()];
   MY = { naics: uniq(mine.flatMap((s) => s.naics || [])).sort(), kw: uniq(mine.flatMap((s) => s.keywords || [])) };
-  let rows = await db.rpc("fed_list", { p_source: FD.source, p_status: FD.status, p_search: FD.search ? +FD.search : null, p_sort: FD.sort });
+  let rows = await db.rpc("fed_list", { p_source: FD.source, p_status: FD.status, p_search: FD.search ? +FD.search : null, p_sort: FD.sort,
+    ...(flt ? { p_show: relOn ? FD.show : "relevant" } : {}) });
+  const hiddenN = (counts.hidden || {})[FD.source] || 0;
   const kwAll = Object.fromEntries(MY.kw.map((k) => [k, 0])), naicsAll = Object.fromEntries(MY.naics.map((c) => [c, 0])), otherNaics = {};
   rows.forEach((r) => {
     keywordsOf(r).forEach((k) => (kwAll[k] = (kwAll[k] || 0) + 1));
@@ -117,10 +121,11 @@ async function Matches() {
       <div class="tabs">${["New", "Saved", "Added", "Dismissed", "All"].map((k) => `<button data-st="${k}" aria-selected="${FD.status === k}">${k}</button>`).join("")}</div>
       ${web ? `<select id="fSrc" aria-label="Source"><option value="">All sources</option>${sources.filter((x) => x.kind !== "manual").map((x) => `<option value="${x.id}" ${String(FD.src) === String(x.id) ? "selected" : ""}>${esc(x.name)} (${srcCounts[x.id] || 0})</option>`).join("")}</select>` : ""}
       ${web ? "" : naicsSel}${kwSel}
-      <select id="fSort"><option value="posted" ${FD.sort === "posted" ? "selected" : ""}>Newest first</option><option value="due" ${FD.sort === "due" ? "selected" : ""}>Due soonest</option></select>
+      <select id="fSort">${flt ? `<option value="relevance" ${FD.sort === "relevance" ? "selected" : ""}>Most relevant</option>` : ""}<option value="posted" ${FD.sort === "posted" ? "selected" : ""}>Newest first</option><option value="due" ${FD.sort === "due" ? "selected" : ""}>Due soonest</option></select>
       <input id="fQ" type="search" placeholder="Filter by title, agency, ${grants ? "assistance listing" : bm ? "text" : "NAICS"}…" value="${esc(FD.q)}">
     </div>
     ${FD.naics || FD.kw ? `<p class="muted small fed-filtered">Showing ${rows.length} with ${[FD.naics && "NAICS " + naicsLabel(FD.naics), FD.kw && `“${esc(FD.kw)}”`].filter(Boolean).join(" and ")}. <button type="button" class="link-btn" data-clear>Clear</button></p>` : ""}
+    ${flt && FD.status === "New" && !lk ? relBar(flt, rows.length, hiddenN) : ""}
     <div class="fed-list">${rows.map((r) => card(r, sname)).join("") || `<div class="empty">${FD.status === "New" ? "No new matches right now." : "Nothing here."}${bm || MY.naics.length || MY.kw.length ? "" : ` <a href="#/profile">Add your NAICS codes and keywords</a>.`}</div>`}</div>`;
   $$("[data-st]").forEach((b) => b.addEventListener("click", () => { FD.status = b.dataset.st; Matches(); }));
   $$("[data-lv]").forEach((b) => b.addEventListener("click", () => { FD.level = b.dataset.lv; Matches(); }));
@@ -133,6 +138,9 @@ async function Matches() {
   $$("[data-more]").forEach((b) => b.addEventListener("click", () => { const p = b.previousElementSibling; const open = p.classList.toggle("open"); b.textContent = open ? "Show less" : "Show full description"; }));
   $("#fQ").addEventListener("input", debounce((e) => { FD.q = e.target.value; Matches().then(() => { const i = $("#fQ"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 300));
   $("#runNow")?.addEventListener("click", runNow);
+  $$("[data-show]").forEach((b) => b.addEventListener("click", () => { FD.show = b.dataset.show; Matches(); }));
+  $("#tuneRel")?.addEventListener("click", tuneFilter);
+  $("#relToggle")?.addEventListener("change", async (e) => { try { await db.rpc("fed_filter_save", { p: { ...FLT, enabled: e.target.checked } }); Matches(); } catch (err) { toast(err.message); } });
   $("#addLink").addEventListener("click", () => addByLink(st));
   $$("[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act, b.closest("[data-nid]").dataset.nid, b)));
   $$("[data-save-ct]").forEach((b) => b.addEventListener("click", async () => {
@@ -144,6 +152,79 @@ async function Matches() {
   rowsCache = Object.fromEntries(rows.map((r) => [r.notice_id, r]));
 }
 let rowsCache = {};
+/* ---------------- relevance filter: score chip on each card, the bar above the list, "less like this", and the tuning drawer */
+let FLT = null;
+function relChip(r) {
+  const rel = r.rel; if (!rel) return "";
+  const why = (rel.why || []).join(", "), minus = (rel.minus || []).join(", ");
+  const tip = [why && "Matched: " + why, minus && "Lowered by: " + minus].filter(Boolean).join(" · ") || "None of your relevance terms";
+  return `${rel.hide ? `<span class="pill s-high rel-hide">Filtered: ${esc(rel.hide)}</span>` : ""}<span class="rel-chip ${rel.score >= 6 ? "hi" : rel.score >= 3 ? "mid" : "lo"}" title="${esc(tip)}">Relevance ${rel.score}</span>`;
+}
+function relBar(f, shown, hidden) {
+  const on = f.enabled !== false;
+  if (FD.show === "filtered") return `<div class="rel-bar">${icon("alert")}<span>Showing the ${shown} new listing${shown === 1 ? "" : "s"} the relevance filter hides, with the reason on each. Add one to the pipeline or save it to keep it.</span><button class="link-btn" data-show="relevant">Back to relevant listings</button></div>`;
+  return `<div class="rel-bar"><label class="check"><input type="checkbox" id="relToggle" ${on ? "checked" : ""}> Relevance filter</label>
+    <span class="muted">${on ? `${shown} relevant${hidden ? ` · <button class="link-btn" data-show="filtered">${hidden} filtered out</button>` : ""}` : "Off: showing every new listing"}</span>
+    <button class="btn small" id="tuneRel">${icon("cog")}Tune the filter</button></div>`;
+}
+const STOP = new Set("a an and the of for to in on at by with from or as is are be this that rfp rfq rfi ifb eoi request proposal proposals services service project projects program contract contracts notice tender tenders bid bids procurement new fy 2025 2026 2027 de la le les des du et pour en el los las para y".split(" "));
+function lessLike(nid) {
+  const r = rowsCache[nid]; if (!r) return;
+  const words = [...new Set(String(r.title || "").toLowerCase().replace(/[^\p{L}\p{N}&/ -]/gu, " ").split(/\s+/).filter((w) => w.length > 2 && !STOP.has(w) && !/^\d+$/.test(w)))];
+  const pairs = String(r.title || "").toLowerCase().replace(/[^\p{L}\p{N} ]/gu, " ").split(/\s+/).filter(Boolean);
+  const two = []; for (let i = 0; i < pairs.length - 1; i++) if (!STOP.has(pairs[i]) && !STOP.has(pairs[i + 1]) && pairs[i].length > 2 && pairs[i + 1].length > 2) two.push(pairs[i] + " " + pairs[i + 1]);
+  $("#drawerTitle").textContent = "Less like this";
+  $("#drawerBody").innerHTML = `<p class="muted" style="margin-top:0">Pick a word or phrase. New listings with it in the title will be hidden from now on (you can undo this under <b>Tune the filter</b>).</p>
+    <p><b>${esc(r.title)}</b></p>
+    <div class="rel-words">${[...two.slice(0, 4), ...words].map((w) => `<button class="chip" data-word="${esc(w)}">${esc(w)}</button>`).join("")}</div>
+    <div class="form-foot"><button class="btn" data-close>Cancel</button></div>`;
+  openDrawer();
+  $$("[data-word]").forEach((b) => b.addEventListener("click", async () => {
+    try {
+      await db.rpc("fed_filter_exclude", { p_word: b.dataset.word });
+      await db.rpc("fed_set_status", { p_notices: [nid], p_status: "Dismissed" });
+      closeDrawer(); toast(`Listings with “${b.dataset.word}” will be hidden`); Matches();
+    } catch (e) { toast(e.message); }
+  }));
+}
+// starter terms for water and environmental firms (several languages); "Add" merges them into the filter
+const WATER_PACK = [
+  [3, "water, stormwater, storm water, wastewater, groundwater, hydrolog, hydraul, flood, floodplain, watershed, drainage, irrigation, sanitation, wash, borehole, aquifer, wetland, dam, reservoir, river, stream restoration, non-revenue water, ms4, npdes, tmdl, bmp, green infrastructure, hydrogeolog, water supply, water resources, water quality, levee, culvert, sewer, eau, eaux, assainissement, inondation, forage, hydrique, hydraulique, agua, riego, saneamiento, hídric, inundaci, água, saneamento"],
+  [2, "climate, resilien, environmental, environnement, ambiental, erosion, sediment, coastal, gis, geospatial, remote sensing, monitoring, ecosystem, restoration, canal, lake, sustainability, nature-based"],
+  [1, "étude, estudio, consultoría, consultoria"]];
+async function tuneFilter() {
+  const f = FLT || {}, by = (w) => (f.terms || []).filter((t) => +t.w === w).map((t) => t.t).sort().join(", ");
+  const level = [[1, "Loose: show anything with a weak match"], [3, "Normal"], [5, "Strict: only strong matches"], [7, "Very strict"]];
+  $("#drawerTitle").textContent = "Tune the relevance filter";
+  $("#drawerBody").innerHTML = `<form class="form" id="relForm">
+    <p class="muted full" style="margin-top:0">Each new listing gets a score: core terms add 3, related terms 2, helpful terms 1, and the "lower" terms take 3 off. Words in the title count fully; words only in the description count half. A notice in one of your NAICS codes adds 2. Listings below the strictness level are hidden, never deleted.</p>
+    <label class="full">Strictness<select name="min_score">${level.map(([v, l]) => `<option value="${v}" ${+f.min_score === v ? "selected" : ""}>${l} (score ${v}+)</option>`).join("")}${level.some(([v]) => v === +f.min_score) ? "" : `<option value="${+f.min_score}" selected>Score ${+f.min_score}+</option>`}</select></label>
+    <label class="full">Core terms <small class="muted">+3 each · comma-separated · short words match whole words, longer ones match word starts (“hydrolog” finds hydrology)</small><textarea name="t3" rows="4">${esc(by(3))}</textarea></label>
+    <label class="full">Related terms <small class="muted">+2</small><textarea name="t2" rows="3">${esc(by(2))}</textarea></label>
+    <label class="full">Helpful terms <small class="muted">+1 · the kind of work you do: consultancy, study, design…</small><textarea name="t1" rows="3">${esc(by(1))}</textarea></label>
+    <label class="full">Lower the score <small class="muted">−3 · supplies, janitorial, vehicles…</small><textarea name="tm" rows="3">${esc([by(-3), by(-2)].filter(Boolean).join(", "))}</textarea></label>
+    <label class="full">Always hide titles with <small class="muted">(added by “Less like this”)</small><textarea name="exclude" rows="2">${esc((f.exclude || []).join(", "))}</textarea></label>
+    <label class="check full"><input type="checkbox" name="hide_expired" ${f.hide_expired !== false ? "checked" : ""}> Hide closed listings (deadline passed)</label>
+    <label class="check full"><input type="checkbox" name="hide_jobs" ${f.hide_jobs !== false ? "checked" : ""}> Hide plain job ads (keeps job-board posts that are RFPs, tenders or consultancies)</label>
+    <label class="check full"><input type="checkbox" name="hide_junk" ${f.hide_junk !== false ? "checked" : ""}> Hide links that aren't listings (“View all jobs”, “• World Bank Tenders”)</label>
+    <p class="full"><button type="button" class="btn small" id="addPack">${icon("plus")}Add water &amp; environment terms</button> <span class="muted small">English, French, Spanish and Portuguese</span></p>
+  </form>
+  <div class="form-foot"><button class="btn primary" id="relSave">Save and apply</button><button class="btn" data-close>Cancel</button></div>`;
+  openDrawer();
+  const F = $("#relForm"), split = (v) => [...new Set(String(v || "").split(/[,\n]/).map((x) => x.trim().toLowerCase()).filter(Boolean))];
+  $("#addPack").addEventListener("click", () => {
+    WATER_PACK.forEach(([w, list]) => { const el = F[w === 3 ? "t3" : w === 2 ? "t2" : "t1"]; el.value = [...new Set([...split(el.value), ...split(list)])].join(", "); });
+    toast("Water and environment terms added. Save to apply.");
+  });
+  $("#relSave").addEventListener("click", async () => {
+    const terms = [[3, "t3"], [2, "t2"], [1, "t1"], [-3, "tm"]].flatMap(([w, k]) => split(F[k].value).map((t) => ({ t, w })));
+    try {
+      await db.rpc("fed_filter_save", { p: { enabled: true, terms, exclude: split(F.exclude.value), min_score: +F.min_score.value,
+        hide_expired: F.hide_expired.checked, hide_jobs: F.hide_jobs.checked, hide_junk: F.hide_junk.checked } });
+      closeDrawer(); toast("Filter saved"); FD.show = "relevant"; Matches();
+    } catch (e) { toast(e.message); }
+  });
+}
 // NAICS and keywords: always on the card, your own codes highlighted; click one to filter by it
 function keyLine(r) {
   const codes = naicsOf(r).sort((a, b) => isMine(b) - isMine(a)), kws = keywordsOf(r), grant = r.source === "Grants.gov";
@@ -179,7 +260,7 @@ function card(r, sname) {
   const done = grant ? `<a class="btn small" href="../funding/#/funding/${r.funding_id}">${icon("check")}In Funding</a>` : `<a class="btn small" href="../review/#/opportunities/${r.opportunity_id}">${icon("check")}In pipeline</a>`;
   return `<article class="panel fed-card ${r.status === "Dismissed" ? "muted" : ""}" data-nid="${esc(r.notice_id)}">
     <div class="fed-main">
-      <div class="fed-top">${bmr ? `<span class="pill lv-${esc((r.level || "other").toLowerCase())}">${esc(r.level || "Other")}</span>` : ""}<span class="pill ${r.notice_type === "Forecasted" ? "s-high" : ""}">${esc(r.notice_type || "Notice")}</span>${r.set_aside ? `<span class="pill s-won" title="${esc(r.set_aside)}">${esc(r.set_aside_code || "Set-aside")}</span>` : ""}
+      <div class="fed-top">${relChip(r)}${bmr ? `<span class="pill lv-${esc((r.level || "other").toLowerCase())}">${esc(r.level || "Other")}</span>` : ""}<span class="pill ${r.notice_type === "Forecasted" ? "s-high" : ""}">${esc(r.notice_type || "Notice")}</span>${r.set_aside ? `<span class="pill s-won" title="${esc(r.set_aside)}">${esc(r.set_aside_code || "Set-aside")}</span>` : ""}
 </div>
       <h3><a href="${esc(r.ui_link || "https://sam.gov/opp/" + r.notice_id + "/view")}" target="_blank" rel="noopener">${esc(r.title || "(untitled)")} <svg class="ic ext-ic"><use href="#i-external"/></svg></a></h3>
       <p class="muted small">${esc(grant ? [r.agency, r.subtier].filter(Boolean).join(" · ") : [r.agency, r.subtier, r.office].filter((x, i, a) => x && a.indexOf(x) === i).join(" · "))}</p>
@@ -200,10 +281,12 @@ function card(r, sname) {
       ${r.status === "Added" ? done
         : `<button class="btn small primary" data-act="add" title="${grant ? "Adds it to the Funding app" : "Adds it to Business Review → Opportunities"}">${icon("plus")}${grant ? "Add to Funding" : "Add to pipeline"}</button>
            ${r.status !== "Saved" ? `<button class="btn small" data-act="Saved">Save</button>` : `<button class="btn small" data-act="New">Unsave</button>`}
-           ${r.status !== "Dismissed" ? `<button class="btn small" data-act="Dismissed">Dismiss</button>` : `<button class="btn small" data-act="New">Restore</button>`}`}
+           ${r.status !== "Dismissed" ? `<button class="btn small" data-act="Dismissed">Dismiss</button>` : `<button class="btn small" data-act="New">Restore</button>`}
+           ${FLT && r.status === "New" && r.source !== "Link" ? `<button class="btn small" data-act="less" title="Hide listings with a word from this title">Less like this</button>` : ""}`}
     </div></article>`;
 }
 async function act(what, nid, btn) {
+  if (what === "less") return lessLike(nid);
   btn.disabled = true;
   try {
     if (what === "add" && FD.source === "Grants.gov") {

@@ -87,9 +87,9 @@ async function Week(param) {
       <thead><tr><th>Project</th>${days.map((d) => `<th class="num ${d === today() ? "today" : ""} ${d > today() ? "future" : ""}">${dayHead(d)}${holidayOn(d) ? `<small class="tc-hol" title="${esc(holidayOn(d).name)}">${esc(holidayOn(d).name)}</small>` : ""}</th>`).join("")}<th class="num">Total</th></tr></thead>
       <tbody>${rows.length ? rows.map((k) => {
         const rt = days.reduce((a, d) => a + +(cell(k, d)?.hours || 0), 0), pid = k[0] === "p" ? +k.slice(1) : null, pr = pid && TC.projects.find((p) => p.id === pid);
-        return `<tr class="${pid ? "" : "tc-leave"}"><td class="tc-proj"><b>${pid ? "" : icon("sun", "ic tiny") + " "}${esc(rowLabel(k))}</b>${pr?.client ? `<small>${esc(pr.client)}</small>` : ""}${pid ? budgetLine(pid) : ""}</td>
+        return `<tr class="${pid ? "" : "tc-leave"}" data-row="${k}"><td class="tc-proj">${!locked ? `<button class="tc-del" type="button" data-del="${k}" title="Remove this line from the week" aria-label="Remove ${esc(rowLabel(k))} from this week">&times;</button>` : ""}<b>${pid ? "" : icon("sun", "ic tiny") + " "}${esc(rowLabel(k))}</b>${pr?.client ? `<small>${esc(pr.client)}</small>` : ""}${pid ? budgetLine(pid) : ""}</td>
           ${days.map((d) => { const why = cellRule(k, d), c = cell(k, d);
-            return `<td class="num"><input class="tc-in" type="number" min="0" max="24" step="0.25" inputmode="decimal" data-k="${k}" data-d="${d}"
+            return `<td class="num"><input class="tc-in" type="text" inputmode="decimal" autocomplete="off" spellcheck="false" data-k="${k}" data-d="${d}"
             value="${c ? +c.hours : ""}" ${locked || (why && !c) ? "disabled" : ""} ${why ? `title="${esc(why)}"` : ""} aria-label="${esc(rowLabel(k))} ${dayHead(d)}"></td>`; }).join("")}
           <td class="num"><b>${hrs(rt)}</b></td></tr>`; }).join("")
         : `<tr><td colspan="9" class="empty">${anyAddable ? "No hours this week yet. Add a project below." : TC.projects.length ? "You aren't on any open projects. Ask an admin to add you." : "No projects yet. Ask an admin to add one."}</td></tr>`}</tbody>
@@ -108,6 +108,8 @@ async function Week(param) {
     addRow(v);
   });
   $$(".tc-in").forEach((inp) => inp.addEventListener("change", () => saveCell(inp)));
+  wireSheet($(".tc-grid"));
+  $$(".tc-del").forEach((b) => b.addEventListener("click", () => removeRow(b.dataset.del, days)));
   $("#submitWeek")?.addEventListener("click", async () => {
     try { await db.rpc("ts_submit", { p_week: TC.week, p_note: $("#weekNote").value }); toast("Week submitted for approval"); Week(TC.week); } catch (e) { toast(e.message); }
   });
@@ -116,9 +118,62 @@ async function Week(param) {
   });
   refreshBadge();
 }
+// "6", "6.5", "6:30", "6h", "6.5 h" → hours; "" → 0; anything else → NaN
+function parseHours(t) {
+  t = String(t || "").trim().toLowerCase().replace(/\s*(h|hrs?|hours?)$/, "").replace(",", ".");
+  if (!t) return 0;
+  const m = t.match(/^(\d{1,2}):([0-5]\d)$/); if (m) return +m[1] + +m[2] / 60;
+  return /^\d*\.?\d+$/.test(t) ? +t : NaN;
+}
+// spreadsheet keys for the timesheet: arrows, Enter, Tab, Esc, Delete, and pasting a block copied from Excel
+function wireSheet(grid) {
+  if (!grid) return;
+  const cells = () => [...grid.querySelectorAll("tbody tr")].map((tr) => [...tr.querySelectorAll(".tc-in")]);
+  const pos = (inp) => { const g = cells(); for (let r = 0; r < g.length; r++) { const c = g[r].indexOf(inp); if (c >= 0) return [r, c, g]; } return [-1, -1, g]; };
+  const go = (inp, dr, dc) => {
+    let [r, c, g] = pos(inp);
+    while (true) {
+      r += dr; c += dc;
+      if (r < 0 || r >= g.length || c < 0 || c >= (g[r]?.length || 0)) return;
+      if (!g[r][c].disabled) { g[r][c].focus(); return; }
+    }
+  };
+  grid.addEventListener("focusin", (e) => { if (e.target.classList?.contains("tc-in")) { e.target.dataset.was = e.target.value; e.target.select(); } });
+  grid.addEventListener("keydown", (e) => {
+    const inp = e.target; if (!inp.classList?.contains("tc-in")) return;
+    const all = inp.selectionStart === 0 && inp.selectionEnd === inp.value.length;
+    if (e.key === "Enter") { e.preventDefault(); inp.blur(); go(inp, e.shiftKey ? -1 : 1, 0); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); go(inp, 1, 0); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); go(inp, -1, 0); }
+    else if (e.key === "ArrowRight" && (all || inp.selectionStart === inp.value.length)) { e.preventDefault(); go(inp, 0, 1); }
+    else if (e.key === "ArrowLeft" && (all || inp.selectionEnd === 0)) { e.preventDefault(); go(inp, 0, -1); }
+    else if (e.key === "Escape") { inp.value = inp.dataset.was ?? inp.value; inp.select(); }
+  });
+  grid.addEventListener("paste", async (e) => {
+    const inp = e.target; if (!inp.classList?.contains("tc-in")) return;
+    const text = (e.clipboardData || window.clipboardData)?.getData("text") || "";
+    const block = text.replace(/\r/g, "").replace(/\n$/, "").split("\n").map((l) => l.split("\t"));
+    if (block.length === 1 && block[0].length === 1) return;   // one value: let the browser paste it
+    e.preventDefault();
+    const [r0, c0, g] = pos(inp), todo = [];
+    block.forEach((line, i) => line.forEach((v, j) => { const t = g[r0 + i]?.[c0 + j]; if (t && !t.disabled) { t.value = v.trim(); todo.push(t); } }));
+    for (const t of todo) await saveCell(t);
+  });
+}
+async function removeRow(k, days) {
+  const ent = TC.entries.filter((e) => rowKey(e) === k && days.includes(e.work_date)), h = ent.reduce((a, e) => a + +e.hours, 0);
+  if (h && !confirm(`Remove ${rowLabel(k)} from this week? This deletes the ${hrs(h)} hours logged to it this week.`)) return;
+  try {
+    if (ent.length) must(await sb.from("time_entries").delete().in("id", ent.map((e) => e.id)));
+    if (TC.extraRows?.[TC.week]) TC.extraRows[TC.week] = TC.extraRows[TC.week].filter((x) => x !== k);
+    toast(h ? `Removed ${rowLabel(k)} and its ${hrs(h)} hours` : `Removed ${rowLabel(k)}`);
+    Week(TC.week);
+  } catch (e) { toast(e.message); }
+}
 async function saveCell(inp) {
-  const k = inp.dataset.k, d = inp.dataset.d, v = inp.value === "" ? 0 : Math.round(+inp.value * 100) / 100;
-  if (v < 0 || v > 24 || Number.isNaN(v)) { toast("Enter between 0 and 24 hours"); return; }
+  const raw = parseHours(inp.value), k = inp.dataset.k, d = inp.dataset.d, v = Math.round(raw * 100) / 100;
+  if (Number.isNaN(raw) || v < 0 || v > 24) { toast("Enter hours between 0 and 24, like 6.5 or 6:30"); const c = TC.entries.find((e) => rowKey(e) === k && e.work_date === d); inp.value = c ? +c.hours : ""; return; }
+  inp.value = v || "";
   const cur = TC.entries.find((e) => rowKey(e) === k && e.work_date === d), why = cellRule(k, d);
   if (v && why) { toast(why); inp.value = cur ? +cur.hours : ""; return; }
   const pid = k[0] === "p" ? +k.slice(1) : null, before = cur ? +cur.hours : 0;
@@ -131,7 +186,7 @@ async function saveCell(inp) {
     const total = TC.entries.reduce((a, e) => a + +e.hours, 0);
     $("#weekTotal").textContent = hrs(total);
     const btn = $("#submitWeek"); if (btn) { btn.disabled = !total; btn.textContent = `Submit ${hrs(total)} hours`; }
-    const row = inp.closest("tr"), rt = $$(".tc-in", row).reduce((a, i) => a + (+i.value || 0), 0); row.lastElementChild.innerHTML = `<b>${hrs(rt)}</b>`;
+    const row = inp.closest("tr"), rt = $$(".tc-in", row).reduce((a, i) => a + (parseHours(i.value) || 0), 0); row.lastElementChild.innerHTML = `<b>${hrs(rt)}</b>`;
     const col = [...row.children].indexOf(inp.closest("td")), foot = $(".tc-grid tfoot tr").children[col];
     foot.textContent = hrs(TC.entries.filter((e) => e.work_date === d).reduce((a, e) => a + +e.hours, 0)) || "";
     if (pid) {   // keep the budget line current and say so when the project goes over

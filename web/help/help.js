@@ -198,6 +198,8 @@ const TOPICS = [
     sections: [
       { id: "log", title: "Log your week", html: steps(
           ["Open My timesheet", `Enter hours by project for each day. Work hours can't be entered for future days; <b>Paid time off</b> and <b>Company holiday</b> can (add them from <b>+ Add a project or time off</b>). Sick time is logged on or after the day.`],
+          ["Work it like a spreadsheet", `Click a cell and type: <b>6.5</b>, <b>6:30</b> and <b>6h</b> all work. Arrow keys, <b>Tab</b> and <b>Enter</b> move between cells, <b>Esc</b> undoes the cell you're in, and clearing a cell removes those hours. You can paste a block of hours copied from Excel. Each cell saves as you leave it.`],
+          ["Remove a line", `Click the <b>×</b> next to a project or time-off line to take it off the week. If it has hours, Pulse asks first and then deletes that week's hours for it. The project itself isn't touched.`],
           ["Start a project if it isn't there", `Admins and members can choose <b>+ New project…</b>, give it a budget in hours and a rate, and log to it straight away. It's the same project in Projects, where milestones, tasks and costs live. Each project row shows hours used against its budget and warns when it goes over.`],
           ["Submit the week", `Add a note if needed and submit it for approval.`],
           ["If it comes back", `A rejected week shows the reason; fix it and submit again.`]) },

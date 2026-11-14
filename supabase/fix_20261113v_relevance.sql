@@ -6,6 +6,10 @@
 --   * New listings are hidden when they're closed, when they're a site's navigation link rather than a listing
 --     ("View all jobs", "• World Bank Tenders"), when they're a plain job ad, when their title has an "always hide"
 --     word, or when they score below the strictness level. Nothing is deleted: "Filtered out" shows them with the reason.
+--   * Two rules that work for any company, from its own profile: the title must contain one of its keywords (or core
+--     terms), and when a listing names NAICS or PSC codes, one of them must be the company's. Listings that name no code
+--     (most bid-source and BidMatch postings) are judged on the title. Both rules can be switched off in the filter.
+--   * PSC codes can be added to the contracts profile next to NAICS codes.
 --   * Saved, added and dismissed items are never hidden.
 -- Safe to run more than once.
 
@@ -18,6 +22,8 @@ create table if not exists public.fed_filters (
   hide_expired boolean not null default true,
   hide_jobs boolean not null default true,
   hide_junk boolean not null default true,
+  require_title boolean not null default true,
+  require_code boolean not null default true,
   updated_at timestamptz default now(), updated_by text
 );
 alter table public.fed_filters enable row level security;
@@ -27,6 +33,9 @@ drop policy if exists ff_write on public.fed_filters;
 create policy ff_write on public.fed_filters for all to authenticated using (workspace_id = staff_ws()) with check (workspace_id = staff_ws());
 revoke all on public.fed_filters from anon;
 grant select, insert, update, delete on public.fed_filters to authenticated;
+alter table public.fed_filters add column if not exists require_title boolean not null default true;
+alter table public.fed_filters add column if not exists require_code boolean not null default true;
+alter table public.fed_searches add column if not exists psc text[] not null default '{}';
 drop trigger if exists stamp on public.fed_filters;
 create trigger stamp before insert or update on public.fed_filters for each row execute function public.stamp_row();
 drop trigger if exists ws_write_guard on public.fed_filters;
@@ -53,7 +62,7 @@ begin
   select * into f from fed_filters where workspace_id = staff_ws();
   if not found then
     return jsonb_build_object('enabled', true, 'terms', fed_filter_default(staff_ws()), 'exclude', '{}'::text[], 'min_score', 3,
-                              'hide_expired', true, 'hide_jobs', true, 'hide_junk', true, 'is_default', true);
+                              'hide_expired', true, 'hide_jobs', true, 'hide_junk', true, 'require_title', true, 'require_code', true, 'is_default', true);
   end if;
   return to_jsonb(f) - 'workspace_id';
 end $$;
@@ -62,15 +71,17 @@ create or replace function public.fed_filter_save(p jsonb) returns void
 language plpgsql volatile security definer set search_path = public, pg_catalog as $$
 begin
   if staff_ws() is null then raise exception 'Only team members can change the filter.'; end if;
-  insert into fed_filters (workspace_id, enabled, terms, exclude, min_score, hide_expired, hide_jobs, hide_junk)
+  insert into fed_filters (workspace_id, enabled, terms, exclude, min_score, hide_expired, hide_jobs, hide_junk, require_title, require_code)
   values (staff_ws(), coalesce((p ->> 'enabled')::boolean, true),
           coalesce((select jsonb_agg(distinct jsonb_build_object('t', lower(trim(e ->> 't')), 'w', least(3, greatest(-3, (e ->> 'w')::int))))
                       from jsonb_array_elements(coalesce(p -> 'terms', '[]')) e where trim(coalesce(e ->> 't', '')) <> ''), '[]'),
           coalesce((select array_agg(distinct lower(trim(x))) from jsonb_array_elements_text(coalesce(p -> 'exclude', '[]')) x where trim(x) <> ''), '{}'),
           least(10, greatest(0, coalesce((p ->> 'min_score')::int, 3))),
-          coalesce((p ->> 'hide_expired')::boolean, true), coalesce((p ->> 'hide_jobs')::boolean, true), coalesce((p ->> 'hide_junk')::boolean, true))
+          coalesce((p ->> 'hide_expired')::boolean, true), coalesce((p ->> 'hide_jobs')::boolean, true), coalesce((p ->> 'hide_junk')::boolean, true),
+          coalesce((p ->> 'require_title')::boolean, true), coalesce((p ->> 'require_code')::boolean, true))
   on conflict (workspace_id) do update set enabled = excluded.enabled, terms = excluded.terms, exclude = excluded.exclude, min_score = excluded.min_score,
-    hide_expired = excluded.hide_expired, hide_jobs = excluded.hide_jobs, hide_junk = excluded.hide_junk;
+    hide_expired = excluded.hide_expired, hide_jobs = excluded.hide_jobs, hide_junk = excluded.hide_junk,
+    require_title = excluded.require_title, require_code = excluded.require_code;
 end $$;
 
 -- add one word to "always hide" (the "Less like this" button)
@@ -89,21 +100,42 @@ create or replace function public.fed_rx(p text) returns text language sql immut
   with t as (select lower(trim(p)) v), e as (select regexp_replace(rtrim(v, '*'), '([.*+?^${}()|\[\]\\])', '\\\1', 'g') x, v from t)
   select case when v like '%*' or length(v) >= 5 then '(^|[^[:alnum:]])' || x else '(^|[^[:alnum:]])' || x || '(s|es)?($|[^[:alnum:]])' end from e $$;
 
+-- the company's own profile: NAICS and PSC codes (contracts) and keywords (contracts and grants)
+create or replace function public.fed_me(p_ws uuid) returns jsonb
+language sql stable security definer set search_path = public, pg_catalog as $$
+  select jsonb_build_object(
+    'naics', coalesce((select jsonb_agg(distinct q) from fed_searches s, unnest(s.naics) q where s.workspace_id = p_ws and s.active and trim(q) <> ''), '[]'),
+    'psc', coalesce((select jsonb_agg(distinct upper(q)) from fed_searches s, unnest(s.psc) q where s.workspace_id = p_ws and s.active and trim(q) <> ''), '[]'),
+    'kw', coalesce((select jsonb_agg(distinct lower(trim(q))) from fed_searches s, unnest(s.keywords) q where s.workspace_id = p_ws and s.active and trim(q) <> ''), '[]')) $$;
+
 -- score one notice: { score, why[], minus[], hide }
-create or replace function public.fed_rel(n public.fed_notices, f jsonb, my_naics text[]) returns jsonb
+drop function if exists public.fed_rel(public.fed_notices, jsonb, text[]);
+create or replace function public.fed_rel(n public.fed_notices, f jsonb, me jsonb) returns jsonb
 language plpgsql stable set search_path = public, pg_catalog as $$
 declare ti text := lower(coalesce(n.title, '')); body text := lower(concat_ws(' ', n.summary, n.bm_keywords));
   e jsonb; t text; w int; score int := 0; why text[] := '{}'; minus text[] := '{}'; hide text; x text; words int;
+  title_kw boolean := false; codes text[]; my_naics text[]; my_psc text[]; code_hit boolean := false;
 begin
   for e in select * from jsonb_array_elements(coalesce(f -> 'terms', '[]')) loop
     t := e ->> 't'; w := (e ->> 'w')::int;
     if t is null or trim(t) = '' then continue; end if;
     if ti ~ fed_rx(t) then score := score + w; if w > 0 then why := array_append(why, t); else minus := array_append(minus, t); end if;
+      if w >= 3 then title_kw := true; end if;
     elsif w > 0 and body ~ fed_rx(t) then score := score + (w + 1) / 2; why := array_append(why, t);
     end if;
   end loop;
-  if my_naics is not null and cardinality(my_naics) > 0 and exists (select 1 from unnest(my_naics) q, unnest(n.naics_all || n.naics) c where c like q || '%') then
-    score := score + 2; why := array_append(why, 'your NAICS');
+  -- profile keywords always count as core terms in the title
+  if not title_kw then
+    select k into x from jsonb_array_elements_text(coalesce(me -> 'kw', '[]')) k where ti ~ fed_rx(k) limit 1;
+    if x is not null then title_kw := true; if not (x = any (why)) then score := score + 3; why := array_append(why, x); end if; end if;
+  end if;
+  -- codes: the notice's NAICS and PSC against the company's (a 4-digit NAICS or 2-character PSC covers everything under it)
+  select array_agg(c) into codes from (select unnest(coalesce(n.naics_all, '{}') || n.naics) c union select upper(n.psc)) z where nullif(trim(c), '') is not null;
+  select array_agg(v) into my_naics from jsonb_array_elements_text(coalesce(me -> 'naics', '[]')) v;
+  select array_agg(v) into my_psc from jsonb_array_elements_text(coalesce(me -> 'psc', '[]')) v;
+  if codes is not null then
+    code_hit := exists (select 1 from unnest(codes) c, unnest(coalesce(my_naics, '{}') || coalesce(my_psc, '{}')) q where upper(c) like upper(q) || '%');
+    if code_hit then score := score + 2; why := array_append(why, 'your NAICS/PSC'); end if;
   end if;
   -- reasons to hide a new listing, most definite first
   if coalesce((f ->> 'hide_junk')::boolean, true) and n.source = 'Web' then
@@ -118,6 +150,9 @@ begin
   if hide is null and coalesce((f ->> 'hide_expired')::boolean, true) and n.response_deadline is not null and n.response_deadline < now() then hide := 'Closed'; end if;
   if hide is null and coalesce((f ->> 'hide_jobs')::boolean, true) and n.notice_type = 'Job'
      and ti !~ '(rfp|rfq|rfi|tender|bid|consultan|eoi|expression of interest|request for|proposals?)' then hide := 'Job ad'; end if;
+  if hide is null and coalesce((f ->> 'require_code')::boolean, true) and codes is not null and not code_hit
+     and (my_naics is not null or my_psc is not null) then hide := 'Not your NAICS or PSC'; end if;
+  if hide is null and coalesce((f ->> 'require_title')::boolean, true) and not title_kw then hide := 'No keyword in the title'; end if;
   if hide is null and score < coalesce((f ->> 'min_score')::int, 3) then hide := 'Low relevance'; end if;
   return jsonb_build_object('score', score, 'why', to_jsonb(why), 'minus', to_jsonb(minus), 'hide', hide);
 end $$;
@@ -127,11 +162,11 @@ drop function if exists public.fed_list(text, text, bigint, text, int);
 create or replace function public.fed_list(p_source text default 'SAM.gov', p_status text default 'New', p_search bigint default null, p_sort text default 'posted',
                                            p_limit int default 400, p_show text default 'relevant') returns jsonb
 language plpgsql stable security definer set search_path = public, pg_catalog as $$
-declare f jsonb := fed_filter_get(); on_ boolean; mn text[];
+declare f jsonb := fed_filter_get(); on_ boolean; mn jsonb;
 begin
   if staff_ws() is null or not ws_has_app('opportunities') then return '[]'; end if;
   on_ := coalesce((f ->> 'enabled')::boolean, true);
-  select array_agg(distinct q) into mn from fed_searches s, unnest(s.naics) q where s.workspace_id = staff_ws() and s.active and s.source = 'SAM.gov';
+  mn := fed_me(staff_ws());
   return (select coalesce(jsonb_agg(to_jsonb(x) - 'hide_' - 'dup' order by case when p_sort = 'due' then x.response_deadline end nulls last,
                                                              case when p_sort = 'relevance' then -(x.rel ->> 'score')::int end, x.posted_date desc nulls last, x.first_seen desc), '[]')
   from (select y.*, y.rel ->> 'hide' hide_ from (
@@ -158,11 +193,11 @@ end $$;
 -- counts: new items that pass the filter, per source, plus how many the filter hides
 create or replace function public.fed_counts() returns jsonb
 language plpgsql stable security definer set search_path = public, pg_catalog as $$
-declare f jsonb := fed_filter_get(); on_ boolean; mn text[]; r jsonb;
+declare f jsonb := fed_filter_get(); on_ boolean; mn jsonb; r jsonb;
 begin
   if staff_ws() is null or not ws_has_app('opportunities') then return jsonb_build_object('new', 0, 'by_source', '{}'::jsonb, 'by_search', '{}'::jsonb, 'hidden', '{}'::jsonb); end if;
   on_ := coalesce((f ->> 'enabled')::boolean, true);
-  select array_agg(distinct q) into mn from fed_searches s, unnest(s.naics) q where s.workspace_id = staff_ws() and s.active and s.source = 'SAM.gov';
+  mn := fed_me(staff_ws());
   with n as (
     select n.source, n.source || '|' || lower(regexp_replace(coalesce(n.title, ''), '\s+', ' ', 'g')) || '|' || coalesce(n.response_deadline::date::text, '') k,
            n.notice_id, case when on_ then fed_rel(n, f, mn) ->> 'hide' end hide_
@@ -180,6 +215,6 @@ begin
 end $$;
 
 revoke execute on function public.fed_list(text, text, bigint, text, int, text), public.fed_counts(), public.fed_filter_get(), public.fed_filter_save(jsonb),
-  public.fed_filter_exclude(text), public.fed_filter_default(uuid), public.fed_rel(public.fed_notices, jsonb, text[]) from public, anon;
+  public.fed_filter_exclude(text), public.fed_filter_default(uuid), public.fed_me(uuid), public.fed_rel(public.fed_notices, jsonb, jsonb) from public, anon;
 grant execute on function public.fed_list(text, text, bigint, text, int, text), public.fed_counts(), public.fed_filter_get(), public.fed_filter_save(jsonb),
-  public.fed_filter_exclude(text), public.fed_rel(public.fed_notices, jsonb, text[]) to authenticated;
+  public.fed_filter_exclude(text), public.fed_rel(public.fed_notices, jsonb, jsonb) to authenticated;

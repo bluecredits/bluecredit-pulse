@@ -197,13 +197,15 @@ async function tuneFilter() {
   const level = [[1, "Loose: show anything with a weak match"], [3, "Normal"], [5, "Strict: only strong matches"], [7, "Very strict"]];
   $("#drawerTitle").textContent = "Tune the relevance filter";
   $("#drawerBody").innerHTML = `<form class="form" id="relForm">
-    <p class="muted full" style="margin-top:0">Each new listing gets a score: core terms add 3, related terms 2, helpful terms 1, and the "lower" terms take 3 off. Words in the title count fully; words only in the description count half. A notice in one of your NAICS codes adds 2. Listings below the strictness level are hidden, never deleted.</p>
+    <p class="muted full" style="margin-top:0">Your keywords, NAICS and PSC codes come from <a href="#/profile">My NAICS &amp; keywords</a>. Each new listing gets a score: core terms add 3, related terms 2, helpful terms 1, and the "lower" terms take 3 off. Words in the title count fully; words only in the description count half. A notice in one of your NAICS codes adds 2. Listings below the strictness level are hidden, never deleted.</p>
     <label class="full">Strictness<select name="min_score">${level.map(([v, l]) => `<option value="${v}" ${+f.min_score === v ? "selected" : ""}>${l} (score ${v}+)</option>`).join("")}${level.some(([v]) => v === +f.min_score) ? "" : `<option value="${+f.min_score}" selected>Score ${+f.min_score}+</option>`}</select></label>
     <label class="full">Core terms <small class="muted">+3 each · comma-separated · short words match whole words, longer ones match word starts (“hydrolog” finds hydrology)</small><textarea name="t3" rows="4">${esc(by(3))}</textarea></label>
     <label class="full">Related terms <small class="muted">+2</small><textarea name="t2" rows="3">${esc(by(2))}</textarea></label>
     <label class="full">Helpful terms <small class="muted">+1 · the kind of work you do: consultancy, study, design…</small><textarea name="t1" rows="3">${esc(by(1))}</textarea></label>
     <label class="full">Lower the score <small class="muted">−3 · supplies, janitorial, vehicles…</small><textarea name="tm" rows="3">${esc([by(-3), by(-2)].filter(Boolean).join(", "))}</textarea></label>
     <label class="full">Always hide titles with <small class="muted">(added by “Less like this”)</small><textarea name="exclude" rows="2">${esc((f.exclude || []).join(", "))}</textarea></label>
+    <label class="check full"><input type="checkbox" name="require_title" ${f.require_title !== false ? "checked" : ""}> The title must contain one of your keywords or core terms</label>
+    <label class="check full"><input type="checkbox" name="require_code" ${f.require_code !== false ? "checked" : ""}> When a listing names NAICS or PSC codes, one must be yours <small class="muted">(listings without codes are judged on the title)</small></label>
     <label class="check full"><input type="checkbox" name="hide_expired" ${f.hide_expired !== false ? "checked" : ""}> Hide closed listings (deadline passed)</label>
     <label class="check full"><input type="checkbox" name="hide_jobs" ${f.hide_jobs !== false ? "checked" : ""}> Hide plain job ads (keeps job-board posts that are RFPs, tenders or consultancies)</label>
     <label class="check full"><input type="checkbox" name="hide_junk" ${f.hide_junk !== false ? "checked" : ""}> Hide links that aren't listings (“View all jobs”, “• World Bank Tenders”)</label>
@@ -220,7 +222,7 @@ async function tuneFilter() {
     const terms = [[3, "t3"], [2, "t2"], [1, "t1"], [-3, "tm"]].flatMap(([w, k]) => split(F[k].value).map((t) => ({ t, w })));
     try {
       await db.rpc("fed_filter_save", { p: { enabled: true, terms, exclude: split(F.exclude.value), min_score: +F.min_score.value,
-        hide_expired: F.hide_expired.checked, hide_jobs: F.hide_jobs.checked, hide_junk: F.hide_junk.checked } });
+        hide_expired: F.hide_expired.checked, hide_jobs: F.hide_jobs.checked, hide_junk: F.hide_junk.checked, require_title: F.require_title.checked, require_code: F.require_code.checked } });
       closeDrawer(); toast("Filter saved"); FD.show = "relevant"; Matches();
     } catch (e) { toast(e.message); }
   });
@@ -352,6 +354,7 @@ function profForm(v) {
       <label>Assistance listings (CFDA) <small class="muted">optional; "66." matches every EPA listing</small><input name="aln" value="${esc((v.aln || []).join(", "))}" placeholder="66.458, 10.760, 15."></label>`
     : `<label>NAICS codes <small class="muted">comma-separated; 4–5 digits match every code that starts with them</small><textarea name="naics" rows="2" placeholder="541620, 541330, 541370">${esc((v.naics || []).join(", "))}</textarea></label>
       <div class="prof-tags" data-naics-tags></div>
+      <label>PSC codes <small class="muted">optional, comma-separated; "F1" or "C2" match every code that starts with them</small><input name="psc" value="${esc((v.psc || []).join(", "))}" placeholder="F108, C211, R4"></label>
       <label>Keywords <small class="muted">comma-separated</small><textarea name="keywords" rows="3" placeholder="water, flood, floodplain, stormwater">${esc((v.keywords || []).join(", "))}</textarea></label>`}
     <details class="prof-more"><summary>More filters</summary><div class="form-grid">
       ${grants ? "" : `<label>Business size<select name="size">${SIZES.map(([k, l]) => `<option value="${k}" ${k === v.size ? "selected" : ""}>${l}</option>`).join("")}</select></label>`}
@@ -372,6 +375,7 @@ function wireProf(f) {
   const read = () => ({ source: f.dataset.src, match_any: true, keywords: list(f.keywords.value), agencies: list(f.agencies.value), exclude: list(f.exclude.value),
     open_only: f.open_only.checked, notice_types: $$("[name=nt]:checked", f).map((x) => x.value),
     naics: grants ? [] : list(f.naics.value).map((x) => x.replace(/\D/g, "")).filter(Boolean),
+    ...(grants || !f.psc ? {} : { psc: list(f.psc.value).map((x) => x.replace(/[^\w]/g, "").toUpperCase()).filter(Boolean) }),
     aln: grants ? list(f.aln.value).map((x) => x.replace(/[^\d.]/g, "")).filter(Boolean) : [],
     size: grants ? "any" : f.size.value, set_asides: grants ? [] : $$("[name=sa]:checked", f).map((x) => x.value) });
   const tags = () => { const t = $("[data-naics-tags]", f); if (t) t.innerHTML = read().naics.map((c) => `<span class="tag mine">${esc(naicsLabel(c))}</span>`).join(""); };

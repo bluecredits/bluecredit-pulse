@@ -4,7 +4,9 @@
    who may do what; this file only decides which buttons to show. */
 "use strict";
 
+const TASK_KINDS = ["Administrative", "Operational", "Review"];
 const DESK_TYPES = [
+  { type: "Task", icon: "check", blurb: "Ask a teammate to do something: a review, an admin chore or an operational job. Goes straight to them.", task: true, ref: "Kind", needed: true, neededLabel: "Due", title: "e.g. Review the Culpeper subcontract" },
   { type: "IT support", icon: "wrench", blurb: "Something isn't working: email, VPN, software, printer.", asset: "optional", title: "What's not working?" },
   { type: "Software request", icon: "code", blurb: "Install an app from the approved software list, or ask for something new.", software: true, ref: "Software", amount: "Cost (USD)", title: "e.g. QGIS for the floodplain project" },
   { type: "New equipment", icon: "computer", blurb: "A laptop, phone, monitor or other gear you need.", approval: true, ref: "What do you need?", needed: true, title: "e.g. Laptop for the new analyst" },
@@ -75,7 +77,7 @@ function deskFacts(t) {
   if (t.amount != null) rows.push([cfg.amount || "Amount", money(t.amount)]);
   if (t.start_date) rows.push(["Dates", `${dateRange(t.start_date, t.end_date)} · ${days(t.start_date, t.end_date || t.start_date)} day${days(t.start_date, t.end_date || t.start_date) === 1 ? "" : "s"}`]);
   if (t.reference) rows.push([cfg.ref || "Reference", esc(t.reference) + (t.type === "Software request" ? (t.software_id ? ` <span class="pill s-low">On the approved list</span>` : ` <span class="pill s-high">Not on the list</span>`) : "")]);
-  if (t.needed_by) rows.push(["Needed by", dueCell(t.needed_by, DESK_OPEN.includes(t.status))]);
+  if (t.needed_by) rows.push([cfg.neededLabel || "Needed by", dueCell(t.needed_by, DESK_OPEN.includes(t.status))]);
   if (t.asset_label) rows.push(["Asset", esc(t.asset_label)]);
   return rows;
 }
@@ -89,14 +91,15 @@ async function DeskRequests() {
   if (!tabList.some(([v]) => v === DESK.reqTab)) DESK.reqTab = "mine";
   $("#main").innerHTML = `
     <div class="page-head"><div><h1>My requests</h1>
-      <p class="muted">Ask for equipment, purchases, time off, travel, access or IT help, and follow it to done.</p></div>
-      <div class="actions-row"><button class="btn primary" id="newReq">${icon("plus")}New request</button></div></div>
+      <p class="muted">Ask for equipment, purchases, time off, travel, access or IT help, give a teammate a task, and follow it to done.</p></div>
+      <div class="actions-row"><button class="btn" id="newTask">${icon("check")}Assign a task</button><button class="btn primary" id="newReq">${icon("plus")}New request</button></div></div>
     <div class="filters">${tabList.length > 1 ? tabs(tabList, DESK.reqTab, "data-rt") : ""}
       ${DESK.reqTab === "work" ? "" : `<select id="reqFilter" aria-label="Show"><option value="open">Open</option><option value="closed">Closed</option><option value="all">All</option></select>`}
       <span class="count" id="reqCount"></span></div>
     <div id="reqList"></div>`;
   if ($("#reqFilter")) $("#reqFilter").value = DESK.reqFilter;
   $("#newReq").addEventListener("click", () => openNewRequest());
+  $("#newTask").addEventListener("click", () => openNewRequest({ type: "Task" }));
   $$("[data-rt]").forEach((b) => b.addEventListener("click", () => { DESK.reqTab = b.dataset.rt; DeskRequests(); }));
   $("#reqFilter")?.addEventListener("change", (e) => { DESK.reqFilter = e.target.value; loadRequests(); });
   await loadRequests();
@@ -114,23 +117,26 @@ async function loadRequests() {
   $("#reqCount").textContent = `${rows.length} request${rows.length === 1 ? "" : "s"}`;
   const who = tab !== "mine";
   $("#reqList").innerHTML = rows.length ? `<div class="table-wrap"><table><thead><tr><th>Request</th><th>Type</th>${who ? "<th>Requested by</th>" : ""}<th>Status</th>
-      <th>${tab === "work" ? "Assigned to" : "Approver"}</th><th>Updated</th></tr></thead><tbody>
+      <th>${tab === "work" ? "Assigned to" : "Approver or assignee"}</th><th>Updated</th></tr></thead><tbody>
     ${rows.map((t) => `<tr data-ticket="${t.id}" tabindex="0"><td class="wrap"><span class="tno">${ticketNo(t.number ?? t.id)}</span><span class="clip" style="font-weight:600">${esc(t.title)}</span></td>
-      <td><span class="type-chip">${icon(DESK_TYPE[t.type]?.icon || "chat", "ic sm")}${esc(t.type)}</span></td>
+      <td><span class="type-chip">${icon(DESK_TYPE[t.type]?.icon || "chat", "ic sm")}${esc(t.type === "Task" && t.reference ? `Task · ${t.reference}` : t.type)}</span></td>
       ${who ? `<td>${esc(personName(t.requester_id))}</td>` : ""}<td>${pill(t.status)}${t.priority === "High" || t.priority === "Urgent" ? ` <span class="pill s-high">${t.priority}</span>` : ""}</td>
-      <td>${esc(tab === "work" ? personName(t.assignee_id, "Unassigned") : t.approver_id ? personName(t.approver_id) : "No approval needed")}</td>
+      <td>${esc(tab === "work" ? personName(t.assignee_id, "Unassigned") : t.type === "Task" ? "For " + personName(t.assignee_id, "nobody") : t.approver_id ? personName(t.approver_id) : "No approval needed")}${t.type === "Task" && t.needed_by && DESK_OPEN.includes(t.status) ? `<small class="muted" style="display:block">due ${short(t.needed_by)}</small>` : ""}</td>
       <td class="date">${ago(t.updated_at)}</td></tr>`).join("")}</tbody></table></div>`
     : `<div class="panel empty">${tab === "mine" ? (DESK.reqFilter === "closed" ? "No closed requests yet." : `Nothing open. Use <b>New request</b> when you need something.`) : tab === "work" ? "Nothing waiting to be worked on." : "No requests match."}</div>`;
   wireTicketRows($("#reqList"), loadRequests);
 }
 function wireTicketRows(root, onChange) {
+  root._onChange = onChange;
+  if (root._wired) return;   // the list re-renders inside the same element; one listener is enough (two opened the request twice)
+  root._wired = true; onChange = (...a) => root._onChange && root._onChange(...a);
   root.addEventListener("click", (e) => { const r = e.target.closest("[data-ticket]"); if (r && !e.target.closest("button")) openTicket(+r.dataset.ticket, onChange); });
   root.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.dataset.ticket) openTicket(+e.target.dataset.ticket, onChange); });
 }
 
 /* ---------------- new request */
 async function openNewRequest(preset = {}) {
-  $("#drawerTitle").textContent = "New request";
+  $("#drawerTitle").textContent = preset.type === "Task" ? "Assign a task" : "New request";
   if (!preset.type) {
     $("#drawerBody").innerHTML = `<p class="muted" style="margin-top:0">What do you need?</p>
       <div class="type-grid">${DESK_TYPES.map((t) => `<button class="type-card" data-type="${esc(t.type)}">${icon(t.icon)}<b>${esc(t.type)}</b><span>${esc(t.blurb)}</span>
@@ -155,16 +161,18 @@ async function openNewRequest(preset = {}) {
         ${myAssets.map((a) => `<option value="${a.id}" ${String(preset.asset_id) === String(a.id) ? "selected" : ""}>${esc([a.tag, a.name].filter(Boolean).join(" · "))}</option>`).join("")}</select></label>` : ""}
       ${cfg.dates ? `<label>Start date<input type="date" name="start_date" required></label><label>End date<input type="date" name="end_date"></label>` : ""}
       ${cfg.amount ? `<label>${esc(cfg.amount)}<input name="amount" inputmode="decimal" placeholder="0.00" ${cfg.type === "Purchase or expense" ? "required" : ""}></label>` : ""}
-      ${cfg.ref ? `<label${cfg.amount ? "" : ' class="full"'}>${esc(cfg.ref)}<input name="reference"></label>` : ""}
-      ${cfg.needed ? `<label>Needed by<input type="date" name="needed_by"></label>` : ""}
+      ${cfg.task ? `<label>Assign to<select name="assignee_id" required><option value="">Pick a teammate</option>${S.team.filter((p) => p.active).map((p) => `<option value="${p.id}">${esc(p.display_name)}${p.id === me() ? " (me)" : ""}</option>`).join("")}</select></label>
+        <label>Kind<select name="reference">${TASK_KINDS.map((k) => `<option ${k === "Operational" ? "selected" : ""}>${k}</option>`).join("")}</select></label>`
+      : cfg.ref ? `<label${cfg.amount ? "" : ' class="full"'}>${esc(cfg.ref)}<input name="reference"></label>` : ""}
+      ${cfg.needed ? `<label>${esc(cfg.neededLabel || "Needed by")}<input type="date" name="needed_by"></label>` : ""}
       <label>Priority<select name="priority"><option>Low</option><option selected>Normal</option><option>High</option><option>Urgent</option></select></label>
       ${needsAppr || cfg.optionalApproval ? `<label class="${cfg.needed ? "" : ""}">Approver<select name="approver_id">
         ${cfg.optionalApproval ? `<option value="">No approval needed</option>` : ""}
         ${approvers.map((p, i) => `<option value="${p.id}" ${needsAppr && i === 0 ? "selected" : ""}>${esc(p.label)}</option>`).join("")}</select></label>` : ""}
-      <label class="full">Details<textarea name="description" rows="5" placeholder="Anything that helps: why you need it, links, quotes, the error message…"></textarea></label>
+      <label class="full">Details<textarea name="description" rows="5" placeholder="${cfg.task ? "What needs doing, links to the document or record, what done looks like…" : "Anything that helps: why you need it, links, quotes, the error message…"}"></textarea></label>
     </form>
     ${needsAppr && !approvers.length ? `<p class="error">There's no one to approve this yet. Ask an admin to join Pulse first.</p>` : ""}
-    <div class="form-foot"><button class="btn primary" id="sendReq" ${needsAppr && !approvers.length ? "disabled" : ""}>${needsAppr ? "Send for approval" : "Submit request"}</button>
+    <div class="form-foot"><button class="btn primary" id="sendReq" ${needsAppr && !approvers.length ? "disabled" : ""}>${needsAppr ? "Send for approval" : cfg.task ? "Assign task" : "Submit request"}</button>
       <button class="btn" data-close>Cancel</button></div>`;
   openDrawer();
   $("#backTypes").addEventListener("click", () => openNewRequest({}));
@@ -177,7 +185,7 @@ async function openNewRequest(preset = {}) {
     try {
       const id = await db.rpc("desk_submit", { p: { ...data, type: cfg.type } });
       const appr = data.approver_id ? personName(data.approver_id) : "";
-      toast(appr ? `Request sent to ${appr.split(" ")[0]} for approval` : `Request submitted`);
+      toast(cfg.task ? `Task assigned to ${personName(data.assignee_id).split(" ")[0]}` : appr ? `Request sent to ${appr.split(" ")[0]} for approval` : `Request submitted`);
       await refreshDeskBadges();
       const onReq = !location.hash || location.hash.startsWith("#/requests");
       if (onReq) { DESK.reqTab = "mine"; await DeskRequests(); } else location.hash = "#/requests";
@@ -340,8 +348,9 @@ async function openTicket(id, onChange) {
   const done = async (msg) => { toast(msg); await refreshDeskBadges(); onChange && onChange(); openTicket(id, onChange); };
   const run = async (btn, fn, msg) => { btn.disabled = true; try { await fn(); await done(msg); } catch (err) { toast(err.message); btn.disabled = false; } };
 
-  const facts = [["Requested by", esc(personName(t.requester_id))],
-    ["Approver", t.approver_id ? esc(personName(t.approver_id)) : `<span class="muted">No approval needed</span>`],
+  const isTask = t.type === "Task";
+  const facts = [[isTask ? "Assigned by" : "Requested by", esc(personName(t.requester_id))],
+    ...(isTask ? [] : [["Approver", t.approver_id ? esc(personName(t.approver_id)) : `<span class="muted">No approval needed</span>`]]),
     ["Assigned to", t.assignee_id ? esc(personName(t.assignee_id)) : `<span class="muted">${isAdmin() ? "Unassigned (admins)" : "The admin team"}</span>`],
     ...deskFacts(t), ["Submitted", `${short(t.created_at.slice(0, 10))} · ${ago(t.created_at)}`]];
   $("#drawerTitle").textContent = ticketNo(t.number ?? t.id);
@@ -379,14 +388,14 @@ async function openTicket(id, onChange) {
     if (t.status !== "In progress") row.push(`<button class="btn" id="aStart">Start work</button>`);
     row.push(`<button class="btn primary" id="aDone">Mark done</button>`);
   }
-  if (worker && ["Done", "Cancelled"].includes(t.status)) row.push(`<button class="btn" id="aReopen">Reopen</button>`);
+  if ((worker || (isTask && mineReq)) && ["Done", "Cancelled"].includes(t.status)) row.push(`<button class="btn" id="aReopen">${isTask && mineReq && !worker ? "Send it back" : "Reopen"}</button>`);
   if (canEdit) row.push(`<button class="btn" id="aEdit">Edit</button>`);
   if (isStaffRole(S.profile?.role) && worker && !closed && !linked.length) row.push(`<button class="btn" id="aTask">Make it a project task</button>`);
-  if ((mineReq || isAdmin()) && !closed) row.push(`<button class="btn danger" id="aCancel">Cancel request</button>`);
+  if ((mineReq || isAdmin()) && !closed) row.push(`<button class="btn danger" id="aCancel">${isTask ? "Cancel task" : "Cancel request"}</button>`);
   if (row.length) add(`<div class="actions-row">${row.join("")}</div>`);
-  if (isAdmin() && !closed) {
+  if ((isAdmin() || (isTask && mineReq)) && !closed) {
     const active = S.team.filter((p) => p.active);
-    add(`<div class="form admin-row"><label>Assigned to<select id="aAssign"><option value="">Unassigned (admins)</option>
+    add(`<div class="form admin-row"><label>Assigned to<select id="aAssign">${isTask ? "" : `<option value="">Unassigned (admins)</option>`}
       ${active.map((p) => `<option value="${p.id}" ${p.id === t.assignee_id ? "selected" : ""}>${esc(p.display_name)}</option>`).join("")}</select></label>
       ${t.status === "Pending approval" ? `<label>Approver<select id="aApprover">${active.map((p) => `<option value="${p.id}" ${p.id === t.approver_id ? "selected" : ""}>${esc(p.display_name)}</option>`).join("")}</select></label>` : ""}</div>`);
     $("#aAssign").addEventListener("change", (e) => run(e.target, () => db.rpc("desk_assign", { p_id: id, p_assignee: e.target.value || null }), "Assignment updated"));
@@ -396,7 +405,7 @@ async function openTicket(id, onChange) {
   $("#aStart")?.addEventListener("click", (e) => run(e.target, () => db.rpc("desk_set_status", { p_id: id, p_status: "In progress", p_note: note() }), "Marked in progress"));
   $("#aDone")?.addEventListener("click", (e) => run(e.target, () => db.rpc("desk_set_status", { p_id: id, p_status: "Done", p_note: note() }), "Marked done"));
   $("#aReopen")?.addEventListener("click", (e) => run(e.target, () => db.rpc("desk_set_status", { p_id: id, p_status: "Reopen", p_note: note() }), "Reopened"));
-  $("#aCancel")?.addEventListener("click", (e) => { if (!confirm("Cancel this request?")) return;
+  $("#aCancel")?.addEventListener("click", (e) => { if (!confirm(isTask ? "Cancel this task?" : "Cancel this request?")) return;
     run(e.target, () => db.rpc("desk_set_status", { p_id: id, p_status: "Cancelled", p_note: note() }), "Request cancelled"); });
   $("#aTask")?.addEventListener("click", () => openAssign({ kind: "task", title: t.title, description: t.description || "", ticket_id: t.id, onDone: () => openTicket(id, onChange) }));
   $("#aEdit")?.addEventListener("click", () => editTicket(t, onChange));
@@ -421,8 +430,9 @@ function editTicket(t, onChange) {
       <label class="full">Title<input name="title" value="${esc(t.title)}" required maxlength="140"></label>
       ${cfg.dates ? `<label>Start date<input type="date" name="start_date" value="${esc(t.start_date || "")}" required></label><label>End date<input type="date" name="end_date" value="${esc(t.end_date || "")}"></label>` : ""}
       ${cfg.amount ? `<label>${esc(cfg.amount)}<input name="amount" value="${t.amount ?? ""}" inputmode="decimal"></label>` : ""}
-      ${cfg.ref ? `<label>${esc(cfg.ref)}<input name="reference" value="${esc(t.reference || "")}"></label>` : ""}
-      ${cfg.needed ? `<label>Needed by<input type="date" name="needed_by" value="${esc(t.needed_by || "")}"></label>` : ""}
+      ${cfg.task ? `<label>Kind<select name="reference">${TASK_KINDS.map((k) => `<option ${k === t.reference ? "selected" : ""}>${k}</option>`).join("")}</select></label>`
+        : cfg.ref ? `<label>${esc(cfg.ref)}<input name="reference" value="${esc(t.reference || "")}"></label>` : ""}
+      ${cfg.needed ? `<label>${esc(cfg.neededLabel || "Needed by")}<input type="date" name="needed_by" value="${esc(t.needed_by || "")}"></label>` : ""}
       <label>Priority<select name="priority">${["Low", "Normal", "High", "Urgent"].map((p) => `<option ${p === t.priority ? "selected" : ""}>${p}</option>`).join("")}</select></label>
       <label class="full">Details<textarea name="description" rows="6">${esc(t.description || "")}</textarea></label></form>
     <div class="form-foot"><button class="btn primary" id="edSave">Save changes</button><button class="btn" id="edBack">Back</button></div>`;

@@ -169,7 +169,7 @@ const PULSE_APPS = [
   { key: "people", group: "deliver", name: "People", icon: "user-plus", href: "./people/", blurb: "Hiring: openings, candidates, interviews. Then onboarding and offboarding." },
   { key: "timecards", group: "daily", name: "Timecards", icon: "timer", href: "./timecards/", blurb: "Log hours and time off, submit expenses, approve both." },
   { key: "scheduler", group: "daily", name: "Scheduler", icon: "calendar", href: "./scheduler/", blurb: "Team free/busy from Google or Outlook; find a time, invite." },
-  { key: "tickets", group: "daily", name: "Tickets", icon: "ticket", href: "./tickets/", blurb: "Equipment, purchases, time off, IT help and approvals." },
+  { key: "tickets", group: "daily", name: "Tickets", icon: "ticket", href: "./tickets/", blurb: "Equipment, purchases, time off, IT help, approvals and tasks for teammates." },
   { key: "chief", group: "daily", name: "Chief of Staff", icon: "sparkles", href: "./chief/", blurb: "Your AI chief of staff: morning brief, answers, reminders." },
 ];
 function showShell() {

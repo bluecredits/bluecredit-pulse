@@ -9,7 +9,7 @@ const icon = (name, cls = "ic") => `<svg class="${cls}"><use href="#i-${name}"/>
 const isAdmin = () => S.profile?.role === "admin";
 const isStaff = () => S.profile && isStaffRole(S.profile.role);
 const nameOf = (id) => S.team.find((p) => p.id === id)?.display_name || "";
-const KINDS = ["Contractor", "Consultant", "Employee", "Intern", "Advisor"];
+const KINDS = ["Contractor", "Consultant", "Partner", "Employee", "Intern", "Advisor"];
 const UNITS = { hour: "/hour", day: "/day", month: "/month", year: "/year", fixed: " fixed" };
 const STAGES = ["Planned", "In progress", "Active", "Offboarding", "Offboarded"];
 const DEFAULT_CHECKLIST = [
@@ -25,13 +25,24 @@ const DEFAULT_CHECKLIST = [
   { id: "handbook", text: "Read the handbook and policies", who: "them" },
   { id: "kickoff", text: "Kickoff meeting with their manager", who: "us" },
 ];
+// companies (primes, subcontractors, partners) start with this list instead
+const COMPANY_CHECKLIST = [
+  { id: "sam", text: "Check their SAM.gov registration is active (UEI, CAGE, exclusions)", who: "us", link: "https://sam.gov/search/?index=ei" },
+  { id: "agreement", text: "Teaming agreement or subcontract signed (with the prime contract's flow-down clauses)", who: "us" },
+  { id: "nda", text: "Mutual NDA signed", who: "us" },
+  { id: "tax", text: "Get their W-9 (and send ours if they pay us)", who: "them" },
+  { id: "coi", text: "Certificate of insurance on file (general liability, workers' comp)", who: "them" },
+  { id: "payment", text: "Set up invoicing and payment terms", who: "us" },
+  { id: "contacts", text: "Add their main contacts to Contacts", who: "us" },
+  { id: "kickoff", text: "Kickoff meeting", who: "us" },
+];
 const OFFBOARD = [
   { id: "off-access", text: "Remove access to email and tools", who: "us", off: true },
   { id: "off-equipment", text: "Collect equipment", who: "us", off: true },
   { id: "off-time", text: "Final timesheet approved", who: "us", off: true },
   { id: "off-invoice", text: "Final invoice paid", who: "us", off: true },
 ];
-const template = () => S.workspace?.config?.onboarding_checklist?.length ? S.workspace.config.onboarding_checklist : DEFAULT_CHECKLIST;
+const template = (entity) => entity === "Company" ? COMPANY_CHECKLIST : S.workspace?.config?.onboarding_checklist?.length ? S.workspace.config.onboarding_checklist : DEFAULT_CHECKLIST;
 const progress = (o) => { const l = (o.checklist || []).filter((i) => !i.off || o.status.startsWith("Offboard")); return [l.filter((i) => i.done).length, l.length]; };
 const newId = () => Math.random().toString(36).slice(2, 9);
 
@@ -41,17 +52,17 @@ async function People() {
   const rows = must(await sb.from("onboardings").select("*").order("start_date", { ascending: true, nullsFirst: false }));
   const groups = { onboarding: ["Planned", "In progress"], active: ["Active"], off: ["Offboarding", "Offboarded"], all: STAGES };
   const q = OB.q.toLowerCase();
-  const list = rows.filter((o) => groups[OB.tab].includes(o.status) && (!q || [o.name, o.email, o.firm, o.role_title].join(" ").toLowerCase().includes(q)));
+  const list = rows.filter((o) => groups[OB.tab].includes(o.status) && (!q || [o.name, o.email, o.firm, o.role_title, o.uei, o.contact_name].join(" ").toLowerCase().includes(q)));
   const n = (k) => rows.filter((o) => groups[k].includes(o.status)).length;
   $("#main").innerHTML = `
-    <div class="page-head"><div><h1>Team</h1><p class="muted">Employees, contractors, consultants and interns: onboarding paperwork, access and equipment from first day to last.</p></div>
-      <div class="actions-row"><button class="btn" id="invite">${icon("send")}Invite instructions</button><button class="btn primary" id="addPerson">${icon("plus")}Add person</button></div></div>
+    <div class="page-head"><div><h1>Team</h1><p class="muted">Employees, contractors, consultants, interns and partner companies: onboarding paperwork, tax forms, access and equipment from first day to last.</p></div>
+      <div class="actions-row"><button class="btn" id="invite">${icon("send")}Invite instructions</button><button class="btn" id="addCompany">${icon("plus")}Add company</button><button class="btn primary" id="addPerson">${icon("plus")}Add person</button></div></div>
     <div class="filters"><div class="tabs" role="tablist">${[["onboarding", "Onboarding"], ["active", "Active"], ["off", "Offboarding"], ["all", "All"]].map(([k, l]) =>
       `<button role="tab" data-tab="${k}" aria-selected="${OB.tab === k}">${l} <span class="muted">${n(k)}</span></button>`).join("")}</div>
       <input type="search" id="obq" placeholder="Search people…" value="${esc(OB.q)}"></div>
     <section class="panel" style="padding:0"><div class="table-wrap"><table><thead><tr><th>Name</th><th>Type</th><th>Firm / role</th><th>Start</th><th>Owner</th><th>Checklist</th><th>Status</th></tr></thead>
       <tbody>${list.map((o) => { const [d, t] = progress(o);
-        return `<tr data-ob="${o.id}" tabindex="0"><td><b>${esc(o.name)}</b>${o.email ? `<small class="muted" style="display:block">${esc(o.email)}</small>` : ""}</td><td>${esc(o.kind)}</td>
+        return `<tr data-ob="${o.id}" tabindex="0"><td><b>${esc(o.name)}</b>${o.entity === "Company" ? ` <small class="pill">Company</small>` : ""}${o.email || o.contact_name ? `<small class="muted" style="display:block">${esc([o.contact_name, o.email].filter(Boolean).join(" · "))}</small>` : ""}</td><td>${esc(o.kind)}${o.tax_status === "Needed" && !["Employee"].includes(o.kind) && o.status !== "Offboarded" ? ` <small class="muted" title="Tax form still needed">· ${esc(o.tax_form || "W-9")} due</small>` : ""}</td>
           <td>${esc([o.firm, o.role_title].filter(Boolean).join(" · "))}</td><td class="date">${o.start_date ? dueCell(o.start_date, o.status === "Planned") : "—"}</td><td>${esc(nameOf(o.owner_id))}</td>
           <td><div class="budget-bar ${d === t && t ? "" : ""}"><i style="width:${t ? Math.round(100 * d / t) : 0}%"></i></div><small>${d} of ${t}</small></td>
           <td>${pill(o.status === "Active" ? "Active" : o.status === "Offboarded" ? "Dropped" : o.status === "Planned" ? "Identified" : "Pursuing").replace(/>[^<]+</, `>${o.status}<`)}</td></tr>`; }).join("")
@@ -59,39 +70,57 @@ async function People() {
   $$("[data-tab]").forEach((b) => b.addEventListener("click", () => { OB.tab = b.dataset.tab; People(); }));
   $("#obq").addEventListener("input", (e) => { OB.q = e.target.value; clearTimeout(OB.t); OB.t = setTimeout(() => { People().then(() => { const i = $("#obq"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 250); });
   $("#addPerson").addEventListener("click", () => editPerson(null));
+  $("#addCompany").addEventListener("click", () => editPerson(null, "Company"));
   $("#invite").addEventListener("click", () => inviteBox(null));
   $$("[data-ob]").forEach((r) => r.addEventListener("click", () => openPerson(+r.dataset.ob)));
 }
 
-async function editPerson(o) {
+async function editPerson(o, entityNew) {
+  const ent = o?.entity || entityNew || "Person", co = ent === "Company", br = baseRate();
   const owners = S.team.filter((p) => p.active && isStaffRole(p.role));
   const P = await orgPositions(), curPos = o && P ? P.find((x) => x.onboarding_id === o.id || (o.user_id && x.user_id === o.user_id)) : null;
-  $("#drawerTitle").textContent = o ? `Edit ${o.name}` : "Add person";
+  const kinds = co ? ["Partner", "Contractor", "Consultant"] : KINDS;
+  const rate0 = o ? o.rate : co ? null : br.hourly;
+  $("#drawerTitle").textContent = o ? `Edit ${o.name}` : co ? "Add company" : "Add person";
   $("#drawerBody").innerHTML = `<form id="obForm" class="form-grid">
-    <label>Name<input name="name" required value="${esc(o?.name || "")}"></label>
-    <label>Email <small class="muted">(links their Pulse login when they join)</small><input name="email" type="email" value="${esc(o?.email || "")}"></label>
-    <label>Type<select name="kind">${KINDS.map((k) => `<option ${k === (o?.kind || "Contractor") ? "selected" : ""}>${k}</option>`).join("")}</select></label>
-    <label>Their firm<input name="firm" value="${esc(o?.firm || "")}" placeholder="If they work through a company"></label>
-    <label>Role / scope<input name="role_title" value="${esc(o?.role_title || "")}" placeholder="e.g. GIS analyst, 20 h/week"></label>
+    <input type="hidden" name="entity" value="${ent}">
+    <label>${co ? "Company name" : "Name"}<input name="name" required value="${esc(o?.name || "")}"></label>
+    <label>Email <small class="muted">${co ? "(main contact)" : "(links their Pulse login when they join)"}</small><input name="email" type="email" value="${esc(o?.email || "")}"></label>
+    <label>Type<select name="kind">${kinds.map((k) => `<option ${k === (o?.kind || (co ? "Partner" : "Contractor")) ? "selected" : ""}>${k}</option>`).join("")}</select></label>
+    ${co ? `<label>Main contact<input name="contact_name" value="${esc(o?.contact_name || "")}" placeholder="Name and title"></label>
+    <label>UEI <small class="muted">(SAM.gov)</small><input name="uei" value="${esc(o?.uei || "")}" maxlength="12" placeholder="12 characters"></label>
+    <label>CAGE code<input name="cage" value="${esc(o?.cage || "")}" maxlength="5"></label>
+    <label>Website<input name="website" value="${esc(o?.website || "")}" placeholder="https://…"></label>
+    <label class="full">Address<input name="address" value="${esc(o?.address || "")}"></label>`
+    : `<label>Their firm<input name="firm" value="${esc(o?.firm || "")}" placeholder="If they work through a company"></label>`}
+    <label>Role / scope<input name="role_title" value="${esc(o?.role_title || "")}" placeholder="${co ? "e.g. Prime contractor, field maintenance" : "e.g. GIS analyst, 20 h/week"}"></label>
     <label>Phone<input name="phone" value="${esc(o?.phone || "")}"></label>
     <label>Start date<input name="start_date" type="date" value="${o?.start_date || ""}"></label>
     <label>End date <small class="muted">(optional)</small><input name="end_date" type="date" value="${o?.end_date || ""}"></label>
-    <label>Rate (USD)<input name="rate" type="number" min="0" step="0.01" value="${o?.rate ?? ""}"></label>
+    <label>Rate (USD) <small class="muted">${o ? "" : co ? "" : `starts at the base rate, ${usd(br.hourly)}/h`}</small><input name="rate" type="number" min="0" step="0.01" value="${rate0 ?? ""}"><small class="muted" id="dayHint">${dayRange(rate0, o?.rate_unit || "hour")}</small></label>
     <label>Per<select name="rate_unit">${Object.entries(UNITS).map(([k, v]) => `<option value="${k}" ${k === (o?.rate_unit || "hour") ? "selected" : ""}>${v.replace("/", "").trim()}</option>`).join("")}</select></label>
     <label>Owner<select name="owner_id">${owners.map((p) => `<option value="${p.id}" ${p.id === (o?.owner_id || S.user.id) ? "selected" : ""}>${esc(p.display_name)}</option>`).join("")}</select></label>
     ${orgPicker(P, curPos)}
     <label style="grid-column:1/-1">Notes<textarea name="notes" rows="3">${esc(o?.notes || "")}</textarea></label>
     <div class="actions-row" style="grid-column:1/-1"><button class="btn primary">${o ? "Save" : "Add and start checklist"}</button>${o && isAdmin() ? `<button type="button" class="btn danger" id="obDel">Delete</button>` : ""}</div></form>`;
   openDrawer();
+  const hint = () => { const fm = $("#obForm"); $("#dayHint").textContent = dayRange(fm.rate.value === "" ? null : +fm.rate.value, fm.rate_unit.value); };
+  $("#obForm").rate.addEventListener("input", hint); $("#obForm").rate_unit.addEventListener("change", hint);
+  $("#obForm").kind.addEventListener("change", (e) => { const r = $("#obForm").rate; if (!o && !co && r.value === "" && ["Contractor", "Consultant", "Intern"].includes(e.target.value)) { r.value = br.hourly; hint(); } });
   $("#obForm").addEventListener("submit", async (e) => {
     e.preventDefault(); const f = new FormData(e.target);
-    const row = Object.fromEntries(["name", "email", "kind", "firm", "role_title", "phone", "start_date", "end_date", "rate_unit", "owner_id", "notes"].map((k) => [k, (f.get(k) || "").trim() || null]));
+    const row = Object.fromEntries(["name", "email", "kind", "firm", "role_title", "phone", "start_date", "end_date", "rate_unit", "owner_id", "notes", "entity", "contact_name", "uei", "cage", "website", "address"]
+      .filter((k) => f.has(k)).map((k) => [k, (f.get(k) || "").trim() || null]));
+    if (row.uei) row.uei = row.uei.toUpperCase();
+    if (row.cage) row.cage = row.cage.toUpperCase();
+    if (row.website && !/^https?:\/\//i.test(row.website)) row.website = "https://" + row.website;
     row.rate = f.get("rate") === "" ? null : +f.get("rate");
     try {
       const pick = orgPick(f.get("orgpos") || "");
       if (o) { must(await sb.from("onboardings").update(row).eq("id", o.id)); if (pick) await db.rpc("org_place", { p_onboarding: o.id, p_position: pick.position, p_parent: pick.parent, p_title: row.role_title, p_dept: null }); toast("Saved"); openPerson(o.id); }
       else {
-        row.checklist = template().map((i) => ({ ...i, id: i.id || newId(), done: false }));
+        row.checklist = template(row.entity).map((i) => ({ ...i, id: i.id || newId(), done: false }));
+        row.tax_form = row.kind === "Employee" ? "W-4" : "W-9";
         const r = must(await sb.from("onboardings").insert(row).select("*").single());
         // already in Pulse? link them now
         const p = row.email && S.team.find((m) => (m.email || "").toLowerCase() === row.email.toLowerCase());
@@ -112,10 +141,12 @@ async function openPerson(id) {
   const o = must(await sb.from("onboardings").select("*").eq("id", id).single());
   const canEdit = isAdmin() || o.owner_id === S.user.id, mine = o.user_id === S.user.id;
   const projects = isStaff() && o.user_id ? must(await sb.from("project_people").select("project_id").eq("user_id", o.user_id)) : [];
-  const allProj = isStaff() ? must(await sb.from("projects").select("id, name, status").order("name")) : [];
+  const allProj = isStaff() ? await sb.from("projects").select("id, name, status, pay_floor").order("name").then((r) => { if (r.error) throw r.error; return r.data; })
+    .catch(async () => must(await sb.from("projects").select("id, name, status").order("name"))) : [];
   const agrs = isStaff() || mine ? await sb.from("agreements").select("id, number, title, status, template_name").eq("onboarding_id", o.id).order("created_at").then((r) => r.data || []).catch(() => []) : [];
   const [d, t] = progress(o);
   const dev = await personDevices(o).catch(() => ({ mine: [], html: "" }));
+  const taxHtml = o.kind === "Advisor" && !o.rate ? "" : await personTaxHtml(o, canEdit).catch(() => "");
   const show = (o.checklist || []).filter((i) => !i.off || o.status.startsWith("Offboard"));
   const item = (i) => `<li class="ck ${i.done ? "done" : ""}"><label class="check"><input type="checkbox" data-item="${esc(i.id)}" ${i.done ? "checked" : ""}
       ${canEdit || (mine && i.who === "them") ? "" : "disabled"}> <span>${esc(i.text)}${i.link ? ` · <a href="${esc(i.link)}" target="_blank" rel="noopener">link</a>` : ""}</span></label>
@@ -123,8 +154,10 @@ async function openPerson(id) {
   const next = { Planned: "In progress", "In progress": "Active", Active: "Offboarding", Offboarding: "Offboarded" }[o.status];
   $("#drawerTitle").textContent = o.name;
   $("#drawerBody").innerHTML = `
-    <div class="ob-facts">${[["Type", esc(o.kind)], ["Firm / role", esc([o.firm, o.role_title].filter(Boolean).join(" · ") || "—")], ["Email", esc(o.email || "—")],
-      ["Dates", o.start_date ? `${short(o.start_date)}${o.end_date ? " – " + short(o.end_date) : ""}` : "—"], ["Rate", o.rate != null ? money(o.rate) + (UNITS[o.rate_unit] || "") : "—"],
+    <div class="ob-facts">${[["Type", esc(o.kind) + (o.entity === "Company" ? " · company" : "")], ["Firm / role", esc([o.firm, o.role_title].filter(Boolean).join(" · ") || "—")], ["Email", esc(o.email || "—")],
+      ...(o.entity === "Company" ? [["Main contact", esc(o.contact_name || "—")], ["UEI / CAGE", esc([o.uei, o.cage].filter(Boolean).join(" · ") || "—") + (o.uei ? ` · <a href="https://sam.gov/search/?index=ei&q=${encodeURIComponent(o.uei)}" target="_blank" rel="noopener">SAM.gov</a>` : "")],
+        ["Address", esc(o.address || "—")], ["Website", o.website ? `<a href="${esc(o.website)}" target="_blank" rel="noopener">${esc(o.website.replace(/^https?:\/\//, ""))}</a>` : "—"]] : []),
+      ["Dates", o.start_date ? `${short(o.start_date)}${o.end_date ? " – " + short(o.end_date) : ""}` : "—"], ["Rate", o.rate != null ? money(o.rate) + (UNITS[o.rate_unit] || "") + (o.rate_unit === "hour" || !o.rate_unit ? `<small class="muted" style="display:block">${dayRange(o.rate, "hour")}</small>` : "") : "—"],
       ["Owner", esc(nameOf(o.owner_id) || "—")], ["Pulse login", o.user_id ? `${esc(nameOf(o.user_id))} ${pill("Active")}` : `<span class="muted">Not joined yet</span>`],
       ["Status", pill(o.status === "Active" ? "Active" : "Pursuing").replace(/>[^<]+</, `>${o.status}<`)]].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join("")}</div>
     ${o.notes ? `<p class="muted" style="white-space:pre-wrap">${esc(o.notes)}</p>` : ""}
@@ -133,6 +166,7 @@ async function openPerson(id) {
     ${o.status.startsWith("Offboard") ? `<h3 class="ck-h">Offboarding</h3><ul class="checklist">${show.filter((i) => i.off).map(item).join("")}</ul>` : ""}
     ${canEdit ? `<div class="add-action" style="grid-template-columns:1fr auto auto;margin:8px 0 16px"><input id="ckText" placeholder="Add a checklist item" aria-label="New item">
       <select id="ckWho" aria-label="Who does it"><option value="us">We do it</option><option value="them">They do it</option></select><button class="btn small" id="ckAdd">Add</button></div>` : ""}
+    ${taxHtml}
     <h3 class="ck-h">Agreements</h3>
     <ul class="checklist">${agrs.map((g) => `<li class="ck"><a href="../agreements/#/view/${g.id}">AGR-${String(g.number).padStart(4, "0")} · ${esc(g.title)}</a><span class="meta">${esc(g.status)}</span></li>`).join("") || `<li class="muted small" style="padding:4px 10px">None yet.</li>`}</ul>
     ${isStaff() ? `<div class="actions-row" style="margin:4px 0 12px">${[...(o.kind === "Employee" || o.kind === "Intern" ? [["employment", "Employment agreement"]] : [["consulting", "Consulting agreement"]]), ["confidentiality", "Confidentiality agreement"], ["teaming", "Teaming agreement"]].map(([k, l]) =>
@@ -158,10 +192,13 @@ async function openPerson(id) {
     try {
       if (c.checked) must(await sb.from("project_people").insert({ project_id: +c.dataset.proj, user_id: o.user_id }));
       else must(await sb.from("project_people").delete().eq("project_id", +c.dataset.proj).eq("user_id", o.user_id));
-      toast(c.checked ? "Added to project" : "Removed from project");
+      const pj = allProj.find((p) => p.id === +c.dataset.proj);
+      toast(c.checked && pj && belowFloor(o.rate_unit === "hour" || !o.rate_unit ? o.rate : null, pj.pay_floor)
+        ? `Added. Note: ${o.name}'s rate is below ${pj.name}'s pay floor of ${usd(pj.pay_floor)}/h; set a project rate in Timecards.` : c.checked ? "Added to project" : "Removed from project");
     } catch (e) { c.checked = !c.checked; toast(e.message); }
   }));
   wirePersonDevices(o, () => openPerson(o.id));
+  if (taxHtml) wirePersonTax(o, () => openPerson(o.id));
   $("#obEdit")?.addEventListener("click", () => editPerson(o));
   $("#obInvite")?.addEventListener("click", () => inviteBox(o));
   $("#obNext")?.addEventListener("click", async () => {
@@ -222,9 +259,19 @@ async function Mine() {
     ${mine.length ? mine.map((o) => { const [d, t] = progress(o); return `<section class="panel"><h2>${esc(o.role_title || o.kind)} <small>${d} of ${t} done</small></h2>
       <ul class="checklist">${(o.checklist || []).filter((i) => !i.off || o.status.startsWith("Offboard")).map((i) => `<li class="ck ${i.done ? "done" : ""}"><label class="check">
         <input type="checkbox" data-o="${o.id}" data-item="${esc(i.id)}" ${i.done ? "checked" : ""} ${i.who === "them" ? "" : "disabled"}> <span>${esc(i.text)}</span></label>
-        <span class="meta">${i.who === "them" ? `<span class="pill s-high">You</span>` : `<span class="muted">${esc(S.workspace.name)}</span>`}</span></li>`).join("")}</ul></section>`; }).join("")
+        <span class="meta">${i.who === "them" ? `<span class="pill s-high">You</span>` : `<span class="muted">${esc(S.workspace.name)}</span>`}</span></li>`).join("")}</ul>
+      ${o.tax_status === "Needed" && o.tax_form !== "None" ? `<div class="tax-box due"><b>Send your ${esc(o.tax_form || "W-9")}</b>
+        <p class="muted small">${o.tax_form === "W-8BEN" || o.tax_form === "W-8BEN-E" ? "Outside the US? Fill in a W-8BEN (people) or W-8BEN-E (companies) instead of a W-9." : "Fill in and sign the form, then upload it here. Only the people who pay you can see it."}
+          Blank form: <a href="${TAX_FORMS[o.tax_form || "W-9"]}" target="_blank" rel="noopener">IRS ${esc(o.tax_form || "W-9")}</a>${o.tax_form === "W-9" || !o.tax_form ? ` · outside the US? <a href="${TAX_FORMS["W-8BEN"]}" target="_blank" rel="noopener">W-8BEN</a>` : ""}</p>
+        <div class="add-action" style="grid-template-columns:auto 1fr auto"><select data-mykind="${o.id}" aria-label="Form">${["W-9", "W-8BEN", "W-8BEN-E", "W-4"].map((k) => `<option ${k === (o.tax_form || "W-9") ? "selected" : ""}>${k}</option>`).join("")}</select>
+          <input type="file" data-myfile="${o.id}" aria-label="Signed form"><button class="btn small" data-myup="${o.id}">Upload</button></div></div>`
+        : o.tax_status === "Received" ? `<p class="muted small">${esc(o.tax_form || "Tax form")} received${o.tax_received ? " " + short(o.tax_received) : ""}. Thank you.</p>` : ""}</section>`; }).join("")
       : devHtml ? "" : `<div class="empty">No onboarding checklist for you${isStaff() ? "." : " yet. Your contact may have used a different email: ask them to check it."}</div>`}`;
   wireMyDevices(Mine);
+  $$("[data-myup]").forEach((b) => b.addEventListener("click", async () => {
+    const id = +b.dataset.myup; b.disabled = true;
+    try { await uploadOnbFile(id, $(`[data-mykind="${id}"]`).value, $(`[data-myfile="${id}"]`).files[0]); Mine(); } catch (e) { toast(e.message); b.disabled = false; }
+  }));
   $$("[data-item]").forEach((c) => c.addEventListener("change", async () => {
     try { await db.rpc("onb_tick", { p_id: +c.dataset.o, p_item: c.dataset.item, p_done: c.checked }); c.closest("li").classList.toggle("done", c.checked); toast(c.checked ? "Done" : "Unticked"); }
     catch (e) { c.checked = !c.checked; toast(e.message); }
@@ -255,14 +302,14 @@ async function Template() {
 }
 
 /* ================================================================ router */
-const routes = { openings: Openings, candidates: Candidates, interviews: Interviews, people: People, mine: Mine, template: Template, "hiring-setup": HiringSetup, policies: MyPolicies, signoffs: SignOffs, org: OrgChart, devices: Devices };
+const routes = { openings: Openings, candidates: Candidates, interviews: Interviews, people: People, mine: Mine, template: Template, "hiring-setup": HiringSetup, policies: MyPolicies, signoffs: SignOffs, org: OrgChart, devices: Devices, rates: Rates, taxes: Taxes };
 window.addEventListener("hashchange", route);
 function route() {
   if (!S.profile) return;
   const [path, qs] = location.hash.replace(/^#\/?/, "").split("?");
   const [name] = path.split("/");
   const hiring = ["openings", "candidates", "interviews", "hiring-setup"];
-  const key = routes[name] && (isStaff() || ["mine", "policies", "org"].includes(name)) && (!["signoffs", "devices"].includes(name) || isAdmin()) ? name : isStaff() ? (hasApp("hiring") ? "candidates" : "people") : "mine";
+  const key = routes[name] && (isStaff() || ["mine", "policies", "org"].includes(name)) && (!["signoffs", "devices", "rates", "taxes"].includes(name) || isAdmin()) ? name : isStaff() ? (hasApp("hiring") ? "candidates" : "people") : "mine";
   $$("#nav a[data-r]").forEach((a) => a.classList.toggle("on", a.dataset.r === key));
   document.body.classList.remove("nav-open"); closeDrawer();
   $("#main").innerHTML = `<p class="muted">Loading…</p>`;
@@ -276,7 +323,7 @@ async function boot() {
   try {
     if (!(await requireMember())) return;
     if (!isStaff()) $$('#nav a[data-r]:not([data-r="mine"]):not([data-r="policies"]):not([data-r="org"]), #nav .nav-label').forEach((a) => a.remove());
-    else if (!isAdmin()) $$('#nav a[data-r="template"], #nav a[data-r="hiring-setup"], #nav a[data-r="signoffs"], #nav a[data-r="devices"]').forEach((a) => a.remove());
+    else if (!isAdmin()) $$('#nav a[data-r="template"], #nav a[data-r="hiring-setup"], #nav a[data-r="signoffs"], #nav a[data-r="devices"], #nav a[data-r="rates"], #nav a[data-r="taxes"]').forEach((a) => a.remove());
     if (!hasApp("hiring")) $$('#nav a[data-r="openings"], #nav a[data-r="candidates"], #nav a[data-r="interviews"], #nav a[data-r="hiring-setup"]').forEach((a) => a.insertAdjacentHTML("beforeend", `<small class="plan-badge">Pro</small>`));
     showShell(); route();
   } catch (e) { showShell(); $("#main").innerHTML = `<div class="empty">${esc(e.message)}</div>`; }

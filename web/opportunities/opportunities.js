@@ -46,7 +46,28 @@ const NAICS = { "541620": "Environmental Consulting", "541330": "Engineering Ser
   "237110": "Water & Sewer Line Construction", "237990": "Other Heavy & Civil Construction", "221310": "Water Supply & Irrigation Systems", "221320": "Sewage Treatment Facilities",
   "562910": "Remediation Services", "924110": "Air, Water & Waste Program Administration", "541720": "R&D: Social Sciences & Humanities", "611430": "Professional & Management Training",
   "561720": "Janitorial Services", "236220": "Commercial Building Construction", "238910": "Site Preparation" };
-const naicsLabel = (c) => (NAICS[c] ? `${c} · ${NAICS[c]}` : String(c));
+const naicsTitle = (c) => NAICS[c] || (typeof NAICS_ALL !== "undefined" && NAICS_ALL[c]) || "";
+const naicsLabel = (c) => (naicsTitle(c) ? `${c} · ${naicsTitle(c)}` : String(c));
+// search box over every 2022 NAICS code (naics.js): type words or digits, pick one
+const naicsPicker = (id, ph) => typeof naicsSearch === "function" ? `<div class="naics-pick"><input id="${id}" type="search" autocomplete="off" placeholder="${esc(ph)}" aria-label="${esc(ph)}"><div class="naics-list" hidden role="listbox"></div></div>` : "";
+function wireNaicsPicker(input, onPick) {
+  if (!input) return;
+  const box = input.nextElementSibling;
+  const show = () => {
+    const hits = naicsSearch(input.value, 40);
+    box.hidden = !hits.length;
+    box.innerHTML = hits.map(([c, t]) => `<button type="button" role="option" data-code="${esc(c)}"><b>${esc(c)}</b>${esc(t)}${c.length < 6 ? ` <span class="grp">· every code under it</span>` : ""}</button>`).join("")
+      + (input.value.trim() ? `<a class="grp" style="display:block;padding:7px 10px" href="https://www.naics.com/search/" target="_blank" rel="noopener">Not sure? Look it up on NAICS.com</a>` : "");
+  };
+  input.addEventListener("input", show);
+  input.addEventListener("focus", () => input.value && show());
+  input.addEventListener("keydown", (e) => { if (e.key === "Escape") box.hidden = true; if (e.key === "ArrowDown") { e.preventDefault(); box.querySelector("button")?.focus(); } });
+  box.addEventListener("keydown", (e) => { const b = document.activeElement; if (e.key === "ArrowDown") { e.preventDefault(); b.nextElementSibling?.focus(); } if (e.key === "ArrowUp") { e.preventDefault(); (b.previousElementSibling || input).focus(); } if (e.key === "Escape") { box.hidden = true; input.focus(); } });
+  box.addEventListener("click", (e) => { const b = e.target.closest("[data-code]"); if (!b) return; box.hidden = true; input.value = ""; onPick(b.dataset.code); });
+  document.addEventListener("click", (e) => { if (!input.parentElement.contains(e.target)) box.hidden = true; });
+}
+// does a listing's code fall under a picked code? ("31-33" style sectors cover several prefixes)
+const underCode = (code, pick) => pick.includes("-") ? String(code).slice(0, 2) >= pick.slice(0, 2) && String(code).slice(0, 2) <= pick.slice(3) : String(code).startsWith(pick);
 // who to talk to, from SAM.gov's point of contact, the BidMatch POC line or the Grants.gov agency contact
 function contactLine(r) {
   const cs = (r.contacts || []).slice(0, 2);
@@ -96,7 +117,7 @@ async function Matches() {
   const srcCounts = {}; if (web) rows.forEach((r) => (srcCounts[r.src_id] = (srcCounts[r.src_id] || 0) + 1));
   if (web && FD.src) rows = rows.filter((r) => String(r.src_id) === String(FD.src));
   if (FD.kw) rows = rows.filter((r) => keywordsOf(r).some((k) => k.toLowerCase() === FD.kw.toLowerCase()));
-  if (FD.naics) rows = rows.filter((r) => naicsOf(r).some((c) => c.startsWith(FD.naics)));
+  if (FD.naics) rows = rows.filter((r) => naicsOf(r).some((c) => underCode(c, FD.naics)));
   if (FD.q) { const t = FD.q.toLowerCase(); rows = rows.filter((r) => [r.title, r.sol_number, r.agency, r.subtier, r.office, naicsOf(r).join(" "), keywordsOf(r).join(" "), (r.aln || []).join(" "), r.summary,
     (r.contacts || []).map((c) => `${c.name || ""} ${c.email || ""}`).join(" ")].join(" ").toLowerCase().includes(t)); }
   const opt = (k, n, cur, fmt) => `<option value="${esc(k)}" ${cur && cur.toLowerCase() === k.toLowerCase() ? "selected" : ""}>${esc(fmt(k))} (${n})</option>`;
@@ -120,7 +141,7 @@ async function Matches() {
     <div class="filters">
       <div class="tabs">${["New", "Saved", "Added", "Dismissed", "All"].map((k) => `<button data-st="${k}" aria-selected="${FD.status === k}">${k}</button>`).join("")}</div>
       ${web ? `<select id="fSrc" aria-label="Source"><option value="">All sources</option>${sources.filter((x) => x.kind !== "manual").map((x) => `<option value="${x.id}" ${String(FD.src) === String(x.id) ? "selected" : ""}>${esc(x.name)} (${srcCounts[x.id] || 0})</option>`).join("")}</select>` : ""}
-      ${web ? "" : naicsSel}${kwSel}
+      ${web ? "" : naicsSel}${web || grants ? "" : naicsPicker("fNaicsFind", "Any NAICS code: search by name or number…")}${kwSel}
       <select id="fSort">${flt ? `<option value="relevance" ${FD.sort === "relevance" ? "selected" : ""}>Most relevant</option>` : ""}<option value="posted" ${FD.sort === "posted" ? "selected" : ""}>Newest first</option><option value="due" ${FD.sort === "due" ? "selected" : ""}>Due soonest</option></select>
       <input id="fQ" type="search" placeholder="Filter by title, agency, ${grants ? "assistance listing" : bm ? "text" : "NAICS"}…" value="${esc(FD.q)}">
     </div>
@@ -131,6 +152,7 @@ async function Matches() {
   $$("[data-lv]").forEach((b) => b.addEventListener("click", () => { FD.level = b.dataset.lv; Matches(); }));
   $("#fSort").addEventListener("change", (e) => { FD.sort = e.target.value; Matches(); });
   $("#fNaics")?.addEventListener("change", (e) => { FD.naics = e.target.value; Matches(); });
+  wireNaicsPicker($("#fNaicsFind"), (code) => { FD.naics = code; Matches(); });
   $("#fKw")?.addEventListener("change", (e) => { FD.kw = e.target.value; Matches(); });
   $("#fSrc")?.addEventListener("change", (e) => { FD.src = e.target.value; Matches(); });
   $$("[data-handchk]").forEach((b) => b.addEventListener("click", async () => { try { await db.rpc("src_check", { p_src: +b.dataset.handchk }); toast("Marked checked today"); Matches(); } catch (e) { toast(e.message); } }));
@@ -353,6 +375,7 @@ function profForm(v) {
     ${grants ? `<label>Keywords <small class="muted">comma-separated</small><textarea name="keywords" rows="3" placeholder="water, watershed, stormwater, flood">${esc((v.keywords || []).join(", "))}</textarea></label>
       <label>Assistance listings (CFDA) <small class="muted">optional; "66." matches every EPA listing</small><input name="aln" value="${esc((v.aln || []).join(", "))}" placeholder="66.458, 10.760, 15."></label>`
     : `<label>NAICS codes <small class="muted">comma-separated; 4–5 digits match every code that starts with them</small><textarea name="naics" rows="2" placeholder="541620, 541330, 541370">${esc((v.naics || []).join(", "))}</textarea></label>
+      ${naicsPicker("naicsFind-" + id, "Find a NAICS code by name or number (e.g. waste management, 5629)…")}
       <div class="prof-tags" data-naics-tags></div>
       <label>PSC codes <small class="muted">optional, comma-separated; "F1" or "C2" match every code that starts with them</small><input name="psc" value="${esc((v.psc || []).join(", "))}" placeholder="F108, C211, R4"></label>
       <label>Keywords <small class="muted">comma-separated</small><textarea name="keywords" rows="3" placeholder="water, flood, floodplain, stormwater">${esc((v.keywords || []).join(", "))}</textarea></label>`}
@@ -385,6 +408,12 @@ function wireProf(f) {
     } catch (e) { $("[data-preview]", f).textContent = ""; }
   }, 400);
   f.addEventListener("input", () => { tags(); preview(); }); tags(); preview();
+  wireNaicsPicker($("[id^=naicsFind-]", f), (code) => {
+    const add = code.includes("-") ? Array.from({ length: +code.slice(3) - +code.slice(0, 2) + 1 }, (_, i) => String(+code.slice(0, 2) + i)) : [code];
+    const cur = list(f.naics.value); add.forEach((c) => { if (!cur.includes(c)) cur.push(c); });
+    f.naics.value = cur.join(", "); f.naics.dispatchEvent(new Event("input", { bubbles: true }));
+    toast(`Added ${add.join(", ")} · Save to keep it`);
+  });
   f.addEventListener("submit", async (e) => {
     e.preventDefault(); const b = $("button.primary", f); b.disabled = true;
     try {

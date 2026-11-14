@@ -476,7 +476,7 @@ grant select (id, name, logo_url, template, config, plan, created_at) on public.
 -- ---------------------------------------------------------------- plans and billing
 -- Starter ($3), Pro ($6), Enterprise ($10) per staff user per month; contractors are free.
 --   plan          = the plan the company pays for (or was given: comped)
---   paid_until    = end of the paid period (Stripe sets it; an operator sets it for invoiced companies)
+--   paid_until    = end of the paid period (PayPal sets it; an operator sets it for invoiced companies)
 --   trial_ends_at = new workspaces get 14 days of Pro
 -- The effective plan decides which apps work (ws_has_app); it is checked in the database, not only on screen.
 alter table public.workspaces add column if not exists trial_ends_at timestamptz;
@@ -5525,7 +5525,7 @@ begin
       into rows using w;
     if jsonb_array_length(rows) > 0 then out := out || jsonb_build_object(t.table_name, rows); end if;
   end loop;
-  return jsonb_build_object('exported_at', now(), 'workspace', (select to_jsonb(x) - array['join_code', 'employee_code', 'contractor_code', 'archive_state', 'stripe_customer_id', 'stripe_subscription_id'] from workspaces x where id = w), 'tables', out);
+  return jsonb_build_object('exported_at', now(), 'workspace', (select to_jsonb(x) - array['join_code', 'employee_code', 'contractor_code', 'archive_state', 'stripe_customer_id', 'stripe_subscription_id', 'paypal_subscription_id'] from workspaces x where id = w), 'tables', out);
 end $$;
 
 -- daily: delete closed workspaces whose 30 days are up
@@ -5840,3 +5840,43 @@ revoke execute on function public.fed_list(text, text, bigint, text, int, text),
   public.fed_filter_exclude(text), public.fed_filter_default(uuid), public.fed_me(uuid), public.fed_rel(public.fed_notices, jsonb, jsonb) from public, anon;
 grant execute on function public.fed_list(text, text, bigint, text, int, text), public.fed_counts(), public.fed_filter_get(), public.fed_filter_save(jsonb),
   public.fed_filter_exclude(text), public.fed_rel(public.fed_notices, jsonb, jsonb) to authenticated;
+
+-- ================================================================ fix x · PayPal billing (replaces Stripe)
+-- The billing function (supabase/functions/billing) takes payment with PayPal Subscriptions:
+--   workspaces.paypal_subscription_id = the company's active PayPal subscription (I-…); paid_until follows its next billing date
+--   paypal_plans = the PayPal product and per-user plans the function creates on first use (one per plan and cycle, per sandbox/live)
+-- Only the function (service role) touches these; nothing is granted to signed-in users.
+alter table public.workspaces add column if not exists paypal_subscription_id text;
+comment on column public.workspaces.paid_until is 'End of the paid period: set from PayPal (next billing date + 3 days grace) or by an operator for invoiced companies';
+
+create table if not exists public.paypal_plans (
+  env text not null check (env in ('sandbox', 'live')),
+  key text not null,              -- 'product', or '<plan>-<cycle>' e.g. 'pro-month'
+  plan_id text not null,          -- P-… (for key 'product': the product id)
+  product_id text,
+  created_at timestamptz not null default now(),
+  primary key (env, key));
+alter table public.paypal_plans enable row level security;
+revoke all on public.paypal_plans from public, anon, authenticated;
+
+create or replace function public.billing_status() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object(
+    'plan', w.plan, 'effective', ws_plan_for(w.id), 'comped', w.comped, 'paid_until', w.paid_until,
+    'trial_ends_at', w.trial_ends_at, 'trial_days_left', greatest(0, ceil(extract(epoch from (w.trial_ends_at - now())) / 86400))::int,
+    'cycle', w.billing_cycle, 'billing_email', w.billing_email, 'note', w.plan_note,
+    'provider', 'paypal', 'has_paypal', w.paypal_subscription_id is not null,
+    'seats', (select count(*) from profiles p where p.workspace_id = w.id and p.active and p.role in ('admin', 'member', 'employee')),
+    'contractors', (select count(*) from profiles p where p.workspace_id = w.id and p.active and p.role = 'contractor'),
+    'operator', is_operator())
+    from workspaces w where w.id = ws() $$;
+
+create or replace function public.billing_workspaces() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select case when is_operator() then coalesce(jsonb_agg(jsonb_build_object('id', w.id, 'name', w.name, 'plan', w.plan, 'effective', ws_plan_for(w.id),
+    'comped', w.comped, 'paid_until', w.paid_until, 'trial_ends_at', w.trial_ends_at, 'note', w.plan_note, 'created_at', w.created_at,
+    'paypal', w.paypal_subscription_id is not null,
+    'seats', (select count(*) from profiles p where p.workspace_id = w.id and p.active and p.role in ('admin', 'member', 'employee'))) order by w.created_at), '[]') end
+    from workspaces w $$;
+revoke execute on function public.billing_status(), public.billing_workspaces() from public, anon;
+grant execute on function public.billing_status(), public.billing_workspaces() to authenticated;

@@ -57,6 +57,6 @@ Milestone: **Pulse 2.0 — pulse.bluecredits.org**. Repo: bluecredits/bluecredit
 
 ## 9. Later (P2)
 - [ ] Mail integration for Chief of Staff (Gmail / Outlook read + draft, same OAuth apps, new scopes)
-- [ ] Billing (Stripe) per workspace once plans are decided; `workspaces.plan` is already there
+- [ ] Billing (PayPal) per workspace: deploy `supabase/functions/billing` with the PayPal secrets and webhook (see README)
 - [ ] Dedicated-database option for customers who require their own instance
 - [ ] Move repo to private if the code shouldn't stay public (GitHub Pages then needs a paid plan, or serve only from Contabo)

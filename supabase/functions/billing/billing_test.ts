@@ -1,21 +1,27 @@
-// deno test supabase/functions/billing — checkout, portal, seat sync and the webhook against a fake Stripe and database.
+// deno test supabase/functions/billing — checkout, confirm, plan change, seats, cancel and the webhook against a fake PayPal and database.
 import { handle } from "./index.ts";
 import { fakeDb, assert, eq } from "../_shared/testkit.ts";
 
 const env = { SUPABASE_URL: "https://proj.supabase.co", SUPABASE_ANON_KEY: "anon", SUPABASE_SERVICE_ROLE_KEY: "service",
-  STRIPE_SECRET_KEY: "sk_test_x", STRIPE_WEBHOOK_SECRET: "whsec_test", SITE_URL: "https://pulse.example.com" };
-const T0 = Date.parse("2026-11-08T12:00:00Z");
-function world() {
+  PAYPAL_CLIENT_ID: "cid", PAYPAL_CLIENT_SECRET: "secret", PAYPAL_WEBHOOK_ID: "WH-1", SITE_URL: "https://pulse.example.com" };
+const T0 = Date.parse("2026-11-14T12:00:00Z");
+const NEXT = "2026-12-14T10:00:00Z";
+function world(opts: { verify?: string; subStatus?: string; customId?: string } = {}) {
   const db = fakeDb({
     profiles: [
       { id: "u1", workspace_id: "w1", role: "admin", active: true, display_name: "Ann Admin", email: "ann@acme.test" },
       { id: "u2", workspace_id: "w1", role: "member", active: true, display_name: "Al Member", email: "al@acme.test" },
+      { id: "u4", workspace_id: "w1", role: "employee", active: true, display_name: "Eve", email: "eve@acme.test" },
       { id: "u3", workspace_id: "w1", role: "contractor", active: true, display_name: "Cara", email: "cara@x.test" },
     ],
-    workspaces: [{ id: "w1", name: "Acme", plan: "starter", comped: false, billing_email: null, stripe_customer_id: null, stripe_subscription_id: null }],
+    workspaces: [{ id: "w1", name: "Acme", plan: "starter", billing_cycle: "month", comped: false, billing_email: null, paypal_subscription_id: null, paid_until: null }],
+    paypal_plans: [],
   });
-  const stripe: { path: string; body: URLSearchParams }[] = [];
+  const calls: { method: string; path: string; body: any }[] = [];
   const users: Record<string, string> = { "jwt-ann": "u1", "jwt-al": "u2" };
+  let n = 0;
+  const sub = () => ({ id: "I-SUB1", status: opts.subStatus || "ACTIVE", custom_id: opts.customId || "w1", quantity: "3",
+    plan_id: db.t.paypal_plans.find((p: any) => p.key === "pro-month")?.plan_id || "P-PRO-MONTH", billing_info: { next_billing_time: NEXT } });
   const f = async (input: string | URL | Request, init: RequestInit = {}) => {
     const url = String(input instanceof Request ? input.url : input);
     if (url.endsWith("/auth/v1/user")) {
@@ -23,74 +29,109 @@ function world() {
       return users[tok] ? Response.json({ id: users[tok], email: db.t.profiles.find((p: any) => p.id === users[tok]).email }) : new Response("no", { status: 401 });
     }
     if (url.includes("/rest/v1/")) return db.handle(url, init);
-    if (url.startsWith("https://api.stripe.com/v1/")) {
-      const path = url.slice(26); stripe.push({ path, body: new URLSearchParams(String(init.body || "")) });
-      if (path === "checkout/sessions") return Response.json({ id: "cs_1", url: "https://checkout.stripe.com/c/cs_1" });
-      if (path === "billing_portal/sessions") return Response.json({ url: "https://billing.stripe.com/p/1" });
-      if (path === "subscriptions/sub_1") return Response.json({ id: "sub_1", customer: "cus_1", status: "active", metadata: { workspace_id: "w1", plan: "pro", cycle: "month" },
-        items: { data: [{ id: "si_1", quantity: 1, current_period_end: T0 / 1000 + 30 * 86400 }] } });
-      if (path === "subscription_items/si_1") return Response.json({ id: "si_1" });
+    if (url.startsWith("https://api-m.sandbox.paypal.com")) {
+      const path = url.slice("https://api-m.sandbox.paypal.com".length), method = init.method || "GET";
+      const body = init.body && path !== "/v1/oauth2/token" ? JSON.parse(String(init.body)) : init.body;
+      calls.push({ method, path, body });
+      if (path === "/v1/oauth2/token") return Response.json({ access_token: "tok", expires_in: 3600 });
+      if (path === "/v1/catalogs/products") return Response.json({ id: "PROD-1" });
+      if (path === "/v1/billing/plans") return Response.json({ id: `P-${++n}` });
+      if (path === "/v1/billing/subscriptions" && method === "POST") return Response.json({ id: "I-SUB1", status: "APPROVAL_PENDING", links: [{ rel: "approve", href: "https://www.sandbox.paypal.com/webapps/billing/subscriptions?ba_token=BA-1" }] });
+      if (path === "/v1/billing/subscriptions/I-SUB1") return Response.json(sub());
+      if (path === "/v1/billing/subscriptions/I-SUB1/revise") return Response.json({ plan_id: body.plan_id, links: [{ rel: "approve", href: "https://www.sandbox.paypal.com/approve-revise" }] });
+      if (path === "/v1/billing/subscriptions/I-SUB1/cancel") return new Response(null, { status: 204 });
+      if (path === "/v1/notifications/verify-webhook-signature") return Response.json({ verification_status: opts.verify || "SUCCESS" });
     }
     throw new Error("unexpected fetch " + url);
   };
   const d = { fetch: f as typeof fetch, env, now: () => T0 };
   const post = (tok: string, body: unknown) => handle(new Request("https://proj.supabase.co/functions/v1/billing", {
     method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${tok}` }, body: JSON.stringify(body) }), d);
-  return { db, stripe, post, d };
-}
-async function signed(payload: string, secret = "whsec_test", t = Math.floor(T0 / 1000)) {
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${t}.${payload}`)));
-  return `t=${t},v1=${[...mac].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+  const hook = (ev: unknown) => handle(new Request("https://proj.supabase.co/functions/v1/billing/webhook", {
+    method: "POST", headers: { "content-type": "application/json", "paypal-transmission-id": "t1" }, body: JSON.stringify(ev) }), d);
+  return { db, calls, post, hook };
 }
 
-Deno.test("checkout: one seat per staff user (contractors free), yearly = 10 months, admin only", async () => {
+Deno.test("checkout creates the product and a per-user plan once, then a subscription for the staff count", async () => {
   const w = world();
-  const r = await w.post("jwt-ann", { action: "checkout", plan: "pro", cycle: "year" });
-  eq(r.status, 200); eq((await r.json()).url, "https://checkout.stripe.com/c/cs_1");
-  const b = w.stripe[0].body;
-  eq(b.get("line_items[0][quantity]"), "2");
-  eq(b.get("line_items[0][price_data][unit_amount]"), "6000");
-  eq(b.get("line_items[0][price_data][recurring][interval]"), "year");
-  eq(b.get("subscription_data[metadata][workspace_id]"), "w1");
-  eq(b.get("customer_email"), "ann@acme.test");
+  const r = await w.post("jwt-ann", { action: "checkout", plan: "pro", cycle: "month" });
+  const out = await r.json();
+  eq(r.status, 200, JSON.stringify(out));
+  assert(out.url.includes("ba_token"), "approval url");
+  const plan = w.calls.find((c) => c.path === "/v1/billing/plans")!.body;
+  eq(plan.billing_cycles[0].pricing_scheme.fixed_price.value, "6.00");
+  eq(plan.quantity_supported, true);
+  const s = w.calls.find((c) => c.path === "/v1/billing/subscriptions")!.body;
+  eq(s.quantity, "3", "admin + member + employee; contractor free");
+  eq(s.custom_id, "w1");
+  assert(!s.application_context.return_url.includes("#"), "no hash in return url");
+  // second checkout attempt for another plan reuses the stored product
+  await w.post("jwt-ann", { action: "checkout", plan: "enterprise", cycle: "year" });
+  eq(w.calls.filter((c) => c.path === "/v1/catalogs/products").length, 1);
+  const ent = w.calls.filter((c) => c.path === "/v1/billing/plans")[1].body;
+  eq(ent.billing_cycles[0].pricing_scheme.fixed_price.value, "100.00", "yearly = 10 months");
+  eq(ent.billing_cycles[0].frequency.interval_unit, "YEAR");
+});
+
+Deno.test("only admins; comped workspaces don't pay", async () => {
+  const w = world();
   eq((await w.post("jwt-al", { action: "checkout", plan: "pro" })).status, 403);
-  eq((await w.post("jwt-ann", { action: "checkout", plan: "gold" })).status, 400);
+  w.db.t.workspaces[0].comped = true;
+  eq((await w.post("jwt-ann", { action: "checkout", plan: "pro" })).status, 400);
 });
 
-Deno.test("webhook: signed checkout completion sets plan, customer and paid-until (+3 days grace); bad signature refused", async () => {
+Deno.test("confirm turns the plan on until the next billing date plus grace", async () => {
   const w = world();
-  const payload = JSON.stringify({ type: "checkout.session.completed", data: { object: { mode: "subscription", subscription: "sub_1", client_reference_id: "w1", metadata: { workspace_id: "w1" } } } });
-  const bad = await handle(new Request("https://proj.supabase.co/functions/v1/billing/webhook", { method: "POST", headers: { "stripe-signature": await signed(payload, "wrong") }, body: payload }), w.d);
-  eq(bad.status, 400);
-  const ok = await handle(new Request("https://proj.supabase.co/functions/v1/billing/webhook", { method: "POST", headers: { "stripe-signature": await signed(payload) }, body: payload }), w.d);
-  eq(ok.status, 200);
+  await w.post("jwt-ann", { action: "checkout", plan: "pro", cycle: "month" });
+  const r = await (await w.post("jwt-ann", { action: "confirm", subscription_id: "I-SUB1" })).json();
+  eq(r.ok, true, JSON.stringify(r));
   const ws = w.db.t.workspaces[0];
-  eq(ws.plan, "pro"); eq(ws.stripe_customer_id, "cus_1"); eq(ws.stripe_subscription_id, "sub_1");
-  eq(ws.paid_until, new Date(T0 + 33 * 86400e3).toISOString());
+  eq(ws.plan, "pro"); eq(ws.paypal_subscription_id, "I-SUB1"); eq(ws.billing_cycle, "month");
+  eq(ws.paid_until, new Date(Date.parse(NEXT) + 3 * 86400_000).toISOString());
 });
 
-Deno.test("webhook: cancelled subscription ends the paid period now; old signatures refused", async () => {
-  const w = world(); Object.assign(w.db.t.workspaces[0], { plan: "pro", stripe_customer_id: "cus_1", stripe_subscription_id: "sub_1" });
-  const payload = JSON.stringify({ type: "customer.subscription.deleted", data: { object: { id: "sub_1", customer: "cus_1", status: "canceled", metadata: { workspace_id: "w1", plan: "pro" } } } });
-  const stale = await handle(new Request("https://x/billing/webhook", { method: "POST", headers: { "stripe-signature": await signed(payload, "whsec_test", T0 / 1000 - 900) }, body: payload }), w.d);
-  eq(stale.status, 400);
-  const r = await handle(new Request("https://x/billing/webhook", { method: "POST", headers: { "stripe-signature": await signed(payload) }, body: payload }), w.d);
-  eq(r.status, 200);
-  eq(w.db.t.workspaces[0].stripe_subscription_id, null); eq(w.db.t.workspaces[0].paid_until, new Date(T0).toISOString());
+Deno.test("confirm refuses another workspace's subscription", async () => {
+  const w = world({ customId: "w2" });
+  eq((await w.post("jwt-ann", { action: "confirm", subscription_id: "I-SUB1" })).status, 403);
+  eq(w.db.t.workspaces[0].plan, "starter");
 });
 
-Deno.test("portal and seat sync use the stored customer and subscription", async () => {
+Deno.test("change and seat sync go through PayPal's revise (approval link back)", async () => {
   const w = world();
-  eq((await w.post("jwt-ann", { action: "portal" })).status, 400);
-  Object.assign(w.db.t.workspaces[0], { stripe_customer_id: "cus_1", stripe_subscription_id: "sub_1" });
-  eq((await (await w.post("jwt-ann", { action: "portal" })).json()).url, "https://billing.stripe.com/p/1");
-  eq((await (await w.post("jwt-ann", { action: "sync_seats" })).json()).seats, 2);
-  assert(w.stripe.some((s) => s.path === "subscription_items/si_1" && s.body.get("quantity") === "2"), "quantity updated");
+  w.db.t.workspaces[0].paypal_subscription_id = "I-SUB1";
+  const c = await (await w.post("jwt-ann", { action: "change", plan: "enterprise", cycle: "month" })).json();
+  assert(c.url?.includes("approve-revise"), JSON.stringify(c));
+  w.db.t.profiles.push({ id: "u5", workspace_id: "w1", role: "member", active: true, display_name: "New", email: "n@acme.test" });
+  const s = await (await w.post("jwt-ann", { action: "sync_seats" })).json();
+  eq(s.seats, 4);
+  eq(w.calls.filter((x) => x.path.endsWith("/revise")).pop()!.body.quantity, "4");
 });
 
-Deno.test("not set up: clear 503 until the Stripe key is added", async () => {
-  const w = world(); (w.d.env as any) = { ...env, STRIPE_SECRET_KEY: "" };
-  const r = await handle(new Request("https://x/billing", { method: "POST", headers: { authorization: "Bearer jwt-ann" }, body: "{}" }), { ...w.d, env: { ...env, STRIPE_SECRET_KEY: "" } });
+Deno.test("cancel stops the subscription but keeps the paid period", async () => {
+  const w = world();
+  Object.assign(w.db.t.workspaces[0], { paypal_subscription_id: "I-SUB1", plan: "pro", paid_until: "2026-12-17T00:00:00.000Z" });
+  eq((await w.post("jwt-ann", { action: "cancel", reason: "Closing" })).status, 200);
+  eq(w.db.t.workspaces[0].paypal_subscription_id, null);
+  eq(w.db.t.workspaces[0].paid_until, "2026-12-17T00:00:00.000Z");
+});
+
+Deno.test("webhook: verified renewal extends; bad signature is refused; suspension ends access", async () => {
+  const w = world();
+  w.db.t.paypal_plans.push({ env: "sandbox", key: "pro-month", plan_id: "P-PRO-MONTH" });
+  const ok = await (await w.hook({ event_type: "PAYMENT.SALE.COMPLETED", resource: { billing_agreement_id: "I-SUB1" } })).json();
+  eq(ok.ok, true, JSON.stringify(ok));
+  eq(w.db.t.workspaces[0].plan, "pro");
+  const bad = world({ verify: "FAILURE" });
+  eq((await bad.hook({ event_type: "BILLING.SUBSCRIPTION.ACTIVATED", resource: { id: "I-SUB1" } })).status, 400);
+  eq(bad.db.t.workspaces[0].plan, "starter");
+  const sus = world({ subStatus: "SUSPENDED" });
+  await sus.hook({ event_type: "BILLING.SUBSCRIPTION.SUSPENDED", resource: { id: "I-SUB1" } });
+  eq(sus.db.t.workspaces[0].paid_until, new Date(T0).toISOString());
+});
+
+Deno.test("not set up yet without PayPal keys", async () => {
+  const w = world();
+  const r = await handle(new Request("https://x/functions/v1/billing", { method: "POST", headers: { authorization: "Bearer jwt-ann" }, body: "{}" }),
+    { fetch: (() => { throw new Error("no"); }) as any, env: { ...env, PAYPAL_CLIENT_ID: "" } });
   eq(r.status, 503);
 });

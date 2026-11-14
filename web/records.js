@@ -132,6 +132,8 @@ document.addEventListener("click", (e) => {
 });
 function route() {
   if (!S.profile) return;
+  // back from PayPal: /admin/?paypal=… lands on the Billing page, which confirms the subscription
+  if (/[?&]paypal=/.test(location.search) && !/^#\/billing/.test(location.hash)) { location.hash = "#/billing"; return; }
   const [part, id] = location.hash.replace(/^#\/?/, "").split("?")[0].split("/");
   const name = part || HOME;
   const app = OWNER[name] || "review";
@@ -963,6 +965,12 @@ async function WorkspaceSettings() {
     try { await save({ template: k, config: { lists: {}, agendas: {}, working_exclude: null } }); toast("Starter pack applied"); WorkspaceSettings(); } catch (e) { toast(e.message); }
   });
   const afterClose = async (msg) => { toast(msg); await loadWorkspace(); closedBanner(); WorkspaceSettings(); };
+  // archiving, closing or deleting the business also stops the PayPal subscription, so nobody is charged for a closed workspace
+  const stopBilling = async () => {
+    if (!S.billing?.has_paypal) return true;
+    try { await callFn("billing", { action: "cancel", reason: "Business archived or closed in Pulse" }); return true; }
+    catch (err) { return confirm(`Couldn't cancel the PayPal subscription (${err.message}). Continue anyway? You can cancel it on PayPal yourself.`); }
+  };
   $("#wsExport")?.addEventListener("click", async (e) => {
     e.target.disabled = true; toast("Preparing your download…");
     try {
@@ -974,11 +982,13 @@ async function WorkspaceSettings() {
   });
   $("#wsArchive")?.addEventListener("click", async () => {
     if (!confirm(`Archive ${w.name}? Everything becomes read-only until an admin reopens it.`)) return;
+    if (!(await stopBilling())) return;
     try { await db.rpc("ws_archive", { p_reason: $("#wsReason")?.value || null, p_delete: false }); await afterClose("Archived. Everything is read-only now."); } catch (e) { toast(e.message); }
   });
   $("#wsCloseNow")?.addEventListener("click", () => { $("#wsCloseConfirm").hidden = false; $("#wsCloseName").focus(); });
   $("#wsCloseGo")?.addEventListener("click", async () => {
     if ($("#wsCloseName").value.trim() !== w.name) return toast(`Type ${w.name} exactly to confirm`);
+    if (!(await stopBilling())) return;
     try { await db.rpc("ws_archive", { p_reason: $("#wsReason")?.value || null, p_delete: true, p_confirm: $("#wsCloseName").value.trim() }); await afterClose("Closed. It will be deleted in 30 days unless you reopen it."); } catch (e) { toast(e.message); }
   });
   $("#wsReopen")?.addEventListener("click", async () => {
@@ -987,6 +997,7 @@ async function WorkspaceSettings() {
   $("#wsDelete").addEventListener("click", async () => {
     if ($("#wsDelName").value.trim() !== w.name) return toast(`Type ${w.name} exactly to confirm`);
     if (!confirm(`Delete ${w.name} and everything in it? This can't be undone.`)) return;
+    if (!(await stopBilling())) return;
     try { await db.rpc("delete_workspace", { p_confirm: $("#wsDelName").value.trim() }); await sb.auth.signOut(); location.href = HUB; } catch (e) { toast(e.message); }
   });
 }

@@ -229,7 +229,10 @@ or `pg_dump` with the connection string.
   checks in the apps' functions, the Opportunities timer) and by the server functions (402 for Scheduler / Chief).
 - **Admin → Plan and billing**: plan, users, monthly total, choose a plan. Pulse operators (table `pulse_operators`) see every
   workspace and set plans for invoiced or complimentary companies.
-- **Card payments**: `supabase/functions/billing` (Stripe Checkout, customer portal, seat sync, webhook). Deploy it with
-  Verify JWT off and secrets `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `SITE_URL`; point a Stripe webhook at
-  `/functions/v1/billing/webhook` for `checkout.session.completed` and `customer.subscription.*`. Until then, Choose a plan
-  opens an invoice request to support@bluecredits.org.
+- **Payments (PayPal)**: `supabase/functions/billing` (PayPal Subscriptions: checkout, confirm on return, plan change and
+  seat sync through PayPal's revise, cancel, webhook). Per-user plans are created on PayPal automatically on first use and kept
+  in `paypal_plans`. Deploy it with Verify JWT off and secrets `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`,
+  `SITE_URL` and `PAYPAL_ENV` (`sandbox` until tested, then `live`). In the PayPal developer app add a webhook to
+  `https://<project>.supabase.co/functions/v1/billing/webhook` for `BILLING.SUBSCRIPTION.ACTIVATED`, `.UPDATED`, `.CANCELLED`,
+  `.SUSPENDED`, `.EXPIRED`, `.RE-ACTIVATED`, `PAYMENT.SALE.COMPLETED` and `PAYMENT.SALE.DENIED`. Until it's set up, Choose a
+  plan opens an invoice request to support@bluecredits.org.

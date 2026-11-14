@@ -124,7 +124,7 @@ begin
       into rows using w;
     if jsonb_array_length(rows) > 0 then out := out || jsonb_build_object(t.table_name, rows); end if;
   end loop;
-  return jsonb_build_object('exported_at', now(), 'workspace', (select to_jsonb(x) - array['join_code', 'employee_code', 'contractor_code', 'archive_state', 'stripe_customer_id', 'stripe_subscription_id'] from workspaces x where id = w), 'tables', out);
+  return jsonb_build_object('exported_at', now(), 'workspace', (select to_jsonb(x) - array['join_code', 'employee_code', 'contractor_code', 'archive_state', 'stripe_customer_id', 'stripe_subscription_id', 'paypal_subscription_id'] from workspaces x where id = w), 'tables', out);
 end $$;
 
 -- daily: delete closed workspaces whose 30 days are up

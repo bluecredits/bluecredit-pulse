@@ -250,8 +250,9 @@ const TOPICS = [
       { id: "trial", title: "Free trial", html: `<p>Every new workspace gets 14 days of Pro, no card needed. When the trial ends, apps outside your plan show a lock until an admin chooses a plan; nothing is deleted.</p>` },
       { id: "pay", title: "Choose or change a plan", html: steps(
           ["Open Plan and billing", `Your name (top right) → <b>Plan and billing</b> (admins).`],
-          ["Choose a plan", `Pick monthly or yearly. You pay by card, or ask for an invoice.`],
-          ["Users", `You're billed for staff users (admins and members). Contractors don't count.`]) }] },
+          ["Choose a plan", `Pick monthly or yearly, then approve the subscription on PayPal (PayPal balance, bank or card). You come back to Pulse and the plan switches on. If online payment isn't on yet, you can ask for an invoice instead.`],
+          ["Users", `You're billed for staff users (admins, members and employees). Contractors don't count. After adding people, press <b>Update user count on the subscription</b> and approve the new amount on PayPal.`]) },
+      { id: "manage", title: "Change, update or cancel", html: `<p><b>Change plan</b>: choose another plan; PayPal asks you to approve the new amount. <b>Payment method and receipts</b> open your PayPal account. <b>Cancel subscription</b> stops future charges; you keep your plan until the paid period ends, then the workspace drops to Starter. Nothing is deleted. Archiving or closing the business cancels the subscription too.</p>` }] },
 
   { id: "support", group: "admin", icon: "chat", title: "Contact support", blurb: "Can't find the answer? We'll help.",
     sections: [{ id: "email", title: "Email us", html: `<p>Email <a href="mailto:support@bluecredits.org">support@bluecredits.org</a>. Tell us your company name, what you were doing and what you saw; a screenshot helps.</p>` }] },

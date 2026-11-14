@@ -79,7 +79,7 @@ function linkTiles() {
     <a class="hub-app" href="${esc(l.url)}" target="_blank" rel="noopener"><div class="hub-ic ${l.kind === "ai" ? "ai" : "ext"}">${icon(l.kind === "ai" ? "sparkles" : l.kind === "talent" ? "team" : "link")}</div>
       <div class="hub-body"><h3>${esc(l.label || "Link")} <svg class="ic ext-ic"><use href="#i-external"/></svg></h3><p>${esc(l.note || new URL(l.url).hostname)}</p></div></a>`).join("")}</div></section>`;
 }
-const myApps = () => APPS.filter((a) => (!a.staff || isStaffRole(S.profile?.role)) && CFG.apps?.[a.key] !== false);
+const myApps = () => APPS.filter((a) => (!a.staff || isStaffRole(S.profile?.role)) && (!a.admin || S.profile?.role === "admin") && CFG.apps?.[a.key] !== false);
 function icon(name, cls = "ic") { return `<svg class="${cls}"><use href="#i-${name}"/></svg>`; }
 async function loadStats() {
   loadAppStats();

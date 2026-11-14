@@ -193,6 +193,25 @@ const TOPICS = [
           <li>${app("people/#/taxes", "People → Tax forms &amp; 1099s")} shows who still owes a form and what each contractor was paid in a year (project costs linked to their agreements or with their name as vendor). A 1099-NEC is due for US contractors who aren't corporations once payments reach the threshold: $600 through 2025, $2,000 from 2026.</li></ul><p class="muted">Not tax advice: check with your accountant.</p>` },
       { id: "onboarding", title: "Team, onboarding and offboarding", html: `<p>${app("people/#/people", "Team &amp; onboarding")} lists employees, contractors, consultants and interns with their checklist: paperwork, access and equipment from first day to last. New people start from the <b>Checklist template</b> (changing it doesn't change checklists already started). Each person sees what's left under <b>My checklist</b>. Offboarding runs the same way at the end.</p>` }] },
 
+  { id: "finance", group: "deliver", icon: "banknotes", title: "Finance", plan: "Pro", sub: "admins", blurb: "Income statement, cash flow, balance sheet, budget, project margins, receivables and taxes.",
+    sections: [
+      { id: "start", title: "Set it up once", html: steps(
+          ["Open Settings", `Choose <b>cash</b> or <b>accrual</b> (use the same basis as your tax return), the month your fiscal year starts, and your <b>opening cash</b>: your bank balance on the first day you track in Pulse.`],
+          ["Check where records post", `Invoices post to an income account; project-cost and expense categories post to cost and expense accounts. Change any of them under <b>Where Pulse's records post</b>.`],
+          ["Bring in your plan", `In <b>Budget</b>, choose <b>Import a financial model</b> and pick a model built on the SBDC template. Pulse reads it month by month, adds your own revenue lines with their prices and unit costs, and fills the budget. You can also bring a model in as actual history.`]) },
+      { id: "where", title: "Where the numbers come from", html: `<ul><li><b>Revenue</b>: invoices in Documents, when paid (cash) or when sent (accrual), before sales tax.</li>
+          <li><b>Costs</b>: project costs, plus approved expense reports (when reimbursed on the cash basis).</li>
+          <li><b>Everything else</b>: <b>Transactions</b>, where you add bills paid, owner investment, loans and other money in or out, or import a bank or card CSV. Don't re-enter invoices, project costs or expense reports there; they're counted already.</li>
+          <li>Click any amount on the income statement to see what's behind it.</li></ul>` },
+      { id: "reports", title: "Reports", html: `<ul><li><b>Income statement</b>: by month, as actual, budget, or actual vs. budget with the variance.</li>
+          <li><b>Cash flow</b>: actual cash to date, then the budget as the forecast, with a warning if cash would go below zero.</li>
+          <li><b>Balance sheet</b>: cash, unpaid invoices, loans and reimbursements owed, and equity.</li>
+          <li><b>Project profitability</b>: billed, collected, costs, staff time and margin by project, plus work not billed yet.</li>
+          <li><b>Receivables</b>: unpaid invoices by how late they are, and the income account for each invoice.</li></ul>` },
+      { id: "budget", title: "Budget, payroll and loans", html: `<p>The budget is a grid of accounts by month: type in a cell, move with the arrow keys, Tab and Enter, or paste a block from Excel. <b>Units and hours</b> lets you plan revenue as credits, subscriptions or hours times a price. <b>Payroll planner</b> fills wages, employer taxes, fees, benefits and onboarding from positions and start dates. <b>Loan planner</b> fills loan proceeds, interest and principal from the amortization. <b>Start from another year</b> copies last year's budget or actuals with a growth percentage.</p>` },
+      { id: "taxes", title: "Taxes and the year-end package", html: `<p><b>Taxes</b> shows the calendar year mapped to Form 1120 lines (each account's line is set in Settings → Accounts; meals count at 50%), the 1099-NEC summary, and a filing calendar. <b>Download year-end package</b> gives your CPA one Excel file: the Form 1120 summary, the income statement, totals by account, invoices and revenue by client, contractor payments, project costs, expense reports and transactions. It's a starting point for your CPA, not a filed return.</p>` },
+    ] },
+
   // ── Every day ──
   { id: "timecards", group: "daily", icon: "timer", title: "Timecards", plan: "Starter", blurb: "Log hours and time off, submit expenses, approve both.",
     sections: [

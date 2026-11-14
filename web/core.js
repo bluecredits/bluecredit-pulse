@@ -124,7 +124,7 @@ async function loadWorkspace() {
    Per staff user per month; contractors and consultants are free. Yearly = 10 months (2 free). */
 const PLANS = {
   starter: { name: "Starter", price: 3, blurb: "Run the business day to day.", apps: ["review", "contacts", "funding", "timecards", "tickets", "people", "documents"], limit: "Up to 10 users" },
-  pro: { name: "Pro", price: 6, blurb: "Find and win work, deliver it, hire.", apps: ["opportunities", "projects", "agreements", "invoices", "hiring"], limit: "Unlimited users" },
+  pro: { name: "Pro", price: 6, blurb: "Find and win work, deliver it, hire.", apps: ["opportunities", "projects", "agreements", "invoices", "hiring", "finance"], limit: "Unlimited users" },
   enterprise: { name: "Enterprise", price: 10, blurb: "Everything, with your AI chief of staff.", apps: ["chief", "scheduler"], limit: "Unlimited users, priority support" },
 };
 const FEATURE_NAMES = { hiring: "Hiring", agreements: "Agreements and e-signing", invoices: "Invoices", documents: "Policies and sign-offs" };
@@ -165,6 +165,7 @@ const PULSE_APPS = [
   { key: "opportunities", group: "win", staff: true, name: "Opportunities", icon: "gov", href: "./opportunities/", blurb: "Federal contracts, grants and state and local bids, checked daily." },
   { key: "projects", group: "deliver", name: "Projects", icon: "briefcase", href: "./projects/", blurb: "Schedule, tasks, team, budget vs. actual, reports, close-out; IT work from GitHub." },
   { key: "documents", group: "deliver", name: "Documents", icon: "clipboard", href: "./agreements/", blurb: "Policies and sign-offs, contracts and e-signing, invoices, compliance dates." },
+  { key: "finance", group: "deliver", staff: true, admin: true, name: "Finance", icon: "banknotes", href: "./finance/", blurb: "Income statement, cash flow, budget, project margins, receivables and taxes." },
   { key: "people", group: "deliver", name: "People", icon: "user-plus", href: "./people/", blurb: "Hiring: openings, candidates, interviews. Then onboarding and offboarding." },
   { key: "timecards", group: "daily", name: "Timecards", icon: "timer", href: "./timecards/", blurb: "Log hours and time off, submit expenses, approve both." },
   { key: "scheduler", group: "daily", name: "Scheduler", icon: "calendar", href: "./scheduler/", blurb: "Team free/busy from Google or Outlook; find a time, invite." },
@@ -187,7 +188,7 @@ function closedBanner() {
   const shell = $("#shell"); shell?.parentNode.insertBefore(bar, shell);
 }
 // Help (?) in the top bar on every page: opens the Help Center at the topic for the app you're in
-const HELP_TOPICS = ["review", "contacts", "funding", "opportunities", "projects", "documents", "people", "timecards", "tickets", "scheduler", "chief"];
+const HELP_TOPICS = ["review", "contacts", "funding", "opportunities", "projects", "documents", "finance", "people", "timecards", "tickets", "scheduler", "chief"];
 function helpTopic() {
   const seg = location.pathname.replace(/\/index\.html$/, "/").split("/").filter(Boolean).pop() || "";
   if (seg === "agreements") return "documents";
@@ -217,7 +218,7 @@ const ROLES = {
 const isStaffRole = (r) => r === "admin" || r === "member";
 const roleName = (r) => ROLES[r]?.name || r || "";
 const PORTAL = HUB + "portal/";
-const launcherApps = () => PULSE_APPS.filter((a) => (!a.staff || isStaffRole(S.profile?.role)) && CFG.apps?.[a.key] !== false);
+const launcherApps = () => PULSE_APPS.filter((a) => (!a.staff || isStaffRole(S.profile?.role)) && (!a.admin || S.profile?.role === "admin") && CFG.apps?.[a.key] !== false);
 function buildAppsMenu() {
   const host = $("#appsMenu"); if (!host || !S.profile) return;
   const here = location.pathname.replace(/\/index\.html$/, "/");
